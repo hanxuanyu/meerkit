@@ -10,22 +10,45 @@ import (
 )
 
 type ConditionConfig struct {
-	Logic string          `json:"logic"`
-	Rules []ConditionRule `json:"rules"`
+	Logic              string          `json:"logic"`
+	Rules              []ConditionRule `json:"rules"`
+	NotificationPolicy string          `json:"notification_policy,omitempty"`
+}
+
+const (
+	NotificationPolicyOnce  = "once"
+	NotificationPolicyEvery = "every"
+)
+
+func NormalizeNotificationPolicy(policy string) string {
+	if policy == NotificationPolicyEvery {
+		return NotificationPolicyEvery
+	}
+	return NotificationPolicyOnce
 }
 
 type ConditionRule struct {
-	Field    string `json:"field"`
-	Path     string `json:"path,omitempty"`
-	Operator string `json:"operator"`
-	Value    any    `json:"value,omitempty"`
+	Field       string `json:"field"`
+	Source      string `json:"source,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Operator    string `json:"operator"`
+	Value       any    `json:"value,omitempty"`
+	ValueSource string `json:"value_source,omitempty"`
+	ValueField  string `json:"value_field,omitempty"`
+	ValuePath   string `json:"value_path,omitempty"`
 }
 
 type RuleResult struct {
-	Field    string `json:"field"`
-	Operator string `json:"operator"`
-	State    string `json:"state"`
-	Message  string `json:"message,omitempty"`
+	Field       string `json:"field"`
+	Source      string `json:"source,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Operator    string `json:"operator"`
+	State       string `json:"state"`
+	Expected    any    `json:"expected,omitempty"`
+	Actual      any    `json:"actual,omitempty"`
+	ValueSource string `json:"value_source,omitempty"`
+	ValueField  string `json:"value_field,omitempty"`
+	Message     string `json:"message,omitempty"`
 }
 
 type Evaluation struct {
@@ -76,8 +99,14 @@ func EvaluateConditions(config ConditionConfig, current, previous map[string]any
 }
 
 func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResult {
-	result := RuleResult{Field: rule.Field, Operator: rule.Operator}
-	value, ok := lookupValue(current, rule.Field, rule.Path)
+	source := normalizeSource(rule.Source)
+	field := normalizeField(rule.Field)
+	valueSource := normalizeValueSource(rule.ValueSource)
+	result := RuleResult{Field: field, Source: source, Path: rule.Path, Operator: rule.Operator, ValueSource: valueSource, ValueField: normalizeField(rule.ValueField)}
+	value, ok := lookupSourceValue(source, current, previous, field, rule.Path)
+	if ok {
+		result.Actual = value
+	}
 	if rule.Operator == "exists" {
 		result.State = boolState(ok)
 		return result
@@ -92,13 +121,16 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 			result.Message = "baseline established"
 			return result
 		}
-		previousValue, previousOK := lookupValue(previous, rule.Field, rule.Path)
-		if !ok || !previousOK {
+		currentValue, currentOK := lookupValue(current, field, rule.Path)
+		previousValue, previousOK := lookupValue(previous, field, rule.Path)
+		if !currentOK || !previousOK {
 			result.State = "unknown"
 			result.Message = "value is missing from current or previous result"
 			return result
 		}
-		result.State = boolState(!reflect.DeepEqual(value, previousValue))
+		result.Actual = currentValue
+		result.Expected = previousValue
+		result.State = boolState(!reflect.DeepEqual(currentValue, previousValue))
 		return result
 	}
 	if !ok {
@@ -107,22 +139,33 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 		return result
 	}
 
+	comparison := rule.Value
+	if valueSource != "literal" {
+		comparison, ok = lookupSourceValue(valueSource, current, previous, rule.ValueField, rule.ValuePath)
+		if !ok {
+			result.State = "unknown"
+			result.Message = "comparison value is missing from current or previous result"
+			return result
+		}
+	}
+	result.Expected = comparison
+
 	var matched bool
 	var err error
 	switch strings.ToLower(rule.Operator) {
 	case "equals", "eq":
-		matched = valuesEqual(value, rule.Value)
+		matched = valuesEqual(value, comparison)
 	case "not_equals", "neq":
-		matched = !valuesEqual(value, rule.Value)
+		matched = !valuesEqual(value, comparison)
 	case "contains":
-		matched, err = containsValue(value, rule.Value)
+		matched, err = containsValue(value, comparison)
 	case "not_contains":
 		var contains bool
-		contains, err = containsValue(value, rule.Value)
+		contains, err = containsValue(value, comparison)
 		matched = !contains
 	case "regex":
 		var expression string
-		expression, ok = rule.Value.(string)
+		expression, ok = comparison.(string)
 		if !ok {
 			err = fmt.Errorf("regex value must be a string")
 			break
@@ -136,7 +179,7 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 		var left, right float64
 		left, err = numberValue(value)
 		if err == nil {
-			right, err = numberValue(rule.Value)
+			right, err = numberValue(comparison)
 			if err == nil {
 				switch rule.Operator {
 				case "gt":
@@ -151,9 +194,9 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 			}
 		}
 	case "between":
-		bounds, boundsOK := rule.Value.([]any)
+		bounds, boundsOK := comparison.([]any)
 		if !boundsOK {
-			if text, textOK := rule.Value.(string); textOK {
+			if text, textOK := comparison.(string); textOK {
 				parts := strings.Split(text, ",")
 				if len(parts) == 2 {
 					bounds = []any{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])}
@@ -175,7 +218,7 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 		}
 	case "length_gt", "length_eq":
 		length, lengthErr := valueLength(value)
-		threshold, thresholdErr := numberValue(rule.Value)
+		threshold, thresholdErr := numberValue(comparison)
 		if lengthErr != nil || thresholdErr != nil {
 			err = fmt.Errorf("value or comparison is not measurable")
 		} else if rule.Operator == "length_gt" {
@@ -206,6 +249,32 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 	}
 	result.State = boolState(matched)
 	return result
+}
+
+func normalizeSource(source string) string {
+	if source == "previous" {
+		return "previous"
+	}
+	return "current"
+}
+
+func normalizeValueSource(source string) string {
+	if source == "current" || source == "previous" {
+		return source
+	}
+	return "literal"
+}
+
+func normalizeField(field string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(field, "result."), "current.")
+}
+
+func lookupSourceValue(source string, current, previous map[string]any, field, path string) (any, bool) {
+	root := current
+	if normalizeSource(source) == "previous" {
+		root = previous
+	}
+	return lookupValue(root, normalizeField(field), path)
 }
 
 func containsValue(value, target any) (bool, error) {

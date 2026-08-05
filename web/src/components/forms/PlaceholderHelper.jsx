@@ -1,18 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Braces, Copy, Search } from "lucide-react";
 import { toast } from "sonner";
-import { getAvailablePlaceholders } from "../../lib/resultSchema";
+import { getPlaceholderGroups } from "../../lib/resultSchema";
 import { IconButton } from "../ui/IconButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/Select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/Tabs";
 
 export function PlaceholderHelper({ monitors = [], modules = [] }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [activeGroup, setActiveGroup] = useState("common");
   const [monitorID, setMonitorID] = useState(monitors[0]?.id || "");
   const helperRef = useRef(null);
   const monitor = monitors.find((item) => item.id === monitorID) || monitors[0];
   const descriptor = modules.find((item) => item.type === monitor?.module_type);
-  const placeholders = useMemo(() => getAvailablePlaceholders(descriptor), [descriptor]);
+  const placeholderGroups = useMemo(() => getPlaceholderGroups(descriptor), [descriptor]);
   const filteredMonitors = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return monitors;
@@ -41,6 +43,11 @@ export function PlaceholderHelper({ monitors = [], modules = [] }) {
     setMonitorID(monitors[0]?.id || "");
   }, [monitorID, monitors]);
 
+  useEffect(() => {
+    if (placeholderGroups.some((group) => group.key === activeGroup)) return;
+    setActiveGroup(placeholderGroups[0]?.key || "common");
+  }, [activeGroup, placeholderGroups]);
+
   const copy = async (key) => {
     try {
       await navigator.clipboard.writeText(`{{${key}}}`);
@@ -49,5 +56,5 @@ export function PlaceholderHelper({ monitors = [], modules = [] }) {
       toast.error("无法写入剪贴板");
     }
   };
-  return <div className="placeholder-helper" ref={helperRef}><IconButton type="button" variant="outline" size="default" title="插入占位符" aria-label="打开占位符助手" onClick={() => setOpen((current) => !current)}><Braces size={15} /></IconButton>{open && <div className="placeholder-popover"><div className="placeholder-popover-title"><strong>占位符助手</strong><span>选择监控项后复制结果字段</span></div>{monitors.length ? <><div className="placeholder-monitor-search"><Search size={13} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索监控项或模块" aria-label="搜索监控项" /></div><Select value={monitor?.id || ""} onValueChange={setMonitorID}><SelectTrigger className="placeholder-select-trigger"><SelectValue placeholder="选择监控项" /></SelectTrigger><SelectContent className="placeholder-select-content">{filteredMonitors.length ? filteredMonitors.map((item) => <SelectItem className="placeholder-select-item" key={item.id} value={item.id}>{item.name}</SelectItem>) : <div className="placeholder-search-empty">没有匹配的监控项</div>}</SelectContent></Select><div className="placeholder-list">{placeholders.map((item) => <button type="button" className="placeholder-item" key={item.key} onClick={() => void copy(item.key)}><span><strong>{item.label}</strong><code>{`{{${item.key}}}`}</code></span><Copy size={13} /></button>)}</div></> : <div className="placeholder-empty">请先创建监控项</div>}</div>}</div>;
+  return <div className="placeholder-helper" ref={helperRef}><IconButton type="button" variant="outline" size="default" title="插入占位符" aria-label="打开占位符助手" onClick={() => setOpen((current) => !current)}><Braces size={15} /></IconButton>{open && <div className="placeholder-popover"><div className="placeholder-popover-title"><strong>占位符助手</strong><span>选择监控项后复制结果字段</span></div>{monitors.length ? <><div className="placeholder-monitor-search"><Search size={13} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索监控项或模块" aria-label="搜索监控项" /></div><Select value={monitor?.id || ""} onValueChange={setMonitorID}><SelectTrigger className="placeholder-select-trigger"><SelectValue placeholder="选择监控项" /></SelectTrigger><SelectContent className="placeholder-select-content">{filteredMonitors.length ? filteredMonitors.map((item) => <SelectItem className="placeholder-select-item" key={item.id} value={item.id}>{item.name}</SelectItem>) : <div className="placeholder-search-empty">没有匹配的监控项</div>}</SelectContent></Select><Tabs value={activeGroup} onValueChange={setActiveGroup} className="placeholder-tabs"><TabsList>{placeholderGroups.map((group) => <TabsTrigger key={group.key} value={group.key} title={group.label}>{group.label}</TabsTrigger>)}</TabsList>{placeholderGroups.map((group) => <TabsContent key={group.key} value={group.key}><div className="placeholder-list">{group.items.map((item) => <button type="button" className="placeholder-item" key={item.key} onClick={() => void copy(item.key)}><span><strong>{item.label}</strong><code>{`{{${item.key}}}`}</code></span><Copy size={13} /></button>)}</div></TabsContent>)}</Tabs> </> : <div className="placeholder-empty">请先创建监控项</div>}</div>}</div>;
 }

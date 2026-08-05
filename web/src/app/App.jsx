@@ -28,12 +28,14 @@ export function App() {
   const [selectedMonitor, setSelectedMonitor] = useState(null);
   const [showMonitorDialog, setShowMonitorDialog] = useState(false);
   const [showChannelDialog, setShowChannelDialog] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState(null);
   const [recordsMonitor, setRecordsMonitor] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [togglingMonitorId, setTogglingMonitorId] = useState("");
+  const [togglingChannelId, setTogglingChannelId] = useState("");
 
   const notify = useCallback((message, tone = "success") => {
     if (tone === "error") toast.error(message);
@@ -157,17 +159,33 @@ export function App() {
     catch (error) { notify(error.message, "error"); }
   };
 
+  const openCreateChannel = useCallback(() => { setSelectedChannel(null); setShowChannelDialog(true); }, []);
+  const openEditChannel = useCallback((channel) => { setSelectedChannel(channel); setShowChannelDialog(true); }, []);
+  const toggleChannelEnabled = useCallback(async (channel) => {
+    if (togglingChannelId) return;
+    setTogglingChannelId(channel.id);
+    try {
+      await api(`/api/v1/notification-channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !channel.enabled }) });
+      notify(channel.enabled ? "通知渠道已停用" : "通知渠道已启用");
+      void refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setTogglingChannelId("");
+    }
+  }, [notify, refresh, togglingChannelId]);
+
   const page = activePage === "overview"
     ? <OverviewPage monitors={monitors} loading={loading} onCreate={openCreateMonitor} onOpen={openMonitorList} onRun={runMonitor} onViewRecords={openRecords} />
     : activePage === "monitors"
       ? <MonitorsPage onCreate={openCreateMonitor} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
       : activePage === "notifications"
-        ? <NotificationsPage channels={channels} onCreate={() => setShowChannelDialog(true)} onRefresh={refresh} onTest={testChannel} />
+        ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} onTest={testChannel} />
         : activePage.startsWith("monitor-details:") && recordTabs[activePage]
           ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} />
           : <SettingsPage />;
 
-  const overlays = <><Toaster position="bottom-right" richColors />{showMonitorDialog && <MonitorDialog monitor={selectedMonitor} modules={modules} channels={channels} onClose={() => setShowMonitorDialog(false)} onSaved={() => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testMonitor} />}{recordsMonitor && <MonitorRecordsDialog monitor={recordsMonitor.monitor} descriptor={recordsMonitor.descriptor} onClose={() => setRecordsMonitor(null)} onOpenTab={openRecordsTab} />}{showChannelDialog && <ChannelDialog notifiers={notifiers} monitors={monitors} modules={modules} onClose={() => setShowChannelDialog(false)} onSaved={() => { setShowChannelDialog(false); notify("通知渠道已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testNotification} />}<AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><AlertTriangle size={19} /></div><AlertDialogTitle>删除监控项</AlertDialogTitle><AlertDialogDescription>确定要删除“{deleteTarget?.name}”吗？相关配置和历史执行记录将一并删除，此操作无法撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={confirmDeleteMonitor}>{deleting ? "删除中..." : "确认删除"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
+  const overlays = <><Toaster position="bottom-right" richColors />{showMonitorDialog && <MonitorDialog monitor={selectedMonitor} modules={modules} channels={channels} onClose={() => setShowMonitorDialog(false)} onSaved={() => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testMonitor} />}{recordsMonitor && <MonitorRecordsDialog monitor={recordsMonitor.monitor} descriptor={recordsMonitor.descriptor} onClose={() => setRecordsMonitor(null)} onOpenTab={openRecordsTab} />}{showChannelDialog && <ChannelDialog channel={selectedChannel} notifiers={notifiers} monitors={monitors} modules={modules} onClose={() => setShowChannelDialog(false)} onSaved={() => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testNotification} />}<AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><AlertTriangle size={19} /></div><AlertDialogTitle>删除监控项</AlertDialogTitle><AlertDialogDescription>确定要删除“{deleteTarget?.name}”吗？相关配置和历史执行记录将一并删除，此操作无法撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={confirmDeleteMonitor}>{deleting ? "删除中..." : "确认删除"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
 
   return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} onRefresh={refresh} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed((current) => !current)} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={setActivePage} onClose={closeTab} onRefresh={refresh} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
 }

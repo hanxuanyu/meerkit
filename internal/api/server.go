@@ -117,12 +117,12 @@ func (a *APIServer) handleModules(w http.ResponseWriter, r *http.Request, parts 
 		return
 	}
 	if len(parts) == 1 {
-		module, ok := a.modules.Get(parts[0])
+		descriptor, ok := a.modules.Descriptor(parts[0])
 		if !ok {
 			writeError(w, http.StatusNotFound, "module_not_found", "module not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, module.Descriptor())
+		writeJSON(w, http.StatusOK, descriptor)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": a.modules.Descriptors()})
@@ -494,6 +494,10 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_condition_config", err.Error())
 		return
 	}
+	if conditions.NotificationPolicy != "" && conditions.NotificationPolicy != core.NotificationPolicyOnce && conditions.NotificationPolicy != core.NotificationPolicyEvery {
+		writeError(w, http.StatusBadRequest, "invalid_condition_config", "notification_policy must be once or every")
+		return
+	}
 	enabled := true
 	if payload.Enabled != nil {
 		enabled = *payload.Enabled
@@ -543,6 +547,15 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		current.ModuleConfig = payload.ModuleConfig
 	}
 	if len(payload.ConditionConfig) > 0 {
+		var conditions core.ConditionConfig
+		if err := json.Unmarshal(payload.ConditionConfig, &conditions); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_condition_config", err.Error())
+			return
+		}
+		if conditions.NotificationPolicy != "" && conditions.NotificationPolicy != core.NotificationPolicyOnce && conditions.NotificationPolicy != core.NotificationPolicyEvery {
+			writeError(w, http.StatusBadRequest, "invalid_condition_config", "notification_policy must be once or every")
+			return
+		}
 		current.ConditionConfig = payload.ConditionConfig
 	}
 	if payload.NotificationChannelIDs != nil {

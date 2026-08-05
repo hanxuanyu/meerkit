@@ -33,6 +33,7 @@ type ResultSetDescriptor struct {
 	Key         string                  `json:"key"`
 	Label       string                  `json:"label"`
 	Description string                  `json:"description,omitempty"`
+	Scope       string                  `json:"scope,omitempty"`
 	Fields      []ResultFieldDescriptor `json:"fields"`
 }
 

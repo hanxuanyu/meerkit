@@ -35,7 +35,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
   const updateSchedule = (index, value) => setSchedules((current) => current.map((schedule, itemIndex) => itemIndex === index ? value : schedule));
   const addSchedule = () => setSchedules((current) => [...current, "*/5 * * * *"]);
   const removeSchedule = (index) => setSchedules((current) => current.length <= 1 ? current : current.filter((_, itemIndex) => itemIndex !== index));
-  const addRule = () => { const field = getResultFields(descriptor)[0]; setConditionConfig((current) => ({ ...current, rules: [...(current.rules || []), { field: field?.name || "", operator: field?.operators?.[0] || "equals", value: "" }] })); };
+  const addRule = () => { const field = getResultFields(descriptor)[0]; setConditionConfig((current) => ({ ...current, rules: [...(current.rules || []), { field: field?.name || "", source: "current", operator: field?.operators?.[0] || "equals", value_source: "literal", value: "" }] })); };
 
   const submit = async (event) => {
     event.preventDefault();

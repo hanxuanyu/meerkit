@@ -115,7 +115,26 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	if previousErr == nil {
 		previousResult = previous.Result
 	}
+	notificationPolicy := core.NormalizeNotificationPolicy(conditionConfig.NotificationPolicy)
+	executionResult := map[string]any{
+		"success":       observation.Success && executeErr == nil,
+		"duration_ms":   duration.Milliseconds(),
+		"error_code":    observation.ErrorCode,
+		"error_message": observation.ErrorMessage,
+		"summary":       observation.Summary,
+	}
+	current["summary"] = executionResult
 	evaluation := core.EvaluateConditions(conditionConfig, current, previousResult)
+	logic := strings.ToUpper(conditionConfig.Logic)
+	if logic != "ANY" {
+		logic = "ALL"
+	}
+	matchedCount := 0
+	for _, detail := range evaluation.Details {
+		if detail.State == "true" {
+			matchedCount++
+		}
+	}
 	state := core.RuntimeState{}
 	_ = json.Unmarshal(monitor.RuntimeState, &state)
 	previousActive := state.ConditionActive
@@ -123,7 +142,7 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	active := previousActive
 	if evaluation.State == "true" {
 		active = true
-		if !previousActive {
+		if notificationPolicy == core.NotificationPolicyEvery || !previousActive {
 			eventType = "triggered"
 		}
 	} else if evaluation.State == "false" {
@@ -132,6 +151,17 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 			eventType = "recovered"
 		}
 	}
+	executionResult["triggered"] = evaluation.State == "true"
+	executionResult["condition_state"] = evaluation.State
+	executionResult["event_type"] = eventType
+	executionResult["condition_logic"] = logic
+	executionResult["matched_count"] = matchedCount
+	executionResult["condition_details"] = evaluation.Details
+	if observation.ResultSets == nil {
+		observation.ResultSets = make(map[string]map[string]any)
+	}
+	observation.ResultSets["summary"] = executionResult
+	current["summary"] = executionResult
 	resultHash := core.HashString(core.JSONString(current))
 	finished := time.Now().UTC()
 	record := core.MonitorRecord{

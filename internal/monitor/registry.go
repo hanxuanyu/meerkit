@@ -29,7 +29,15 @@ func (r *Registry) Get(moduleType string) (core.MonitorModule, bool) {
 func (r *Registry) Descriptors() []core.ModuleDescriptor {
 	result := make([]core.ModuleDescriptor, 0, len(r.modules))
 	for _, module := range r.modules {
-		result = append(result, module.Descriptor())
+		result = append(result, core.WithCommonResultSets(module.Descriptor()))
 	}
 	return result
+}
+
+func (r *Registry) Descriptor(moduleType string) (core.ModuleDescriptor, bool) {
+	module, ok := r.modules[moduleType]
+	if !ok {
+		return core.ModuleDescriptor{}, false
+	}
+	return core.WithCommonResultSets(module.Descriptor()), true
 }
