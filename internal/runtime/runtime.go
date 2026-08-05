@@ -1,0 +1,334 @@
+package runtime
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"meerkit/internal/app"
+	"meerkit/internal/core"
+	"meerkit/internal/monitor"
+	"meerkit/internal/notification"
+	"meerkit/internal/store"
+)
+
+var ErrMonitorRunning = errors.New("monitor is already running")
+
+type Runner struct {
+	store     *store.Store
+	modules   *monitor.Registry
+	notifiers *notification.Registry
+	locksMu   sync.Mutex
+	locks     map[string]*sync.Mutex
+	logger    *slog.Logger
+}
+
+func NewRunner(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, logger *slog.Logger) *Runner {
+	return &Runner{store: store, modules: modules, notifiers: notifiers, locks: make(map[string]*sync.Mutex), logger: logger}
+}
+
+func (r *Runner) lockFor(id string) *sync.Mutex {
+	r.locksMu.Lock()
+	defer r.locksMu.Unlock()
+	lock := r.locks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		r.locks[id] = lock
+	}
+	return lock
+}
+
+func (r *Runner) Run(ctx context.Context, id string) (core.MonitorRecord, error) {
+	lock := r.lockFor(id)
+	lock.Lock()
+	defer lock.Unlock()
+	return r.runLocked(ctx, id)
+}
+
+func (r *Runner) TryRun(ctx context.Context, id string) (core.MonitorRecord, error) {
+	lock := r.lockFor(id)
+	if !lock.TryLock() {
+		return core.MonitorRecord{}, ErrMonitorRunning
+	}
+	defer lock.Unlock()
+	return r.runLocked(ctx, id)
+}
+
+func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, error) {
+	monitor, err := r.store.GetMonitor(ctx, id)
+	if err != nil {
+		return core.MonitorRecord{}, err
+	}
+	module, ok := r.modules.Get(monitor.ModuleType)
+	if !ok {
+		return core.MonitorRecord{}, fmt.Errorf("unknown monitor module %q", monitor.ModuleType)
+	}
+	started := time.Now().UTC()
+	previous, previousErr := r.store.LatestSuccessfulRecord(ctx, id)
+	if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
+		return core.MonitorRecord{}, previousErr
+	}
+	observation, executeErr := module.Execute(ctx, monitor.ModuleConfig)
+	if observation.Result == nil {
+		observation.Result = map[string]any{}
+	}
+	duration := time.Since(started)
+	observation.Result["success"] = observation.Success && executeErr == nil
+	observation.Result["duration_ms"] = duration.Milliseconds()
+	if executeErr != nil {
+		observation.Success = false
+		if observation.ErrorCode == "" {
+			observation.ErrorCode = "execution_error"
+		}
+		if observation.ErrorMessage == "" {
+			observation.ErrorMessage = executeErr.Error()
+		}
+		observation.Result["error"] = observation.ErrorMessage
+	}
+	current := observation.Result
+	var conditionConfig core.ConditionConfig
+	if err := json.Unmarshal(monitor.ConditionConfig, &conditionConfig); err != nil {
+		observation.ErrorCode = "invalid_condition_config"
+		observation.ErrorMessage = err.Error()
+	}
+	var previousResult map[string]any
+	if previousErr == nil {
+		previousResult = previous.Result
+	}
+	evaluation := core.EvaluateConditions(conditionConfig, current, previousResult)
+	state := core.RuntimeState{}
+	_ = json.Unmarshal(monitor.RuntimeState, &state)
+	previousActive := state.ConditionActive
+	eventType := "none"
+	active := previousActive
+	if evaluation.State == "true" {
+		active = true
+		if !previousActive {
+			eventType = "triggered"
+		}
+	} else if evaluation.State == "false" {
+		active = false
+		if previousActive {
+			eventType = "recovered"
+		}
+	}
+	resultHash := core.HashString(core.JSONString(current))
+	finished := time.Now().UTC()
+	record := core.MonitorRecord{
+		ID: core.NewID(), MonitorID: monitor.ID, StartedAt: started, FinishedAt: finished,
+		Success: observation.Success && executeErr == nil, DurationMS: duration.Milliseconds(), ResultSchemaVersion: observation.SchemaVersion,
+		Result: current, ResultHash: resultHash, ConditionState: evaluation.State, EventType: eventType,
+		NotificationResult: map[string]any{}, ErrorCode: observation.ErrorCode, ErrorMessage: observation.ErrorMessage,
+	}
+	if record.ResultSchemaVersion == "" {
+		record.ResultSchemaVersion = module.Descriptor().Version
+	}
+	if err := r.store.AddRecord(ctx, record); err != nil {
+		return record, err
+	}
+	state.ConditionActive = active
+	state.LastRecordID = record.ID
+	state.LastRunAt = finished
+	state.LastSuccess = record.Success
+	state.LastSummary = observation.Summary
+	if err := r.store.UpdateRuntimeState(ctx, monitor.ID, state); err != nil {
+		return record, err
+	}
+	if eventType != "none" {
+		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: observation.Summary, CurrentResult: current, ConditionDetail: evaluation.Details}
+		if previousErr == nil {
+			event.PreviousResult = previous.Result
+		}
+		channelIDs := append([]string(nil), monitor.NotificationChannelIDs...)
+		if len(channelIDs) > 0 {
+			go r.sendNotifications(context.Background(), record.ID, channelIDs, event)
+		}
+	}
+	return record, nil
+}
+
+func (r *Runner) sendNotifications(ctx context.Context, recordID string, channelIDs []string, event core.NotificationEvent) {
+	results := make(map[string]any, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channel, err := r.store.GetChannel(ctx, channelID)
+		if err != nil {
+			results[channelID] = map[string]any{"status": "error", "message": err.Error()}
+			continue
+		}
+		if !channel.Enabled {
+			results[channelID] = map[string]any{"status": "skipped", "message": "channel disabled"}
+			continue
+		}
+		notifier, ok := r.notifiers.Get(channel.NotifierType)
+		if !ok {
+			results[channelID] = map[string]any{"status": "error", "message": "unknown notifier type"}
+			continue
+		}
+		var sendErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			sendErr = notifier.Send(sendCtx, channel.Config, event)
+			cancel()
+			if sendErr == nil {
+				break
+			}
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			}
+		}
+		if sendErr != nil {
+			results[channelID] = map[string]any{"status": "error", "message": sendErr.Error(), "attempts": 3}
+		} else {
+			results[channelID] = map[string]any{"status": "sent", "attempts": 1}
+		}
+	}
+	if err := r.store.UpdateRecordNotifications(ctx, recordID, results); err != nil && r.logger != nil {
+		r.logger.Error("update notification result failed", "record_id", recordID, "error", err)
+	}
+}
+
+type scheduleTask struct {
+	expression string
+	timezone   string
+	next       time.Time
+}
+
+type Scheduler struct {
+	runner          *Runner
+	store           *store.Store
+	defaultTimezone string
+	poll            time.Duration
+	maxConcurrency  int
+	retention       time.Duration
+	semaphore       chan struct{}
+	logger          *slog.Logger
+	tasksMu         sync.Mutex
+	tasks           map[string]*scheduleTask
+}
+
+func NewScheduler(runner *Runner, store *store.Store, config app.Config, logger *slog.Logger) *Scheduler {
+	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, retention: config.RetentionDuration(), semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask)}
+}
+
+func (s *Scheduler) Start(ctx context.Context) {
+	ticker := time.NewTicker(s.poll)
+	defer ticker.Stop()
+	lastPrune := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.syncAndRun(ctx, now)
+			if time.Since(lastPrune) >= time.Hour {
+				before := time.Now().Add(-s.retention)
+				if _, err := s.store.Prune(ctx, before); err != nil && s.logger != nil {
+					s.logger.Error("prune records failed", "error", err)
+				}
+				lastPrune = time.Now()
+			}
+		}
+	}
+}
+
+func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
+	monitors, err := s.store.ListMonitors(ctx)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("load monitors failed", "error", err)
+		}
+		return
+	}
+	present := make(map[string]bool, len(monitors))
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	for _, monitor := range monitors {
+		if !monitor.Enabled {
+			continue
+		}
+		present[monitor.ID] = true
+		task := s.tasks[monitor.ID]
+		if task == nil || task.expression != monitor.Schedule || task.timezone != monitor.Timezone {
+			location, schedule, scheduleErr := parseSchedule(monitor.Schedule, monitor.Timezone, s.defaultTimezone)
+			if scheduleErr != nil {
+				continue
+			}
+			task = &scheduleTask{expression: monitor.Schedule, timezone: monitor.Timezone, next: schedule.Next(now.In(location))}
+			s.tasks[monitor.ID] = task
+		}
+		if !now.Before(task.next) {
+			location, schedule, scheduleErr := parseSchedule(task.expression, task.timezone, s.defaultTimezone)
+			if scheduleErr == nil {
+				task.next = schedule.Next(now.In(location))
+				s.launch(ctx, monitor.ID)
+			}
+		}
+	}
+	for id := range s.tasks {
+		if !present[id] {
+			delete(s.tasks, id)
+		}
+	}
+}
+
+func (s *Scheduler) launch(ctx context.Context, monitorID string) {
+	select {
+	case s.semaphore <- struct{}{}:
+		go func() {
+			defer func() { <-s.semaphore }()
+			if _, err := s.runner.TryRun(ctx, monitorID); err != nil && !errors.Is(err, ErrMonitorRunning) && s.logger != nil {
+				s.logger.Error("scheduled monitor failed", "monitor_id", monitorID, "error", err)
+			}
+		}()
+	default:
+		if s.logger != nil {
+			s.logger.Warn("scheduler concurrency limit reached", "monitor_id", monitorID, "limit", s.maxConcurrency)
+		}
+	}
+}
+
+func parseSchedule(expression, timezone, defaultTimezone string) (*time.Location, cron.Schedule, error) {
+	locationName := timezone
+	if locationName == "" {
+		locationName = defaultTimezone
+	}
+	location := time.Local
+	if locationName != "" && locationName != "Local" {
+		loaded, err := time.LoadLocation(locationName)
+		if err != nil {
+			return nil, nil, err
+		}
+		location = loaded
+	}
+	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	schedule, err := parser.Parse(expression)
+	if err != nil {
+		return nil, nil, err
+	}
+	return location, schedule, nil
+}
+
+func NextScheduleTimes(expression, timezone, defaultTimezone string, count int) ([]time.Time, error) {
+	location, schedule, err := parseSchedule(expression, timezone, defaultTimezone)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]time.Time, 0, count)
+	next := time.Now().In(location)
+	for i := 0; i < count; i++ {
+		next = schedule.Next(next)
+		result = append(result, next)
+	}
+	return result, nil
+}
+
+func ValidateSchedule(expression, timezone, defaultTimezone string) error {
+	_, _, err := parseSchedule(expression, timezone, defaultTimezone)
+	return err
+}

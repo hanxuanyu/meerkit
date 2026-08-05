@@ -1,0 +1,20 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+
+storage:
+  data_dir: ./data
+  retention: 30d
+
+scheduler:
+  timezone: Asia/Shanghai
+  max_concurrency: 16
+  poll_milliseconds: 500
+
+logging:
+  level: info
+  format: text
+
+security:
+  session_ttl: 24h
+  master_key_file: ./data/master.key
