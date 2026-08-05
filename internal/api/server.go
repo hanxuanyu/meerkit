@@ -1,7 +1,6 @@
 package api
 
 import (
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"meerkit/internal/app"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
@@ -21,61 +22,87 @@ import (
 )
 
 type APIServer struct {
-	store     *store.Store
-	modules   *monitor.Registry
-	notifiers *notification.Registry
-	runner    *runtimeapp.Runner
-	config    app.Config
-	logger    *slog.Logger
+	store        *store.Store
+	modules      *monitor.Registry
+	notifiers    *notification.Registry
+	runner       *runtimeapp.Runner
+	config       app.Config
+	logger       *slog.Logger
+	accessLogger *slog.Logger
 }
 
-func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, config app.Config, logger *slog.Logger) *APIServer {
-	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, config: config, logger: logger}
+func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
+	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, config: config, logger: logger, accessLogger: accessLogger}
 }
 
-func (a *APIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/healthz" {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
-		return
-	}
-	if r.URL.Path == "/readyz" {
-		if err := a.store.Ping(r.Context()); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "storage_unavailable", err.Error())
+func (a *APIServer) Router() http.Handler {
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.RedirectTrailingSlash = false
+	router.Use(gin.Recovery(), a.requestLogger())
+
+	router.GET("/healthz", func(c *gin.Context) {
+		writeJSON(c.Writer, http.StatusOK, map[string]any{"status": "ok"})
+	})
+	router.GET("/readyz", func(c *gin.Context) {
+		if err := a.store.Ping(c.Request.Context()); err != nil {
+			writeError(c.Writer, http.StatusServiceUnavailable, "storage_unavailable", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
-		return
-	}
-	if strings.HasPrefix(r.URL.Path, "/api/") {
-		a.handleAPI(w, r)
-		return
-	}
-	serveFrontend(w, r)
-}
+		writeJSON(c.Writer, http.StatusOK, map[string]any{"status": "ready"})
+	})
 
-func (a *APIServer) handleAPI(w http.ResponseWriter, r *http.Request) {
-	parts := pathParts(r.URL.Path)
-	if len(parts) < 3 || parts[0] != "api" || parts[1] != "v1" {
-		writeError(w, http.StatusNotFound, "not_found", "API route not found")
-		return
-	}
-	switch parts[2] {
-	case "modules":
-		a.handleModules(w, r, parts[3:])
-	case "notifiers":
-		a.handleNotifiers(w, r)
-	case "notification-channels":
-		a.handleChannels(w, r, parts[3:])
-	case "system":
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+	api := router.Group("/api/v1")
+	api.GET("/modules", legacyParts(a.handleModules))
+	api.GET("/modules/:type", func(c *gin.Context) { a.handleModules(c.Writer, c.Request, []string{c.Param("type")}) })
+	api.GET("/notifiers", legacy(a.handleNotifiers))
+	api.GET("/system", func(c *gin.Context) {
+		writeJSON(c.Writer, http.StatusOK, map[string]any{"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention, "timezone": a.config.Scheduler.Timezone})
+	})
+
+	api.GET("/notification-channels", legacyParts(a.handleChannels))
+	api.POST("/notification-channels", legacyParts(a.handleChannels))
+	api.GET("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.PATCH("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.PUT("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.DELETE("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.POST("/notification-channels/:id/test", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id"), "test"}) })
+
+	api.GET("/monitors", legacyParts(a.handleMonitors))
+	api.POST("/monitors", legacyParts(a.handleMonitors))
+	api.GET("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.PATCH("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.PUT("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.DELETE("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
+	api.POST("/monitors/:id/run", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "run"}) })
+	api.GET("/monitors/:id/records", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records"}) })
+	api.GET("/monitors/:id/next-runs", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "next-runs"}) })
+
+	router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			writeError(c.Writer, http.StatusNotFound, "not_found", "API route not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention, "timezone": a.config.Scheduler.Timezone})
-	case "monitors":
-		a.handleMonitors(w, r, parts[3:])
-	default:
-		writeError(w, http.StatusNotFound, "not_found", "API route not found")
+		serveFrontend(c.Writer, c.Request)
+	})
+	return router
+}
+
+func legacy(handler func(http.ResponseWriter, *http.Request)) gin.HandlerFunc {
+	return func(c *gin.Context) { handler(c.Writer, c.Request) }
+}
+
+func legacyParts(handler func(http.ResponseWriter, *http.Request, []string)) gin.HandlerFunc {
+	return func(c *gin.Context) { handler(c.Writer, c.Request, nil) }
+}
+
+func (a *APIServer) requestLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		c.Next()
+		if a.accessLogger != nil {
+			a.accessLogger.Info("http request", "method", c.Request.Method, "path", c.Request.URL.Path, "status", c.Writer.Status(), "duration_ms", time.Since(started).Milliseconds(), "client_ip", c.ClientIP(), "user_agent", c.Request.UserAgent())
+		}
 	}
 }
 
@@ -142,6 +169,9 @@ func (a *APIServer) handleChannels(w http.ResponseWriter, r *http.Request, parts
 			writeError(w, http.StatusBadRequest, "notification_failed", err.Error())
 			return
 		}
+		if a.logger != nil {
+			a.logger.Info("notification test sent", "channel_id", channel.ID, "notifier_type", channel.NotifierType)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "sent"})
 		return
 	}
@@ -185,11 +215,17 @@ func (a *APIServer) handleChannels(w http.ResponseWriter, r *http.Request, parts
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
 		}
+		if a.logger != nil {
+			a.logger.Info("notification channel updated", "channel_id", channel.ID, "channel_name", channel.Name, "notifier_type", channel.NotifierType, "enabled", channel.Enabled)
+		}
 		writeJSON(w, http.StatusOK, channel)
 	case http.MethodDelete:
 		if err := a.store.DeleteChannel(r.Context(), id); err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
+		}
+		if a.logger != nil {
+			a.logger.Info("notification channel deleted", "channel_id", id, "channel_name", channel.Name, "notifier_type", channel.NotifierType)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -231,6 +267,9 @@ func (a *APIServer) createChannel(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.CreateChannel(r.Context(), channel); err != nil {
 		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
+	}
+	if a.logger != nil {
+		a.logger.Info("notification channel created", "channel_id", channel.ID, "channel_name", channel.Name, "notifier_type", channel.NotifierType, "enabled", channel.Enabled)
 	}
 	writeJSON(w, http.StatusCreated, channel)
 }
@@ -318,6 +357,9 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
 		}
+		if a.logger != nil {
+			a.logger.Info("monitor deleted", "monitor_id", id, "monitor_name", monitor.Name, "module_type", monitor.ModuleType)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -382,6 +424,9 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
 	}
+	if a.logger != nil {
+		a.logger.Info("monitor created", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "schedule", monitor.Schedule, "enabled", monitor.Enabled)
+	}
 	writeJSON(w, http.StatusCreated, monitor)
 }
 
@@ -443,6 +488,9 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
 	}
+	if a.logger != nil {
+		a.logger.Info("monitor updated", "monitor_id", current.ID, "monitor_name", current.Name, "module_type", current.ModuleType, "schedule", current.Schedule, "enabled", current.Enabled)
+	}
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -460,14 +508,6 @@ func ensureRawJSON(value json.RawMessage, fallback string) json.RawMessage {
 	return value
 }
 
-func pathParts(path string) []string {
-	trimmed := strings.Trim(path, "/")
-	if trimmed == "" {
-		return nil
-	}
-	return strings.Split(trimmed, "/")
-}
-
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -479,26 +519,16 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func serveFrontend(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/")
-	if path == "" {
-		path = "index.html"
+	assetPath := strings.TrimPrefix(r.URL.Path, "/")
+	if assetPath == "" || assetPath == "index.html" || strings.HasSuffix(assetPath, "/") {
+		assetPath = ""
+	} else if _, err := frontendFS.Open(assetPath); err != nil {
+		assetPath = ""
 	}
-	if _, err := frontendFS.Open(path); err != nil || strings.HasSuffix(path, "/") {
-		path = "index.html"
-	}
-	data, err := fs.ReadFile(frontendFS, path)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "page not found")
-		return
-	}
-	contentType := "text/html; charset=utf-8"
-	if strings.HasSuffix(path, ".js") {
-		contentType = "application/javascript; charset=utf-8"
-	} else if strings.HasSuffix(path, ".css") {
-		contentType = "text/css; charset=utf-8"
-	}
-	w.Header().Set("Content-Type", contentType)
-	_, _ = w.Write(data)
+	request := r.Clone(r.Context())
+	request.URL.Path = "/" + assetPath
+	request.URL.RawPath = ""
+	http.FileServer(http.FS(frontendFS)).ServeHTTP(w, request)
 }
 
 // frontendFS is replaced by the embedded build output at compile time.
@@ -508,8 +538,6 @@ var frontendFS fs.FS
 func SetFrontendFS(files fs.FS) {
 	frontendFS = files
 }
-
-var _ = embed.FS{}
 
 func init() {
 	if frontendFS == nil {

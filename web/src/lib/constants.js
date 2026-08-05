@@ -14,6 +14,6 @@ export const operators = {
 };
 
 export const defaultModuleConfig = {
-  http: { method: "GET", response_mode: "auto", normalize: "trim", verify_tls: true, timeout_seconds: 30 },
+  http: { method: "GET", body_mode: "none", response_mode: "auto", normalize: "trim", verify_tls: true, follow_redirects: true, max_redirects: 10, timeout_seconds: 30, max_body_bytes: 262144 },
   tcp: { timeout_seconds: 10, read_response: false, read_timeout_seconds: 3 }
 };

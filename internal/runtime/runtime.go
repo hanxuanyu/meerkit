@@ -69,6 +69,9 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	if !ok {
 		return core.MonitorRecord{}, fmt.Errorf("unknown monitor module %q", monitor.ModuleType)
 	}
+	if r.logger != nil {
+		r.logger.Debug("monitor execution started", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", module.Descriptor().Version)
+	}
 	started := time.Now().UTC()
 	previous, previousErr := r.store.LatestSuccessfulRecord(ctx, id)
 	if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
@@ -140,6 +143,9 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	if err := r.store.UpdateRuntimeState(ctx, monitor.ID, state); err != nil {
 		return record, err
 	}
+	if r.logger != nil {
+		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", observation.Summary, "error_code", record.ErrorCode)
+	}
 	if eventType != "none" {
 		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: observation.Summary, CurrentResult: current, ConditionDetail: evaluation.Details}
 		if previousErr == nil {
@@ -147,7 +153,12 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 		}
 		channelIDs := append([]string(nil), monitor.NotificationChannelIDs...)
 		if len(channelIDs) > 0 {
+			if r.logger != nil {
+				r.logger.Info("monitor condition event queued", "monitor_id", monitor.ID, "record_id", record.ID, "event_type", eventType, "channel_count", len(channelIDs))
+			}
 			go r.sendNotifications(context.Background(), record.ID, channelIDs, event)
+		} else if r.logger != nil {
+			r.logger.Info("monitor condition event has no notification channels", "monitor_id", monitor.ID, "record_id", record.ID, "event_type", eventType)
 		}
 	}
 	return record, nil
@@ -155,23 +166,38 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 
 func (r *Runner) sendNotifications(ctx context.Context, recordID string, channelIDs []string, event core.NotificationEvent) {
 	results := make(map[string]any, len(channelIDs))
+	if r.logger != nil {
+		r.logger.Debug("notification delivery started", "record_id", recordID, "event_type", event.EventType, "channel_count", len(channelIDs))
+	}
 	for _, channelID := range channelIDs {
 		channel, err := r.store.GetChannel(ctx, channelID)
 		if err != nil {
 			results[channelID] = map[string]any{"status": "error", "message": err.Error()}
+			if r.logger != nil {
+				r.logger.Error("load notification channel failed", "record_id", recordID, "channel_id", channelID, "error", err)
+			}
 			continue
 		}
 		if !channel.Enabled {
 			results[channelID] = map[string]any{"status": "skipped", "message": "channel disabled"}
+			if r.logger != nil {
+				r.logger.Info("notification channel skipped", "record_id", recordID, "channel_id", channelID, "reason", "disabled")
+			}
 			continue
 		}
 		notifier, ok := r.notifiers.Get(channel.NotifierType)
 		if !ok {
 			results[channelID] = map[string]any{"status": "error", "message": "unknown notifier type"}
+			if r.logger != nil {
+				r.logger.Error("notification notifier not found", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType)
+			}
 			continue
 		}
 		var sendErr error
 		for attempt := 1; attempt <= 3; attempt++ {
+			if r.logger != nil {
+				r.logger.Debug("notification delivery attempt", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempt", attempt)
+			}
 			sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			sendErr = notifier.Send(sendCtx, channel.Config, event)
 			cancel()
@@ -184,9 +210,18 @@ func (r *Runner) sendNotifications(ctx context.Context, recordID string, channel
 		}
 		if sendErr != nil {
 			results[channelID] = map[string]any{"status": "error", "message": sendErr.Error(), "attempts": 3}
+			if r.logger != nil {
+				r.logger.Error("notification delivery failed", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempts", 3, "error", sendErr)
+			}
 		} else {
 			results[channelID] = map[string]any{"status": "sent", "attempts": 1}
+			if r.logger != nil {
+				r.logger.Info("notification delivered", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "event_type", event.EventType)
+			}
 		}
+	}
+	if r.logger != nil {
+		r.logger.Debug("notification delivery completed", "record_id", recordID, "event_type", event.EventType)
 	}
 	if err := r.store.UpdateRecordNotifications(ctx, recordID, results); err != nil && r.logger != nil {
 		r.logger.Error("update notification result failed", "record_id", recordID, "error", err)
@@ -200,25 +235,34 @@ type scheduleTask struct {
 }
 
 type Scheduler struct {
-	runner          *Runner
-	store           *store.Store
-	defaultTimezone string
-	poll            time.Duration
-	maxConcurrency  int
-	retention       time.Duration
-	semaphore       chan struct{}
-	logger          *slog.Logger
-	tasksMu         sync.Mutex
-	tasks           map[string]*scheduleTask
+	runner           *Runner
+	store            *store.Store
+	defaultTimezone  string
+	poll             time.Duration
+	maxConcurrency   int
+	retention        time.Duration
+	semaphore        chan struct{}
+	logger           *slog.Logger
+	tasksMu          sync.Mutex
+	tasks            map[string]*scheduleTask
+	invalidSchedules map[string]string
 }
 
 func NewScheduler(runner *Runner, store *store.Store, config app.Config, logger *slog.Logger) *Scheduler {
-	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, retention: config.RetentionDuration(), semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask)}
+	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, retention: config.RetentionDuration(), semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string)}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
+	if s.logger != nil {
+		s.logger.Info("scheduler started", "poll_ms", s.poll.Milliseconds(), "max_concurrency", s.maxConcurrency, "retention", s.retention.String())
+	}
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
+	defer func() {
+		if s.logger != nil {
+			s.logger.Info("scheduler stopped")
+		}
+	}()
 	lastPrune := time.Now()
 	for {
 		select {
@@ -228,8 +272,10 @@ func (s *Scheduler) Start(ctx context.Context) {
 			s.syncAndRun(ctx, now)
 			if time.Since(lastPrune) >= time.Hour {
 				before := time.Now().Add(-s.retention)
-				if _, err := s.store.Prune(ctx, before); err != nil && s.logger != nil {
+				if deleted, err := s.store.Prune(ctx, before); err != nil && s.logger != nil {
 					s.logger.Error("prune records failed", "error", err)
+				} else if s.logger != nil {
+					s.logger.Info("records pruned", "deleted", deleted, "before", before)
 				}
 				lastPrune = time.Now()
 			}
@@ -245,6 +291,9 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 		}
 		return
 	}
+	if s.logger != nil {
+		s.logger.Debug("scheduler synchronization completed", "monitor_count", len(monitors))
+	}
 	present := make(map[string]bool, len(monitors))
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
@@ -257,8 +306,14 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 		if task == nil || task.expression != monitor.Schedule || task.timezone != monitor.Timezone {
 			location, schedule, scheduleErr := parseSchedule(monitor.Schedule, monitor.Timezone, s.defaultTimezone)
 			if scheduleErr != nil {
+				signature := monitor.Schedule + "\x00" + monitor.Timezone
+				if s.invalidSchedules[monitor.ID] != signature && s.logger != nil {
+					s.logger.Warn("monitor schedule is invalid", "monitor_id", monitor.ID, "schedule", monitor.Schedule, "timezone", monitor.Timezone, "error", scheduleErr)
+				}
+				s.invalidSchedules[monitor.ID] = signature
 				continue
 			}
+			delete(s.invalidSchedules, monitor.ID)
 			task = &scheduleTask{expression: monitor.Schedule, timezone: monitor.Timezone, next: schedule.Next(now.In(location))}
 			s.tasks[monitor.ID] = task
 		}
@@ -266,13 +321,19 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 			location, schedule, scheduleErr := parseSchedule(task.expression, task.timezone, s.defaultTimezone)
 			if scheduleErr == nil {
 				task.next = schedule.Next(now.In(location))
+				if s.logger != nil {
+					s.logger.Debug("scheduled monitor queued", "monitor_id", monitor.ID, "next_run", task.next)
+				}
 				s.launch(ctx, monitor.ID)
+			} else if s.logger != nil {
+				s.logger.Warn("monitor schedule became invalid", "monitor_id", monitor.ID, "schedule", task.expression, "error", scheduleErr)
 			}
 		}
 	}
 	for id := range s.tasks {
 		if !present[id] {
 			delete(s.tasks, id)
+			delete(s.invalidSchedules, id)
 		}
 	}
 }

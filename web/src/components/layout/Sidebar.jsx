@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, Bell, Layers3, Settings2, Waves } from "lucide-react";
+import { Activity, Bell, Layers3, Settings2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/Tooltip";
 
@@ -11,7 +11,7 @@ const navigationGroups = [
 
 export function Sidebar({ activePage, collapsed, onNavigate }) {
   return <TooltipProvider delayDuration={0}><aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-    <div className="brand"><div className="brand-mark"><Waves size={18} /></div><div><strong>Meerkit</strong><span>observability</span></div></div>
+    <div className="brand"><div className="brand-mark"><img src="/brand-mark.png" alt="Meerkit" /></div><div><strong>Meerkit</strong><span>observability</span></div></div>
     <div className="sidebar-nav">{navigationGroups.map((group) => <section className="sidebar-group" key={group.label}><div className="sidebar-group-label">{group.label}</div><nav>{group.items.map((item) => <SidebarNavItem key={item.id} item={item} active={activePage === item.id} collapsed={collapsed} onNavigate={onNavigate} />)}</nav></section>)}</div>
     <div className="sidebar-footer"><div className="status-indicator"><span />服务运行中</div><span className="version">v0.1.0</span></div>
   </aside></TooltipProvider>;

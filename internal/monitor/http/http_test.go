@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
+
+	"meerkit/internal/core"
 )
 
 func TestExecuteCapturesJSONResponse(t *testing.T) {
@@ -25,6 +29,198 @@ func TestExecuteCapturesJSONResponse(t *testing.T) {
 	if !ok || body["data"].(map[string]any)["version"] != float64(2) {
 		t.Fatalf("unexpected JSON result: %#v", observation.Result["body_json"])
 	}
+}
+
+func TestExecuteSupportsHTTPMethods(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"} {
+		t.Run(method, func(t *testing.T) {
+			var got string
+			module := captureModule(func(request *http.Request) {
+				got = request.Method
+			})
+			config, _ := json.Marshal(map[string]any{"url": "http://test.local/resource", "method": method})
+			if _, err := module.Execute(context.Background(), config); err != nil {
+				t.Fatalf("execute failed: %v", err)
+			}
+			if got != method {
+				t.Fatalf("method = %q, want %q", got, method)
+			}
+		})
+	}
+}
+
+func TestExecuteBuildsQueryAndHeaders(t *testing.T) {
+	var captured *http.Request
+	module := captureModule(func(request *http.Request) {
+		captured = request
+	})
+	config, _ := json.Marshal(map[string]any{
+		"url":     "http://test.local/resource?existing=value",
+		"query":   map[string]any{"page": "2", "tag": []any{"one", "two"}},
+		"headers": map[string]any{"X-Request-ID": "abc", "Accept": "application/json", "Authorization": "Bearer token", "Cookie": "session=xyz; theme=dark"},
+	})
+	if _, err := module.Execute(context.Background(), config); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if captured.URL.Query().Get("existing") != "value" || captured.URL.Query().Get("page") != "2" {
+		t.Fatalf("unexpected query: %s", captured.URL.RawQuery)
+	}
+	if values := captured.URL.Query()["tag"]; len(values) != 2 || values[0] != "one" || values[1] != "two" {
+		t.Fatalf("unexpected repeated query: %#v", values)
+	}
+	if captured.Header.Get("X-Request-ID") != "abc" || captured.Header.Get("Accept") != "application/json" || captured.Header.Get("Authorization") != "Bearer token" {
+		t.Fatalf("unexpected headers: %#v", captured.Header)
+	}
+	cookies := captured.Cookies()
+	if len(cookies) != 2 || cookies[0].Name != "session" || cookies[0].Value != "xyz" || cookies[1].Name != "theme" || cookies[1].Value != "dark" {
+		t.Fatalf("unexpected Cookie header: %#v", cookies)
+	}
+}
+
+func TestExecuteBuildsURLEncodedForm(t *testing.T) {
+	var captured *http.Request
+	module := captureModule(func(request *http.Request) {
+		captured = request
+	})
+	config, _ := json.Marshal(map[string]any{
+		"url":       "http://test.local/submit",
+		"method":    "POST",
+		"body_mode": "form_urlencoded",
+		"form_fields": map[string]any{
+			"name": "Meerkit",
+			"kind": "monitor",
+		},
+	})
+	if _, err := module.Execute(context.Background(), config); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if captured.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
+		t.Fatalf("content type = %q", captured.Header.Get("Content-Type"))
+	}
+	body, _ := io.ReadAll(captured.Body)
+	if string(body) != "kind=monitor&name=Meerkit" {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestExecuteBuildsMultipartForm(t *testing.T) {
+	var captured *http.Request
+	module := captureModule(func(request *http.Request) {
+		captured = request
+	})
+	config, _ := json.Marshal(map[string]any{
+		"url":       "http://test.local/upload",
+		"method":    "POST",
+		"body_mode": "multipart_form",
+		"form_fields": map[string]any{
+			"name": "Meerkit",
+		},
+	})
+	if _, err := module.Execute(context.Background(), config); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	mediaType, params, err := mime.ParseMediaType(captured.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" {
+		t.Fatalf("content type = %q: %v", captured.Header.Get("Content-Type"), err)
+	}
+	reader := multipartReader(t, captured, params["boundary"])
+	part, err := reader.NextPart()
+	if err != nil {
+		t.Fatalf("read multipart part: %v", err)
+	}
+	if part.FormName() != "name" {
+		t.Fatalf("form name = %q", part.FormName())
+	}
+	value, _ := io.ReadAll(part)
+	if string(value) != "Meerkit" {
+		t.Fatalf("form value = %q", value)
+	}
+}
+
+func TestExecuteBuildsRawBodies(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		field       string
+		value       string
+		contentType string
+	}{
+		{name: "json", mode: "raw_json", field: "json_body", value: `{"healthy":true}`, contentType: "application/json"},
+		{name: "text", mode: "raw_text", field: "raw_body", value: "PING\r\n", contentType: "text/plain; charset=utf-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var captured *http.Request
+			module := captureModule(func(request *http.Request) {
+				captured = request
+			})
+			config := map[string]any{"url": "http://test.local/raw", "method": "POST", "body_mode": test.mode, test.field: test.value}
+			raw, _ := json.Marshal(config)
+			if _, err := module.Execute(context.Background(), raw); err != nil {
+				t.Fatalf("execute failed: %v", err)
+			}
+			if captured.Header.Get("Content-Type") != test.contentType {
+				t.Fatalf("content type = %q", captured.Header.Get("Content-Type"))
+			}
+			body, _ := io.ReadAll(captured.Body)
+			if string(body) != test.value {
+				t.Fatalf("body = %q", body)
+			}
+		})
+	}
+}
+
+func TestValidateConfigRejectsInvalidBodyConfiguration(t *testing.T) {
+	tests := []struct {
+		name   string
+		config map[string]any
+	}{
+		{name: "method", config: map[string]any{"url": "http://test.local", "method": "INVALID"}},
+		{name: "body on GET", config: map[string]any{"url": "http://test.local", "method": "GET", "body_mode": "raw_json", "json_body": `{"value":1}`}},
+		{name: "body mode", config: map[string]any{"url": "http://test.local", "body_mode": "xml"}},
+		{name: "invalid json", config: map[string]any{"url": "http://test.local", "body_mode": "raw_json", "json_body": "{"}},
+		{name: "invalid proxy", config: map[string]any{"url": "http://test.local", "proxy_url": "unix:///tmp/proxy"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, _ := json.Marshal(test.config)
+			if err := (&Module{}).ValidateConfig(raw); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestDescriptorDeclaresMethodDependentBodyParameters(t *testing.T) {
+	descriptor := (&Module{}).Descriptor()
+	var bodyMode *core.ParameterDescriptor
+	for index := range descriptor.Parameters {
+		if descriptor.Parameters[index].Key == "body_mode" {
+			bodyMode = &descriptor.Parameters[index]
+			break
+		}
+	}
+	if bodyMode == nil {
+		t.Fatal("body_mode parameter is missing")
+	}
+	if len(bodyMode.VisibleWhen) != 1 || bodyMode.VisibleWhen[0].Operator != "in" {
+		t.Fatalf("body_mode should depend on method: %#v", bodyMode.VisibleWhen)
+	}
+	if len(bodyMode.OptionsWhen) != 1 || len(bodyMode.OptionsWhen[0].Options) != len(supportedBodyModes) {
+		t.Fatalf("body_mode options should be dynamic: %#v", bodyMode.OptionsWhen)
+	}
+}
+
+func captureModule(capture func(*http.Request)) *Module {
+	return &Module{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		capture(request)
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
+	})}}
+}
+
+func multipartReader(t *testing.T, request *http.Request, boundary string) *multipart.Reader {
+	t.Helper()
+	return multipart.NewReader(request.Body, boundary)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

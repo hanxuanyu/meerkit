@@ -19,7 +19,15 @@ func New() *Notifier { return &Notifier{} }
 func (n *Notifier) Descriptor() core.NotifierDescriptor {
 	return core.NotifierDescriptor{Type: "smtp", Name: "SMTP 邮件", Description: "通过 SMTP 发送告警和恢复邮件。", ConfigSchema: map[string]any{"type": "object", "required": []string{"host", "from", "to"}, "properties": map[string]any{
 		"host": map[string]any{"type": "string"}, "port": map[string]any{"type": "integer", "default": 587}, "username": map[string]any{"type": "string"}, "password": map[string]any{"type": "string", "secret": true}, "from": map[string]any{"type": "string"}, "to": map[string]any{"type": "string", "description": "多个地址使用逗号分隔"}, "subject_prefix": map[string]any{"type": "string", "default": "[Meerkit]"},
-	}}}
+	}}, Parameters: []core.ParameterDescriptor{
+		{Key: "host", Label: "SMTP 主机", Type: core.ParameterString, Required: true, Placeholder: "smtp.example.com", Order: 10},
+		{Key: "port", Label: "端口", Type: core.ParameterInteger, Default: 587, Minimum: core.Float64(1), Maximum: core.Float64(65535), Order: 20},
+		{Key: "from", Label: "发件人", Type: core.ParameterEmail, Required: true, Placeholder: "alert@example.com", Order: 30},
+		{Key: "username", Label: "用户名", Type: core.ParameterString, Order: 40},
+		{Key: "password", Label: "密码", Type: core.ParameterString, Secret: true, Order: 50},
+		{Key: "subject_prefix", Label: "主题前缀", Type: core.ParameterString, Default: "[Meerkit]", Order: 60},
+		{Key: "to", Label: "收件人", Type: core.ParameterText, FullWidth: true, Required: true, Rows: 3, Order: 100, Description: "多个地址使用逗号分隔。"},
+	}}
 }
 
 func (n *Notifier) ValidateConfig(raw json.RawMessage) error {

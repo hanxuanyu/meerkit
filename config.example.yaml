@@ -14,6 +14,21 @@ scheduler:
 logging:
   level: info
   format: text
+  add_source: true
+  console:
+    enabled: true
+    access: false
+  file:
+    enabled: true
+    directory: ./logs
+    filename: meerkit.log
+    max_size_mb: 100
+    max_backups: 7
+    max_age_days: 30
+    compress: true
+    access:
+      enabled: true
+      filename: meerkit-access.log
 
 security:
   session_ttl: 24h

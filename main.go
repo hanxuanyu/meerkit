@@ -14,6 +14,7 @@ import (
 
 	"meerkit/internal/api"
 	"meerkit/internal/app"
+	"meerkit/internal/logging"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
 	runtimeapp "meerkit/internal/runtime"
@@ -29,7 +30,16 @@ func main() {
 		slog.Error("load config failed", "error", err)
 		os.Exit(1)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(config.Logging.Level)}))
+	logger, accessLogger, closeLogger, err := logging.New(config.Logging)
+	if err != nil {
+		slog.Error("initialize logger failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := closeLogger(); err != nil {
+			logger.Error("close logger failed", "error", err)
+		}
+	}()
 	store, err := store.OpenStore(config.Storage.DataDir)
 	if err != nil {
 		logger.Error("open store failed", "error", err)
@@ -46,12 +56,12 @@ func main() {
 	notifiers := notification.NewRegistry()
 	runner := runtimeapp.NewRunner(store, modules, notifiers, logger)
 	scheduler := runtimeapp.NewScheduler(runner, store, config, logger)
-	apiServer := api.NewAPIServer(store, modules, notifiers, runner, config, logger)
+	apiServer := api.NewAPIServer(store, modules, notifiers, runner, config, logger, accessLogger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go scheduler.Start(ctx)
-	server := &http.Server{Addr: config.ListenAddress(), Handler: apiServer, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: config.ListenAddress(), Handler: apiServer.Router(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -62,19 +72,6 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
-	}
-}
-
-func parseLogLevel(value string) slog.Level {
-	switch value {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
 	}
 }
 

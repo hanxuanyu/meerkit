@@ -17,7 +17,11 @@ func New() *Notifier { return &Notifier{} }
 func (n *Notifier) Descriptor() core.NotifierDescriptor {
 	return core.NotifierDescriptor{Type: "webhook", Name: "Webhook", Description: "发送 JSON 通知到自定义地址。", ConfigSchema: map[string]any{"type": "object", "required": []string{"url"}, "properties": map[string]any{
 		"url": map[string]any{"type": "string", "title": "URL"}, "method": map[string]any{"type": "string", "enum": []string{"POST", "PUT"}, "default": "POST"}, "headers": map[string]any{"type": "object"},
-	}}}
+	}}, Parameters: []core.ParameterDescriptor{
+		{Key: "url", Label: "Webhook URL", Type: core.ParameterURL, Required: true, Placeholder: "https://example.com/webhook", Order: 10},
+		{Key: "method", Label: "请求方法", Type: core.ParameterList, Default: "POST", Order: 20, Options: []core.ParameterOption{{Value: "POST", Label: "POST"}, {Value: "PUT", Label: "PUT"}}},
+		{Key: "headers", Label: "请求头", Type: core.ParameterMap, FullWidth: true, Order: 100, Description: "每行定义一个请求头。"},
+	}}
 }
 
 func (n *Notifier) ValidateConfig(raw json.RawMessage) error {

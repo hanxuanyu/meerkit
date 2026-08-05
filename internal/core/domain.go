@@ -2,11 +2,12 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type FieldDescriptor struct {
@@ -17,14 +18,73 @@ type FieldDescriptor struct {
 	Path      bool     `json:"path,omitempty"`
 }
 
+type ParameterType string
+
+const (
+	ParameterString   ParameterType = "string"
+	ParameterText     ParameterType = "text"
+	ParameterList     ParameterType = "list"
+	ParameterMap      ParameterType = "map"
+	ParameterBoolean  ParameterType = "boolean"
+	ParameterInteger  ParameterType = "integer"
+	ParameterNumber   ParameterType = "number"
+	ParameterURL      ParameterType = "url"
+	ParameterEmail    ParameterType = "email"
+	ParameterJSON     ParameterType = "json"
+	ParameterDate     ParameterType = "date"
+	ParameterTime     ParameterType = "time"
+	ParameterDateTime ParameterType = "datetime"
+	ParameterDuration ParameterType = "duration"
+)
+
+type ParameterOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type ParameterOptionSet struct {
+	When    []ParameterCondition `json:"when,omitempty"`
+	Options []ParameterOption    `json:"options"`
+}
+
+type ParameterCondition struct {
+	Field    string `json:"field"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value,omitempty"`
+}
+
+type ParameterDescriptor struct {
+	Key         string               `json:"key"`
+	Label       string               `json:"label"`
+	Description string               `json:"description,omitempty"`
+	Type        ParameterType        `json:"type"`
+	Order       int                  `json:"order,omitempty"`
+	FullWidth   bool                 `json:"full_width,omitempty"`
+	Required    bool                 `json:"required,omitempty"`
+	Default     any                  `json:"default,omitempty"`
+	Placeholder string               `json:"placeholder,omitempty"`
+	Secret      bool                 `json:"secret,omitempty"`
+	Options     []ParameterOption    `json:"options,omitempty"`
+	OptionsWhen []ParameterOptionSet `json:"options_when,omitempty"`
+	VisibleWhen []ParameterCondition `json:"visible_when,omitempty"`
+	EnabledWhen []ParameterCondition `json:"enabled_when,omitempty"`
+	Minimum     *float64             `json:"minimum,omitempty"`
+	Maximum     *float64             `json:"maximum,omitempty"`
+	Step        *float64             `json:"step,omitempty"`
+	Rows        int                  `json:"rows,omitempty"`
+	Format      string               `json:"format,omitempty"`
+	Unit        string               `json:"unit,omitempty"`
+}
+
 type ModuleDescriptor struct {
-	Type         string            `json:"type"`
-	Version      string            `json:"version"`
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	ConfigSchema map[string]any    `json:"config_schema"`
-	ResultSchema map[string]any    `json:"result_schema"`
-	Fields       []FieldDescriptor `json:"fields"`
+	Type         string                `json:"type"`
+	Version      string                `json:"version"`
+	Name         string                `json:"name"`
+	Description  string                `json:"description"`
+	ConfigSchema map[string]any        `json:"config_schema"`
+	Parameters   []ParameterDescriptor `json:"parameters"`
+	ResultSchema map[string]any        `json:"result_schema"`
+	Fields       []FieldDescriptor     `json:"fields"`
 }
 
 type Observation struct {
@@ -43,10 +103,11 @@ type MonitorModule interface {
 }
 
 type NotifierDescriptor struct {
-	Type         string         `json:"type"`
-	Name         string         `json:"name"`
-	Description  string         `json:"description"`
-	ConfigSchema map[string]any `json:"config_schema"`
+	Type         string                `json:"type"`
+	Name         string                `json:"name"`
+	Description  string                `json:"description"`
+	ConfigSchema map[string]any        `json:"config_schema"`
+	Parameters   []ParameterDescriptor `json:"parameters"`
 }
 
 type NotificationEvent struct {
@@ -120,12 +181,10 @@ type RuntimeState struct {
 }
 
 func NewID() string {
-	buffer := make([]byte, 12)
-	if _, err := rand.Read(buffer); err != nil {
-		return time.Now().UTC().Format("20060102150405.000000000")
-	}
-	return hex.EncodeToString(buffer)
+	return uuid.NewString()
 }
+
+func Float64(value float64) *float64 { return &value }
 
 func JSONString(value any) string {
 	data, err := json.Marshal(value)

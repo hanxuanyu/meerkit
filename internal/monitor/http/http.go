@@ -1,6 +1,7 @@
 package httpmonitor
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -9,13 +10,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
-	"strconv"
+	"net/url"
 	"strings"
 	"time"
 
 	"meerkit/internal/core"
 )
+
+const (
+	defaultTimeoutSeconds = 30
+	defaultMaxBodyBytes   = 262144
+	defaultMaxRedirects   = 10
+)
+
+var supportedMethods = []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"}
+
+var supportedBodyModes = []string{"none", "form_urlencoded", "multipart_form", "raw_json", "raw_text"}
+
+var bodyMethods = []string{"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 
 type Module struct {
 	Client *http.Client
@@ -25,20 +39,50 @@ func New() *Module { return &Module{} }
 
 func (m *Module) Descriptor() core.ModuleDescriptor {
 	return core.ModuleDescriptor{
-		Type: "http", Version: "1", Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应变化。",
-		ConfigSchema: map[string]any{"type": "object", "required": []string{"url"}, "properties": map[string]any{
-			"url":     map[string]any{"type": "string", "title": "URL", "required": true},
-			"method":  map[string]any{"type": "string", "enum": []string{"GET", "HEAD", "POST"}, "default": "GET"},
-			"headers": map[string]any{"type": "object", "title": "请求头"}, "body": map[string]any{"type": "string", "title": "请求体"},
-			"auth_type": map[string]any{"type": "string", "enum": []string{"none", "basic", "bearer"}, "default": "none"},
-			"username":  map[string]any{"type": "string"}, "password": map[string]any{"type": "string", "secret": true}, "token": map[string]any{"type": "string", "secret": true},
-			"timeout_seconds": map[string]any{"type": "integer", "default": 30, "minimum": 1, "maximum": 300}, "verify_tls": map[string]any{"type": "boolean", "default": true},
-			"response_mode": map[string]any{"type": "string", "enum": []string{"auto", "text", "json"}, "default": "auto"}, "normalize": map[string]any{"type": "string", "enum": []string{"raw", "trim", "json"}, "default": "trim"},
-			"max_body_bytes": map[string]any{"type": "integer", "default": 262144, "minimum": 1024, "maximum": 1048576},
-		}},
+		Type: "http", Version: "2", Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应内容变化。",
+		ConfigSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"url"},
+			"properties": map[string]any{
+				"url":              map[string]any{"type": "string", "title": "URL", "format": "uri", "required": true},
+				"method":           map[string]any{"type": "string", "enum": supportedMethods, "default": "GET"},
+				"body_mode":        map[string]any{"type": "string", "enum": supportedBodyModes, "default": "none", "visible_when": []map[string]any{{"field": "method", "operator": "in", "value": bodyMethods}}},
+				"timeout_seconds":  map[string]any{"type": "integer", "default": defaultTimeoutSeconds, "minimum": 1, "maximum": 300},
+				"follow_redirects": map[string]any{"type": "boolean", "default": true},
+				"max_redirects":    map[string]any{"type": "integer", "default": defaultMaxRedirects, "minimum": 1, "maximum": 50},
+				"verify_tls":       map[string]any{"type": "boolean", "default": true},
+				"proxy_url":        map[string]any{"type": "string", "format": "uri"},
+				"query":            map[string]any{"type": "object", "title": "查询参数"},
+				"headers":          map[string]any{"type": "object", "title": "请求头"},
+				"form_fields":      map[string]any{"type": "object", "title": "表单字段"},
+				"json_body":        map[string]any{"type": "string", "title": "JSON 请求体", "multiline": true, "format": "json"},
+				"raw_body":         map[string]any{"type": "string", "title": "原始请求体", "multiline": true},
+				"response_mode":    map[string]any{"type": "string", "enum": []string{"auto", "text", "json"}, "default": "auto"},
+				"normalize":        map[string]any{"type": "string", "enum": []string{"raw", "trim", "json"}, "default": "trim"},
+				"max_body_bytes":   map[string]any{"type": "integer", "default": defaultMaxBodyBytes, "minimum": 1024, "maximum": 1048576},
+			},
+		},
+		Parameters: []core.ParameterDescriptor{
+			{Key: "url", Label: "请求 URL", Type: core.ParameterURL, Required: true, Placeholder: "https://example.com/api", Order: 10},
+			{Key: "method", Label: "请求方法", Type: core.ParameterList, Default: "GET", Order: 20, Options: methodOptions()},
+			{Key: "timeout_seconds", Label: "请求超时", Type: core.ParameterDuration, Default: defaultTimeoutSeconds, Minimum: core.Float64(1), Maximum: core.Float64(300), Unit: "秒", Order: 30},
+			{Key: "proxy_url", Label: "HTTP 代理", Type: core.ParameterURL, Order: 40, Placeholder: "http://127.0.0.1:7890", Description: "可选，仅支持 HTTP/HTTPS 代理。"},
+			{Key: "response_mode", Label: "响应解析", Type: core.ParameterList, Default: "auto", Order: 50, Options: []core.ParameterOption{{Value: "auto", Label: "自动"}, {Value: "text", Label: "仅文本"}, {Value: "json", Label: "JSON"}}},
+			{Key: "normalize", Label: "内容规范化", Type: core.ParameterList, Default: "trim", Order: 60, Options: []core.ParameterOption{{Value: "raw", Label: "保留原文"}, {Value: "trim", Label: "去除首尾空白"}, {Value: "json", Label: "规范化 JSON"}}},
+			{Key: "max_body_bytes", Label: "最大响应体大小", Type: core.ParameterInteger, Default: defaultMaxBodyBytes, Minimum: core.Float64(1024), Maximum: core.Float64(1048576), Unit: "字节", Order: 70},
+			{Key: "query", Label: "查询参数", Type: core.ParameterMap, FullWidth: true, Order: 100, Description: "每行一个参数；同名参数可使用逗号分隔值。"},
+			{Key: "headers", Label: "请求头", Type: core.ParameterMap, FullWidth: true, Order: 110, Description: "每行定义一个请求头，键和值都会按原样发送。"},
+			{Key: "body_mode", Label: "请求体类型", Type: core.ParameterList, Default: "none", Order: 200, Options: []core.ParameterOption{{Value: "none", Label: "无请求体"}}, OptionsWhen: []core.ParameterOptionSet{{When: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"), Options: bodyModeOptions()}}, VisibleWhen: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")},
+			{Key: "form_fields", Label: "表单字段", Type: core.ParameterMap, FullWidth: true, Order: 210, Description: "表单模式下每行定义一个字段。", VisibleWhen: bodyModeConditions("form_urlencoded", "multipart_form")},
+			{Key: "json_body", Label: "JSON 请求体", Type: core.ParameterText, FullWidth: true, Format: "json", Rows: 8, Order: 220, Placeholder: "{\n  \"key\": \"value\"\n}", Description: "支持对象、数组和其他合法 JSON 值。", VisibleWhen: bodyModeConditions("raw_json")},
+			{Key: "raw_body", Label: "原始请求体", Type: core.ParameterText, FullWidth: true, Rows: 8, Order: 230, Placeholder: "输入要发送的原始文本内容", VisibleWhen: bodyModeConditions("raw_text")},
+			{Key: "follow_redirects", Label: "跟随重定向", Type: core.ParameterBoolean, Default: true, Order: 300},
+			{Key: "verify_tls", Label: "校验 TLS 证书", Type: core.ParameterBoolean, Default: true, Order: 310},
+			{Key: "max_redirects", Label: "最大重定向次数", Type: core.ParameterInteger, Default: defaultMaxRedirects, Minimum: core.Float64(1), Maximum: core.Float64(50), Order: 320, VisibleWhen: equalsCondition("follow_redirects", true)},
+		},
 		ResultSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"success": map[string]any{"type": "boolean"}, "status_code": map[string]any{"type": "integer"}, "duration_ms": map[string]any{"type": "number"}, "response_headers": map[string]any{"type": "object"},
-			"body_text": map[string]any{"type": "string"}, "body_json": map[string]any{"type": "object"}, "body_hash": map[string]any{"type": "string"}, "body_size": map[string]any{"type": "integer"}, "truncated": map[string]any{"type": "boolean"},
+			"body_text": map[string]any{"type": "string"}, "body_json": map[string]any{}, "body_hash": map[string]any{"type": "string"}, "body_size": map[string]any{"type": "integer"}, "truncated": map[string]any{"type": "boolean"},
 		}},
 		Fields: []core.FieldDescriptor{
 			{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false"}},
@@ -51,18 +95,87 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 	}
 }
 
+func methodOptions() []core.ParameterOption {
+	return []core.ParameterOption{{Value: "GET", Label: "GET"}, {Value: "HEAD", Label: "HEAD"}, {Value: "POST", Label: "POST"}, {Value: "PUT", Label: "PUT"}, {Value: "PATCH", Label: "PATCH"}, {Value: "DELETE", Label: "DELETE"}, {Value: "OPTIONS", Label: "OPTIONS"}, {Value: "TRACE", Label: "TRACE"}, {Value: "CONNECT", Label: "CONNECT"}}
+}
+
+func bodyModeOptions() []core.ParameterOption {
+	return []core.ParameterOption{{Value: "none", Label: "无请求体"}, {Value: "form_urlencoded", Label: "表单（URL 编码）"}, {Value: "multipart_form", Label: "表单（Multipart）"}, {Value: "raw_json", Label: "Raw JSON"}, {Value: "raw_text", Label: "Raw 文本"}}
+}
+
+func equalsCondition(field string, value any) []core.ParameterCondition {
+	return []core.ParameterCondition{{Field: field, Operator: "equals", Value: value}}
+}
+
+func inCondition(field string, values ...any) []core.ParameterCondition {
+	return []core.ParameterCondition{{Field: field, Operator: "in", Value: values}}
+}
+
+func bodyModeConditions(modes ...string) []core.ParameterCondition {
+	conditions := inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+	values := make([]any, 0, len(modes))
+	for _, mode := range modes {
+		values = append(values, mode)
+	}
+	return append(conditions, core.ParameterCondition{Field: "body_mode", Operator: "in", Value: values})
+}
+
 func (m *Module) ValidateConfig(raw json.RawMessage) error {
 	var config map[string]any
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return fmt.Errorf("invalid HTTP config: %w", err)
 	}
-	urlValue, _ := config["url"].(string)
-	if urlValue == "" || (!strings.HasPrefix(urlValue, "http://") && !strings.HasPrefix(urlValue, "https://")) {
-		return errors.New("url must start with http:// or https://")
+
+	parsedURL, err := url.Parse(valueString(config, "url", ""))
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return errors.New("url must be a valid http:// or https:// URL")
 	}
-	method := valueString(config, "method", "GET")
-	if method != "GET" && method != "HEAD" && method != "POST" {
+	method := strings.ToUpper(valueString(config, "method", "GET"))
+	if !contains(supportedMethods, method) {
 		return fmt.Errorf("unsupported HTTP method %q", method)
+	}
+	bodyMode := strings.ToLower(valueString(config, "body_mode", "none"))
+	if !contains(supportedBodyModes, bodyMode) {
+		return fmt.Errorf("unsupported HTTP body mode %q", bodyMode)
+	}
+	if !contains(bodyMethods, method) && bodyMode != "none" {
+		return fmt.Errorf("HTTP method %q does not support a request body", method)
+	}
+	if err := validateMap(config, "query"); err != nil {
+		return err
+	}
+	if err := validateMap(config, "headers"); err != nil {
+		return err
+	}
+	if bodyMode == "form_urlencoded" || bodyMode == "multipart_form" {
+		if err := validateMap(config, "form_fields"); err != nil {
+			return err
+		}
+	}
+	if bodyMode == "raw_json" {
+		body := valueString(config, "json_body", "")
+		if body == "" {
+			return errors.New("json_body is required for raw_json body mode")
+		}
+		var value any
+		if err := json.Unmarshal([]byte(body), &value); err != nil {
+			return fmt.Errorf("json_body must contain valid JSON: %w", err)
+		}
+	}
+	if timeout := valueInt(config, "timeout_seconds", defaultTimeoutSeconds); timeout < 1 || timeout > 300 {
+		return errors.New("timeout_seconds must be between 1 and 300")
+	}
+	if maxBytes := valueInt(config, "max_body_bytes", defaultMaxBodyBytes); maxBytes < 1024 || maxBytes > 1048576 {
+		return errors.New("max_body_bytes must be between 1024 and 1048576")
+	}
+	if maxRedirects := valueInt(config, "max_redirects", defaultMaxRedirects); maxRedirects < 1 || maxRedirects > 50 {
+		return errors.New("max_redirects must be between 1 and 50")
+	}
+	if proxy := valueString(config, "proxy_url", ""); proxy != "" {
+		proxyURL, proxyErr := url.Parse(proxy)
+		if proxyErr != nil || proxyURL.Host == "" || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https") {
+			return errors.New("proxy_url must be a valid http:// or https:// URL")
+		}
 	}
 	return nil
 }
@@ -75,38 +188,31 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	if err := m.ValidateConfig(raw); err != nil {
 		return failedObservation(), err
 	}
-	timeout := time.Duration(valueInt(config, "timeout_seconds", 30)) * time.Second
-	requestContext, cancel := context.WithTimeout(ctx, timeout)
+
+	requestContext, cancel := context.WithTimeout(ctx, time.Duration(valueInt(config, "timeout_seconds", defaultTimeoutSeconds))*time.Second)
 	defer cancel()
-	method := valueString(config, "method", "GET")
-	request, err := http.NewRequestWithContext(requestContext, method, valueString(config, "url", ""), strings.NewReader(valueString(config, "body", "")))
+	body, contentType, err := requestBody(config)
 	if err != nil {
 		return failedObservation(), err
 	}
-	if headers, ok := config["headers"].(map[string]any); ok {
-		for key, value := range headers {
-			request.Header.Set(key, fmt.Sprint(value))
-		}
+	requestURL, _ := url.Parse(valueString(config, "url", ""))
+	addQuery(requestURL, config["query"])
+	request, err := http.NewRequestWithContext(requestContext, strings.ToUpper(valueString(config, "method", "GET")), requestURL.String(), body)
+	if err != nil {
+		return failedObservation(), err
 	}
-	switch strings.ToLower(valueString(config, "auth_type", "none")) {
-	case "basic":
-		request.SetBasicAuth(valueString(config, "username", ""), valueString(config, "password", ""))
-	case "bearer":
-		request.Header.Set("Authorization", "Bearer "+valueString(config, "token", ""))
+	applyHeaders(request, config["headers"])
+	if contentType != "" && request.Header.Get("Content-Type") == "" {
+		request.Header.Set("Content-Type", contentType)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !valueBool(config, "verify_tls", true)} //nolint:gosec -- explicitly configured by the user.
-	client := m.Client
-	if client == nil {
-		client = &http.Client{Transport: transport}
-	}
+	client := m.client(config)
 	started := time.Now()
 	response, err := client.Do(request)
 	if err != nil {
 		return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}}, err
 	}
 	defer response.Body.Close()
-	maxBytes := int64(valueInt(config, "max_body_bytes", 262144))
+	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if readErr != nil {
 		return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false, "status_code": response.StatusCode}}, readErr
@@ -118,13 +224,150 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	bodyText := normalize(string(data), valueString(config, "normalize", "trim"))
 	result := map[string]any{"success": true, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds(), "response_headers": flatten(response.Header), "body_text": bodyText, "body_hash": hash(bodyText), "body_size": len(data), "truncated": truncated}
 	mode := strings.ToLower(valueString(config, "response_mode", "auto"))
-	if mode == "json" || (mode == "auto" && strings.Contains(response.Header.Get("Content-Type"), "json")) {
+	if mode == "json" || (mode == "auto" && strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "json")) {
 		var parsed any
 		if json.Unmarshal(data, &parsed) == nil {
 			result["body_json"] = parsed
 		}
 	}
 	return core.Observation{Success: true, SchemaVersion: "1", Result: result, Summary: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+}
+
+func (m *Module) client(config map[string]any) *http.Client {
+	var client http.Client
+	if m.Client != nil {
+		client = *m.Client
+	} else {
+		client.Transport = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	if client.Transport == nil {
+		client.Transport = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	if transport, ok := client.Transport.(*http.Transport); ok {
+		transport = transport.Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !valueBool(config, "verify_tls", true)} //nolint:gosec -- explicitly configured by the user.
+		if proxy := valueString(config, "proxy_url", ""); proxy != "" {
+			if proxyURL, err := url.Parse(proxy); err == nil {
+				transport.Proxy = http.ProxyURL(proxyURL)
+			}
+		}
+		client.Transport = transport
+	}
+	if !valueBool(config, "follow_redirects", true) {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	} else {
+		maxRedirects := valueInt(config, "max_redirects", defaultMaxRedirects)
+		client.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			return nil
+		}
+	}
+	return &client
+}
+
+func requestBody(config map[string]any) (io.Reader, string, error) {
+	switch mode := strings.ToLower(valueString(config, "body_mode", "none")); mode {
+	case "none":
+		return nil, "", nil
+	case "form_urlencoded":
+		values := url.Values{}
+		addValues(values, config["form_fields"])
+		return strings.NewReader(values.Encode()), "application/x-www-form-urlencoded", nil
+	case "multipart_form":
+		var buffer bytes.Buffer
+		writer := multipart.NewWriter(&buffer)
+		for key, values := range stringValues(config["form_fields"]) {
+			for _, value := range values {
+				if err := writer.WriteField(key, value); err != nil {
+					return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
+				}
+			}
+		}
+		if err := writer.Close(); err != nil {
+			return nil, "", err
+		}
+		return bytes.NewReader(buffer.Bytes()), writer.FormDataContentType(), nil
+	case "raw_json":
+		body := valueString(config, "json_body", "")
+		return strings.NewReader(body), "application/json", nil
+	case "raw_text":
+		return strings.NewReader(valueString(config, "raw_body", "")), "text/plain; charset=utf-8", nil
+	default:
+		return nil, "", fmt.Errorf("unsupported HTTP body mode %q", mode)
+	}
+}
+
+func addQuery(requestURL *url.URL, source any) {
+	values := requestURL.Query()
+	addValues(values, source)
+	requestURL.RawQuery = values.Encode()
+}
+
+func addValues(values url.Values, source any) {
+	for key, items := range stringValues(source) {
+		for _, item := range items {
+			values.Add(key, item)
+		}
+	}
+}
+
+func applyHeaders(request *http.Request, source any) {
+	for key, values := range stringValues(source) {
+		if strings.EqualFold(key, "Host") {
+			if len(values) > 0 {
+				request.Host = values[0]
+			}
+			continue
+		}
+		for index, value := range values {
+			if index == 0 {
+				request.Header.Set(key, value)
+			} else {
+				request.Header.Add(key, value)
+			}
+		}
+	}
+}
+
+func stringValues(source any) map[string][]string {
+	result := map[string][]string{}
+	values, ok := source.(map[string]any)
+	if !ok {
+		return result
+	}
+	for key, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				result[key] = append(result[key], fmt.Sprint(item))
+			}
+		case []string:
+			result[key] = append(result[key], typed...)
+		default:
+			result[key] = []string{fmt.Sprint(value)}
+		}
+	}
+	return result
+}
+
+func validateMap(config map[string]any, key string) error {
+	if value, exists := config[key]; exists && value != nil {
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("%s must be an object", key)
+		}
+	}
+	return nil
+}
+
+func contains(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func failedObservation() core.Observation {
@@ -137,6 +380,7 @@ func valueString(config map[string]any, key, fallback string) string {
 	}
 	return fallback
 }
+
 func valueInt(config map[string]any, key string, fallback int) int {
 	if value, ok := config[key].(float64); ok {
 		return int(value)
@@ -146,6 +390,7 @@ func valueInt(config map[string]any, key string, fallback int) int {
 	}
 	return fallback
 }
+
 func valueBool(config map[string]any, key string, fallback bool) bool {
 	if value, ok := config[key].(bool); ok {
 		return value
@@ -176,9 +421,8 @@ func flatten(headers http.Header) map[string]any {
 	}
 	return result
 }
+
 func hash(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
 }
-
-var _ = strconv.Itoa

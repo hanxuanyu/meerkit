@@ -1,7 +1,7 @@
 import React from "react";
 import { Trash2 } from "lucide-react";
 import { operators } from "../../lib/constants";
-import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
 import { Input } from "../ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/Select";
 
@@ -22,5 +22,5 @@ function ConditionRow({ rule, fields, onChange, onRemove }) {
   const fieldOptions = fields.map((item) => <SelectItem key={item.name} value={item.name}>{item.label}</SelectItem>);
   const operatorsForField = field?.operators || ["equals"];
   const showValue = rule.operator !== "changed" && !["is_true", "is_false"].includes(rule.operator);
-  return <div className="condition-row"><Select value={rule.field} onValueChange={(next) => onChange({ field: next, operator: fields.find((item) => item.name === next)?.operators?.[0] || "equals" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{fieldOptions}</SelectContent></Select>{field?.path && <Input value={rule.path || ""} onChange={(event) => onChange({ path: event.target.value })} placeholder="JSON 路径，如 data.status" />}<Select value={rule.operator} onValueChange={(operator) => onChange({ operator })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{operatorsForField.map((operator) => <SelectItem key={operator} value={operator}>{operators[operator] || operator}</SelectItem>)}</SelectContent></Select>{showValue && <Input value={rule.value ?? ""} onChange={(event) => onChange({ value: event.target.value })} placeholder="比较值" />}<Button type="button" variant="ghost" size="icon" title="删除条件" onClick={onRemove}><Trash2 size={15} /></Button></div>;
+  return <div className="condition-row"><Select value={rule.field} onValueChange={(next) => onChange({ field: next, operator: fields.find((item) => item.name === next)?.operators?.[0] || "equals" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{fieldOptions}</SelectContent></Select>{field?.path && <Input value={rule.path || ""} onChange={(event) => onChange({ path: event.target.value })} placeholder="JSON 路径，如 data.status" />}<Select value={rule.operator} onValueChange={(operator) => onChange({ operator })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{operatorsForField.map((operator) => <SelectItem key={operator} value={operator}>{operators[operator] || operator}</SelectItem>)}</SelectContent></Select>{showValue && <Input value={rule.value ?? ""} onChange={(event) => onChange({ value: event.target.value })} placeholder="比较值" />}<IconButton size="sm" title="删除条件" aria-label="删除条件" onClick={onRemove}><Trash2 size={15} /></IconButton></div>;
 }
