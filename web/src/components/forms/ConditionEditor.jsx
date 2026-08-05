@@ -1,5 +1,6 @@
-import React from "react";
-import { Trash2 } from "lucide-react";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Braces, Check, ChevronDown, Trash2 } from "lucide-react";
 import { operators } from "../../lib/constants";
 import { getResultFieldGroups } from "../../lib/resultSchema";
 import { IconButton } from "../ui/IconButton";
@@ -8,9 +9,10 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 
 const fieldReferenceOperators = new Set(["equals", "not_equals", "gt", "gte", "lt", "lte", "contains", "not_contains"]);
 const valueOperatorsWithoutInput = new Set(["changed", "is_true", "is_false", "exists", "not_exists"]);
+const previousExecutionSelection = "__previous_execution__";
 
 export function ConditionEditor({ descriptor, value, onChange }) {
-  const fieldGroups = getResultFieldGroups(descriptor);
+  const fieldGroups = getResultFieldGroups(descriptor, { includePrevious: false });
   const fields = fieldGroups.flatMap((group) => group.fields);
   const rules = value.rules || [];
   const notificationPolicy = value.notification_policy === "every" ? "every" : "once";
@@ -39,39 +41,208 @@ function parseFieldSelection(selection, fields) {
 }
 
 function findRuleField(rule, fields) {
-  const source = rule.source === "previous" || String(rule.field || "").startsWith("previous.") ? "previous" : "current";
   const name = normalizeFieldName(rule.field);
-  return fields.find((field) => field.source === source && field.name === name) || fields.find((field) => field.source === "current") || fields[0];
+  return fields.find((field) => field.source === "current" && field.name === name) || fields.find((field) => field.source === "current") || fields[0];
+}
+
+function executionComparisonOperators(field) {
+  if (["number", "integer"].includes(field?.type)) return ["equals", "not_equals", "gt", "gte", "lt", "lte"];
+  if (["string", "text"].includes(field?.type)) return ["equals", "not_equals", "contains", "not_contains"];
+  return ["equals", "not_equals"];
+}
+
+function parseLiteralValue(value, field, operator) {
+  if (!["number", "integer"].includes(field?.type) || operator === "between" || value.trim() === "") return value;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : value;
+}
+
+function JsonPathInput({ value, onChange, placeholder }) {
+  return <div className="condition-json-path">
+    <Braces size={13} aria-hidden="true" />
+    <Input className="condition-json-path-input" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={placeholder} />
+  </div>;
+}
+
+function EditableComparison({ rule, operator, field, fieldGroups, fields, canCompareField, onChange }) {
+  const containerRef = useRef(null);
+  const menuRef = useRef(null);
+  const inputRef = useRef(null);
+  const listboxID = useId();
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [menuStyle, setMenuStyle] = useState({});
+  const valueSource = canCompareField && rule.value_source === "current" ? "current" : "literal";
+  const selectedField = valueSource === "literal" ? null : fields.find((item) => item.source === valueSource && item.name === normalizeFieldName(rule.value_field));
+  const selectableGroups = canCompareField ? fieldGroups : [];
+  const selectableFields = selectableGroups.flatMap((group) => group.fields);
+  const selectedIndex = selectedField ? selectableFields.findIndex((item) => fieldSelection(item) === fieldSelection(selectedField)) : -1;
+  const displayValue = selectedField ? `${selectedField.sourceLabel} · ${selectedField.label}` : String(rule.value ?? "");
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const updatePosition = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const dialogRect = containerRef.current?.closest("[role=dialog]")?.getBoundingClientRect();
+      if (!rect || !dialogRect) return;
+      const gap = 4;
+      const availableBelow = dialogRect.bottom - rect.bottom - gap;
+      const availableAbove = rect.top - dialogRect.top - gap;
+      const openAbove = availableBelow < 220 && availableAbove > availableBelow;
+      const maxHeight = Math.max(80, Math.min(240, (openAbove ? availableAbove : availableBelow) - 8));
+      setMenuStyle(openAbove
+        ? { left: rect.left - dialogRect.left, width: rect.width, bottom: dialogRect.bottom - rect.top + gap, maxHeight }
+        : { left: rect.left - dialogRect.left, width: rect.width, top: rect.bottom - dialogRect.top + gap, maxHeight });
+    };
+    const closeOnOutsidePointer = (event) => {
+      if (!containerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    updatePosition();
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  const enterLiteral = (nextValue) => onChange({
+    value_source: "literal",
+    value_field: "",
+    value_path: "",
+    value: parseLiteralValue(nextValue, field, operator)
+  });
+  const chooseField = (nextField) => {
+    onChange({ value_source: nextField.source, value_field: nextField.name, value_path: "" });
+    setOpen(false);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  };
+  const toggleMenu = () => {
+    if (!canCompareField) return;
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    setOpen((current) => !current);
+  };
+  const handleKeyDown = (event) => {
+    if (!canCompareField) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setOpen(true);
+      setActiveIndex((current) => {
+        const start = current >= 0 ? current : selectedIndex >= 0 ? selectedIndex : direction > 0 ? -1 : 0;
+        return (start + direction + selectableFields.length) % selectableFields.length;
+      });
+    } else if (event.key === "Enter" && open && activeIndex >= 0) {
+      event.preventDefault();
+      chooseField(selectableFields[activeIndex]);
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  const portalContainer = open ? containerRef.current?.closest("[role=dialog]") : null;
+  const menu = portalContainer ? createPortal(
+    <div className="condition-combobox-menu" ref={menuRef} id={listboxID} role="listbox" style={menuStyle}>
+      {selectableGroups.map((group) => <div className="condition-combobox-group" key={group.key}>
+        <div className="condition-combobox-label">{group.label}</div>
+        {group.fields.map((item) => {
+          const index = selectableFields.findIndex((fieldItem) => fieldSelection(fieldItem) === fieldSelection(item));
+          const selected = selectedField && fieldSelection(selectedField) === fieldSelection(item);
+          return <button
+            type="button"
+            className="condition-combobox-option"
+            id={`${listboxID}-option-${index}`}
+            data-active={activeIndex === index ? "true" : undefined}
+            aria-selected={selected}
+            role="option"
+            key={fieldSelection(item)}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => chooseField(item)}
+          >
+            <span>{item.label}</span>
+            {selected && <Check size={13} />}
+          </button>;
+        })}
+      </div>)}
+    </div>,
+    portalContainer
+  ) : null;
+
+  return <div className={`condition-comparison${selectedField?.path ? " condition-json-operand" : ""}`}>
+    <div className="condition-combobox" ref={containerRef}>
+      <input
+        ref={inputRef}
+        className="condition-combobox-input"
+        value={displayValue}
+        inputMode={["number", "integer"].includes(field?.type) && operator !== "between" ? "decimal" : undefined}
+        placeholder={operator === "between" ? "下限,上限" : "输入固定值或选择结果字段"}
+        aria-label="比较值"
+        aria-autocomplete="list"
+        aria-activedescendant={open && activeIndex >= 0 ? `${listboxID}-option-${activeIndex}` : undefined}
+        aria-controls={canCompareField ? listboxID : undefined}
+        aria-expanded={canCompareField ? open : undefined}
+        role={canCompareField ? "combobox" : undefined}
+        onChange={(event) => enterLiteral(event.target.value)}
+        onFocus={(event) => selectedField && event.currentTarget.select()}
+        onKeyDown={handleKeyDown}
+      />
+      {canCompareField && <button type="button" className="condition-combobox-toggle" title="选择结果字段" aria-label="选择结果字段" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={toggleMenu}><ChevronDown size={14} /></button>}
+    </div>
+    {selectedField?.path && <JsonPathInput value={rule.value_path || ""} onChange={(value_path) => onChange({ value_path })} placeholder="比较值 JSON 路径" />}
+    {menu}
+  </div>;
 }
 
 function ConditionRow({ rule, fieldGroups, fields, onChange, onRemove }) {
   const field = findRuleField(rule, fields);
-  const operator = rule.operator || field?.operators?.[0] || "equals";
-  const operatorsForField = field?.operators || ["equals"];
+  const comparesExecutions = rule.source === "previous" && rule.value_source === "current";
+  const operatorsForField = comparesExecutions ? executionComparisonOperators(field) : field?.operators || ["equals"];
+  const operator = operatorsForField.includes(rule.operator) ? rule.operator : operatorsForField[0] || "equals";
   const showValue = !valueOperatorsWithoutInput.has(operator);
   const canCompareField = showValue && fieldReferenceOperators.has(operator);
-  const valueSource = canCompareField && (rule.value_source === "current" || rule.value_source === "previous") ? rule.value_source : "literal";
-  const valueField = fields.find((item) => item.source === valueSource && item.name === normalizeFieldName(rule.value_field)) || fields.find((item) => item.source === valueSource);
 
   const changeField = (selection) => {
+    if (selection === previousExecutionSelection) {
+      const comparisonOperators = executionComparisonOperators(field);
+      const nextOperator = comparisonOperators.includes(operator) ? operator : comparisonOperators[0];
+      onChange({ field: field?.name || "", source: "previous", path: rule.path || "", operator: nextOperator, value_source: "current", value_field: field?.name || "", value_path: rule.path || "", value: "" });
+      return;
+    }
     const nextField = parseFieldSelection(selection, fields);
     onChange({ field: nextField?.name || "", source: nextField?.source || "current", path: "", operator: nextField?.operators?.[0] || "equals", value_source: "literal", value_field: "", value_path: "", value: "" });
   };
-  const changeOperator = (nextOperator) => onChange({ operator: nextOperator, value_source: fieldReferenceOperators.has(nextOperator) ? (rule.value_source || "literal") : "literal", value_field: fieldReferenceOperators.has(nextOperator) ? rule.value_field : "", value_path: fieldReferenceOperators.has(nextOperator) ? rule.value_path : "" });
-  const changeValueSource = (nextSource) => onChange({ value_source: nextSource, value_field: nextSource === "literal" ? "" : valueField?.name || "", value_path: "" });
-  const changeValueField = (selection) => {
+  const changeOperator = (nextOperator) => comparesExecutions
+    ? onChange({ operator: nextOperator, value_source: "current", value_field: field?.name || "", value_path: rule.path || "" })
+    : onChange({ operator: nextOperator, value_source: fieldReferenceOperators.has(nextOperator) ? (rule.value_source || "literal") : "literal", value_field: fieldReferenceOperators.has(nextOperator) ? rule.value_field : "", value_path: fieldReferenceOperators.has(nextOperator) ? rule.value_path : "" });
+  const changeExecutionField = (selection) => {
     const nextField = parseFieldSelection(selection, fields);
-    onChange({ value_field: nextField?.name || "", value_path: "" });
+    const comparisonOperators = executionComparisonOperators(nextField);
+    onChange({
+      field: nextField?.name || "",
+      source: "previous",
+      path: "",
+      operator: comparisonOperators.includes(operator) ? operator : comparisonOperators[0],
+      value_source: "current",
+      value_field: nextField?.name || "",
+      value_path: "",
+      value: ""
+    });
   };
-  const valueInputType = ["number", "integer"].includes(field?.type) ? "number" : "text";
+  const changeExecutionPath = (path) => onChange({ path, value_path: path });
 
   return <div className="condition-row">
-    <div className="condition-left">
-      <Select value={fieldSelection(field)} onValueChange={changeField}><SelectTrigger><SelectValue placeholder="选择结果字段" /></SelectTrigger><SelectContent>{fieldGroups.map((group) => <SelectGroup key={group.key}><SelectLabel>{group.label}</SelectLabel>{group.fields.map((item) => <SelectItem key={fieldSelection(item)} value={fieldSelection(item)}>{item.label}</SelectItem>)}</SelectGroup>)}</SelectContent></Select>
-      {field?.path && <Input value={rule.path || ""} onChange={(event) => onChange({ path: event.target.value })} placeholder="JSON 路径，如 data.status" />}
+    <div className={`condition-left${!comparesExecutions && field?.path ? " condition-json-operand" : ""}`}>
+      <Select value={comparesExecutions ? previousExecutionSelection : fieldSelection(field)} onValueChange={changeField}><SelectTrigger><SelectValue placeholder="选择结果字段" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>执行对比</SelectLabel><SelectItem value={previousExecutionSelection}>上次执行</SelectItem></SelectGroup>{fieldGroups.map((group) => <SelectGroup key={group.key}><SelectLabel>{group.label}</SelectLabel>{group.fields.map((item) => <SelectItem key={fieldSelection(item)} value={fieldSelection(item)}>{item.label}</SelectItem>)}</SelectGroup>)}</SelectContent></Select>
+      {!comparesExecutions && field?.path && <JsonPathInput value={rule.path || ""} onChange={(path) => onChange({ path })} placeholder="JSON 路径，如 data.status" />}
     </div>
     <Select value={operator} onValueChange={changeOperator}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{operatorsForField.map((item) => <SelectItem key={item} value={item}>{operators[item] || item}</SelectItem>)}</SelectContent></Select>
-    {showValue ? <div className="condition-comparison"><Select value={valueSource} onValueChange={changeValueSource}><SelectTrigger aria-label="比较值来源"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="literal">固定值</SelectItem>{fieldReferenceOperators.has(operator) && <><SelectItem value="current">当前结果</SelectItem><SelectItem value="previous">上一次结果</SelectItem></>}</SelectContent></Select>{valueSource === "literal" ? <Input className="condition-literal-input" type={valueInputType} value={rule.value ?? ""} onChange={(event) => onChange({ value: ["number", "integer"].includes(field?.type) ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value })} placeholder={operator === "between" ? "下限,上限" : "固定比较值"} /> : <><Select value={fieldSelection(valueField)} onValueChange={changeValueField}><SelectTrigger aria-label="选择比较结果字段"><SelectValue placeholder="选择结果字段" /></SelectTrigger><SelectContent>{fieldGroups.filter((group) => group.source === valueSource).map((group) => <SelectGroup key={group.key}><SelectLabel>{group.label}</SelectLabel>{group.fields.map((item) => <SelectItem key={fieldSelection(item)} value={fieldSelection(item)}>{item.label}</SelectItem>)}</SelectGroup>)}</SelectContent></Select>{valueField?.path && <Input className="condition-path-input" value={rule.value_path || ""} onChange={(event) => onChange({ value_path: event.target.value })} placeholder="比较值 JSON 路径" />}</>}</div> : <span className="condition-value-placeholder" aria-hidden="true" />}
+    {comparesExecutions ? <div className={`condition-comparison${field?.path ? " condition-json-operand" : ""}`}><Select value={fieldSelection(field)} onValueChange={changeExecutionField}><SelectTrigger aria-label="选择当前执行结果字段"><span>当前执行 · {field?.label || "选择结果字段"}</span></SelectTrigger><SelectContent>{fieldGroups.map((group) => <SelectGroup key={group.key}><SelectLabel>{group.label}</SelectLabel>{group.fields.map((item) => <SelectItem key={fieldSelection(item)} value={fieldSelection(item)}>{item.label}</SelectItem>)}</SelectGroup>)}</SelectContent></Select>{field?.path && <JsonPathInput value={rule.path || ""} onChange={changeExecutionPath} placeholder="当前与上次 JSON 路径" />}</div> : showValue ? <EditableComparison rule={rule} operator={operator} field={field} fieldGroups={fieldGroups} fields={fields} canCompareField={canCompareField} onChange={onChange} /> : <span className="condition-value-placeholder" aria-hidden="true" />}
     <IconButton size="sm" title="删除条件" aria-label="删除条件" onClick={onRemove}><Trash2 size={14} /></IconButton>
   </div>;
 }

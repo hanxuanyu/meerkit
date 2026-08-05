@@ -95,16 +95,22 @@ type ParameterDescriptor struct {
 	Unit        string               `json:"unit,omitempty"`
 }
 
+type ModuleListSummaryDescriptor struct {
+	Fields    []string `json:"fields"`
+	Separator string   `json:"separator,omitempty"`
+}
+
 type ModuleDescriptor struct {
-	Type         string                `json:"type"`
-	Version      string                `json:"version"`
-	Name         string                `json:"name"`
-	Description  string                `json:"description"`
-	ConfigSchema map[string]any        `json:"config_schema"`
-	Parameters   []ParameterDescriptor `json:"parameters"`
-	ResultSchema map[string]any        `json:"result_schema"`
-	Fields       []FieldDescriptor     `json:"fields"`
-	ResultSets   []ResultSetDescriptor `json:"result_sets,omitempty"`
+	Type         string                       `json:"type"`
+	Version      string                       `json:"version"`
+	Name         string                       `json:"name"`
+	Description  string                       `json:"description"`
+	ListSummary  *ModuleListSummaryDescriptor `json:"list_summary,omitempty"`
+	ConfigSchema map[string]any               `json:"config_schema"`
+	Parameters   []ParameterDescriptor        `json:"parameters"`
+	ResultSchema map[string]any               `json:"result_schema"`
+	Fields       []FieldDescriptor            `json:"fields"`
+	ResultSets   []ResultSetDescriptor        `json:"result_sets,omitempty"`
 }
 
 type Observation struct {
@@ -134,6 +140,7 @@ type NotifierDescriptor struct {
 type NotificationEvent struct {
 	EventType       string         `json:"event_type"`
 	MonitorID       string         `json:"monitor_id"`
+	RecordID        string         `json:"record_id"`
 	MonitorName     string         `json:"monitor_name"`
 	ModuleType      string         `json:"module_type"`
 	TriggeredAt     time.Time      `json:"triggered_at"`
@@ -142,6 +149,21 @@ type NotificationEvent struct {
 	PreviousResult  map[string]any `json:"previous_result,omitempty"`
 	CurrentResult   map[string]any `json:"current_result,omitempty"`
 	ConditionDetail []RuleResult   `json:"condition_detail,omitempty"`
+}
+
+const BuiltInNotificationChannelID = "builtin-inapp"
+
+type InAppNotification struct {
+	ID        string     `json:"id"`
+	ChannelID string     `json:"channel_id"`
+	MonitorID string     `json:"monitor_id,omitempty"`
+	RecordID  string     `json:"record_id,omitempty"`
+	EventType string     `json:"event_type"`
+	Title     string     `json:"title"`
+	Content   string     `json:"content"`
+	Read      bool       `json:"read"`
+	CreatedAt time.Time  `json:"created_at"`
+	ReadAt    *time.Time `json:"read_at,omitempty"`
 }
 
 type NotifierModule interface {
@@ -190,6 +212,7 @@ type NotificationChannel struct {
 	Config       json.RawMessage `json:"config"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+	BuiltIn      bool            `json:"built_in,omitempty"`
 }
 
 type RuntimeState struct {

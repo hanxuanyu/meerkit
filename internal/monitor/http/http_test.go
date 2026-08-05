@@ -196,6 +196,9 @@ func TestValidateConfigRejectsInvalidBodyConfiguration(t *testing.T) {
 
 func TestDescriptorDeclaresMethodDependentBodyParameters(t *testing.T) {
 	descriptor := (&Module{}).Descriptor()
+	if descriptor.ListSummary == nil || len(descriptor.ListSummary.Fields) != 1 || descriptor.ListSummary.Fields[0] != "url" {
+		t.Fatalf("HTTP list summary should use url: %#v", descriptor.ListSummary)
+	}
 	var bodyMode *core.ParameterDescriptor
 	for index := range descriptor.Parameters {
 		if descriptor.Parameters[index].Key == "body_mode" {

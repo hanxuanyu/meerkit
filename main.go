@@ -17,6 +17,7 @@ import (
 	"meerkit/internal/logging"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
+	"meerkit/internal/notification/inapp"
 	runtimeapp "meerkit/internal/runtime"
 	"meerkit/internal/store"
 )
@@ -53,14 +54,19 @@ func main() {
 	}
 	api.SetFrontendFS(static)
 	modules := monitor.NewRegistry()
-	notifiers := notification.NewRegistry()
+	inAppHub := inapp.NewHub()
+	notifiers := notification.NewRegistry(store, inAppHub)
 	runner := runtimeapp.NewRunner(store, modules, notifiers, logger)
 	scheduler := runtimeapp.NewScheduler(runner, store, config, logger)
-	apiServer := api.NewAPIServer(store, modules, notifiers, runner, config, logger, accessLogger)
+	cleaner := runtimeapp.NewCleanupWorker(store, config, logger, func(unreadCount int) {
+		inAppHub.Publish(inapp.StreamEvent{Type: "pruned", UnreadCount: unreadCount})
+	})
+	apiServer := api.NewAPIServer(store, modules, notifiers, runner, inAppHub, config, logger, accessLogger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go scheduler.Start(ctx)
+	go cleaner.Start(ctx)
 	server := &http.Server{Addr: config.ListenAddress(), Handler: apiServer.Router(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()

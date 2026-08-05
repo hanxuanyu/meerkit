@@ -4,6 +4,8 @@ const commonPlaceholders = [
   { key: "monitor.module_type", label: "监控模块", type: "string" },
   { key: "event.type", label: "事件类型", type: "string" },
   { key: "event.event_type", label: "事件类型（完整字段）", type: "string" },
+  { key: "event.record_id", label: "执行记录 ID", type: "string" },
+  { key: "event.detail_path", label: "执行详情路径", type: "string" },
   { key: "event.condition_state", label: "条件状态", type: "string" },
   { key: "event.summary", label: "执行摘要", type: "string" },
   { key: "event.triggered_at", label: "触发时间", type: "datetime" },
@@ -92,17 +94,28 @@ export function getAvailablePlaceholders(descriptor) {
 }
 
 export function getPlaceholderGroups(descriptor) {
-  const resultGroups = getResultFieldGroups(descriptor).map((group) => ({
-    key: group.key,
-    label: group.label,
-    items: group.fields.map((field) => ({
-      key: `${field.source === "previous" ? "previous" : "result"}.${field.name}`,
-      label: field.label,
-      type: field.type,
-      description: field.description
-    }))
-  }));
-  return [{ key: "common", label: "公共字段", items: commonPlaceholders }, ...resultGroups];
+  const resultGroups = getResultFieldGroups(descriptor);
+  const scopedGroups = [
+    { key: "result-common", label: "公共结果", scope: "common" },
+    { key: "result-module", label: "模块结果", scope: "module" }
+  ].map((target) => ({
+    ...target,
+    sections: [
+      { source: "current", label: "本次执行" },
+      { source: "previous", label: "上次执行" }
+    ].map((section) => ({
+      ...section,
+      items: resultGroups
+        .filter((group) => group.scope === target.scope && group.source === section.source)
+        .flatMap((group) => group.fields.map((field) => ({
+          key: `${field.source === "previous" ? "previous" : "result"}.${field.name}`,
+          label: field.label,
+          type: field.type,
+          description: field.description
+        })))
+    })).filter((section) => section.items.length)
+  })).filter((group) => group.sections.length);
+  return [{ key: "common", label: "公共字段", items: commonPlaceholders }, ...scopedGroups];
 }
 
 export function placeholderSet(descriptor) {

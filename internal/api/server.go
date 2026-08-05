@@ -7,16 +7,19 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
 	"meerkit/internal/app"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
+	"meerkit/internal/notification/inapp"
 	runtimeapp "meerkit/internal/runtime"
 	"meerkit/internal/store"
 )
@@ -26,13 +29,14 @@ type APIServer struct {
 	modules      *monitor.Registry
 	notifiers    *notification.Registry
 	runner       *runtimeapp.Runner
+	inAppHub     *inapp.Hub
 	config       app.Config
 	logger       *slog.Logger
 	accessLogger *slog.Logger
 }
 
-func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
-	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, config: config, logger: logger, accessLogger: accessLogger}
+func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
+	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, inAppHub: inAppHub, config: config, logger: logger, accessLogger: accessLogger}
 }
 
 func (a *APIServer) Router() http.Handler {
@@ -57,7 +61,11 @@ func (a *APIServer) Router() http.Handler {
 	api.GET("/modules/:type", func(c *gin.Context) { a.handleModules(c.Writer, c.Request, []string{c.Param("type")}) })
 	api.GET("/notifiers", legacy(a.handleNotifiers))
 	api.GET("/system", func(c *gin.Context) {
-		writeJSON(c.Writer, http.StatusOK, map[string]any{"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention, "timezone": a.config.Scheduler.Timezone})
+		writeJSON(c.Writer, http.StatusOK, map[string]any{
+			"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention,
+			"notification_retention": a.config.Storage.NotificationRetention, "cleanup_interval": a.config.Storage.CleanupInterval,
+			"timezone": a.config.Scheduler.Timezone,
+		})
 	})
 	api.GET("/system/config", func(c *gin.Context) {
 		writeJSON(c.Writer, http.StatusOK, a.config.Metadata)
@@ -71,6 +79,13 @@ func (a *APIServer) Router() http.Handler {
 	api.PUT("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.DELETE("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.POST("/notification-channels/:id/test", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id"), "test"}) })
+	api.GET("/in-app-notifications", legacy(a.handleInAppNotifications))
+	api.GET("/in-app-notifications/unread-count", legacy(a.handleInAppNotificationCount))
+	api.POST("/in-app-notifications/read-all", legacy(a.markAllInAppNotificationsRead))
+	api.DELETE("/in-app-notifications/read", legacy(a.deleteReadInAppNotifications))
+	api.GET("/in-app-notifications/ws", a.handleInAppNotificationStream)
+	api.GET("/in-app-notifications/:id", func(c *gin.Context) { a.getInAppNotification(c.Writer, c.Request, c.Param("id")) })
+	api.PATCH("/in-app-notifications/:id/read", func(c *gin.Context) { a.markInAppNotificationRead(c.Writer, c.Request, c.Param("id")) })
 
 	api.GET("/monitors", legacyParts(a.handleMonitors))
 	api.POST("/monitors", legacyParts(a.handleMonitors))
@@ -80,7 +95,12 @@ func (a *APIServer) Router() http.Handler {
 	api.DELETE("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.POST("/monitors/:id/run", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "run"}) })
 	api.POST("/monitors/test", legacy(a.testMonitor))
+	api.POST("/schedules/preview", legacy(a.previewSchedule))
 	api.GET("/monitors/:id/records", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records"}) })
+	api.DELETE("/monitors/:id/records", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records"}) })
+	api.GET("/monitors/:id/records/:record_id", func(c *gin.Context) {
+		a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records", c.Param("record_id")})
+	})
 	api.GET("/monitors/:id/next-runs", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "next-runs"}) })
 
 	router.NoRoute(func(c *gin.Context) {
@@ -194,6 +214,10 @@ func (a *APIServer) handleChannels(w http.ResponseWriter, r *http.Request, parts
 			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
 			return
 		}
+		if channel.BuiltIn && (payload.Name != "" || payload.NotifierType != "" || len(payload.Config) > 0) {
+			writeError(w, http.StatusForbidden, "built_in_channel", "built-in notification channel configuration cannot be changed")
+			return
+		}
 		if payload.Name != "" {
 			channel.Name = payload.Name
 		}
@@ -225,6 +249,10 @@ func (a *APIServer) handleChannels(w http.ResponseWriter, r *http.Request, parts
 		}
 		writeJSON(w, http.StatusOK, channel)
 	case http.MethodDelete:
+		if channel.BuiltIn {
+			writeError(w, http.StatusForbidden, "built_in_channel", "built-in notification channel cannot be deleted")
+			return
+		}
 		if err := a.store.DeleteChannel(r.Context(), id); err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
@@ -283,6 +311,10 @@ func (a *APIServer) createChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "name and notifier_type are required")
 		return
 	}
+	if payload.NotifierType == "inapp" {
+		writeError(w, http.StatusForbidden, "built_in_channel", "in-app notification channel is built in")
+		return
+	}
 	notifier, ok := a.notifiers.Get(payload.NotifierType)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "notifier_not_found", "notifier not found")
@@ -309,6 +341,142 @@ func (a *APIServer) createChannel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, channel)
 }
 
+func (a *APIServer) handleInAppNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	result, err := a.store.ListInAppNotificationsPage(r.Context(), store.NotificationListOptions{
+		Page: queryInt(r, "page", 1), PageSize: queryInt(r, "page_size", 20), Search: r.URL.Query().Get("q"), UnreadOnly: r.URL.Query().Get("unread") == "true",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *APIServer) handleInAppNotificationCount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	count, err := a.store.CountUnreadInAppNotifications(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": count})
+}
+
+func (a *APIServer) getInAppNotification(w http.ResponseWriter, r *http.Request, id string) {
+	notification, err := a.store.GetInAppNotification(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "notification_not_found", "notification not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, notification)
+}
+
+func (a *APIServer) markInAppNotificationRead(w http.ResponseWriter, r *http.Request, id string) {
+	notification, err := a.store.MarkInAppNotificationRead(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "notification_not_found", "notification not found")
+		return
+	}
+	count, _ := a.store.CountUnreadInAppNotifications(r.Context())
+	if a.inAppHub != nil {
+		a.inAppHub.Publish(inapp.StreamEvent{Type: "read", Notification: &notification, UnreadCount: count})
+	}
+	writeJSON(w, http.StatusOK, notification)
+}
+
+func (a *APIServer) markAllInAppNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	updated, err := a.store.MarkAllInAppNotificationsRead(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	if a.inAppHub != nil {
+		a.inAppHub.Publish(inapp.StreamEvent{Type: "read_all", UnreadCount: 0})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "count": 0})
+}
+
+func (a *APIServer) deleteReadInAppNotifications(w http.ResponseWriter, r *http.Request) {
+	deleted, err := a.store.DeleteReadInAppNotifications(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	count, err := a.store.CountUnreadInAppNotifications(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	if a.inAppHub != nil {
+		a.inAppHub.Publish(inapp.StreamEvent{Type: "deleted_read", UnreadCount: count})
+	}
+	if a.logger != nil {
+		a.logger.Info("read in-app notifications deleted", "deleted", deleted)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted, "count": count})
+}
+
+var inAppUpgrader = websocket.Upgrader{CheckOrigin: func(request *http.Request) bool {
+	origin := request.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(parsed.Host, request.Host)
+}}
+
+func (a *APIServer) handleInAppNotificationStream(c *gin.Context) {
+	if a.inAppHub == nil {
+		writeError(c.Writer, http.StatusServiceUnavailable, "notification_stream_unavailable", "notification stream is unavailable")
+		return
+	}
+	connection, err := inAppUpgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+	stream, unsubscribe := a.inAppHub.Subscribe()
+	defer unsubscribe()
+	count, _ := a.store.CountUnreadInAppNotifications(c.Request.Context())
+	if err := connection.WriteJSON(inapp.StreamEvent{Type: "connected", UnreadCount: count}); err != nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := connection.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case event, ok := <-stream:
+			if !ok || connection.WriteJSON(event) != nil {
+				return
+			}
+		case <-ping.C:
+			if connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
+				return
+			}
+		case <-done:
+			return
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
+}
+
 func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) == 0 {
 		switch r.Method {
@@ -324,7 +492,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, monitors)
+			writeJSON(w, http.StatusOK, monitorListPage(monitors, a.config.Scheduler.Timezone))
 		case http.MethodPost:
 			a.createMonitor(w, r)
 		default:
@@ -351,8 +519,33 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 			}
 			writeJSON(w, http.StatusOK, record)
 		case "records":
+			if r.Method == http.MethodDelete && len(parts) == 2 {
+				if _, err := a.store.GetMonitor(r.Context(), id); err != nil {
+					writeError(w, http.StatusNotFound, "monitor_not_found", "monitor not found")
+					return
+				}
+				deleted, err := a.store.DeleteMonitorRecords(r.Context(), id)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+					return
+				}
+				if a.logger != nil {
+					a.logger.Info("monitor records deleted", "monitor_id", id, "deleted", deleted)
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+				return
+			}
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+				return
+			}
+			if len(parts) == 3 {
+				record, err := a.store.GetRecord(r.Context(), id, parts[2])
+				if err != nil {
+					writeError(w, http.StatusNotFound, "record_not_found", "monitor record not found")
+					return
+				}
+				writeJSON(w, http.StatusOK, record)
 				return
 			}
 			records, err := a.store.ListRecordsPage(r.Context(), id, store.RecordListOptions{
@@ -412,6 +605,31 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	}
 }
 
+type monitorListItem struct {
+	core.Monitor
+	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+}
+
+func monitorListPage(page store.PageResult[core.Monitor], timezone string) store.PageResult[monitorListItem] {
+	result := store.PageResult[monitorListItem]{
+		Items:      make([]monitorListItem, 0, len(page.Items)),
+		Page:       page.Page,
+		PageSize:   page.PageSize,
+		Total:      page.Total,
+		TotalPages: page.TotalPages,
+	}
+	for _, monitor := range page.Items {
+		item := monitorListItem{Monitor: monitor}
+		if monitor.Enabled {
+			if next, err := runtimeapp.NextScheduleTimes(monitor.Schedules, timezone, 1); err == nil && len(next) > 0 {
+				item.NextRunAt = &next[0]
+			}
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result
+}
+
 func (a *APIServer) testMonitor(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		ModuleType   string          `json:"module_type"`
@@ -448,6 +666,32 @@ func (a *APIServer) testMonitor(w http.ResponseWriter, r *http.Request) {
 		a.logger.Info("monitor test completed", "module_type", payload.ModuleType, "success", observation.Success && executeErr == nil, "error_code", observation.ErrorCode)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": observation.Success && executeErr == nil, "observation": observation})
+}
+
+func (a *APIServer) previewSchedule(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Expression string `json:"expression"`
+	}
+	if err := decodeBody(w, r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	payload.Expression = strings.TrimSpace(payload.Expression)
+	if err := runtimeapp.ValidateSchedules([]string{payload.Expression}, a.config.Scheduler.Timezone); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
+		return
+	}
+	next, err := runtimeapp.NextScheduleTimes([]string{payload.Expression}, a.config.Scheduler.Timezone, 3)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"expression":  payload.Expression,
+		"description": runtimeapp.DescribeSchedule(payload.Expression),
+		"next_runs":   next,
+		"timezone":    a.config.Scheduler.Timezone,
+	})
 }
 
 type monitorPayload struct {

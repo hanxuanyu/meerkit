@@ -29,3 +29,11 @@ func TestRenderReportsMissingPlaceholders(t *testing.T) {
 		t.Fatalf("missing placeholders = %v, err = %v", missing, err)
 	}
 }
+
+func TestNotificationDetailPath(t *testing.T) {
+	context := NewContext(core.NotificationEvent{MonitorID: "monitor-1", RecordID: "record-2"})
+	value, ok := Lookup("event.detail_path", context)
+	if !ok || value != "/monitors/monitor-1/records/record-2" {
+		t.Fatalf("detail path=%v ok=%v", value, ok)
+	}
+}

@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, Bell, ChevronsRight, CircleX, History, Layers3, RefreshCw, Settings2, X } from "lucide-react";
+import { Activity, Bell, ChevronsRight, CircleX, History, Inbox, Layers3, RefreshCw, Settings2, X } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/ContextMenu";
 import { IconButton } from "../ui/IconButton";
 
@@ -7,6 +7,7 @@ const tabDefinitions = {
   overview: { title: "总览", icon: Activity, closable: false },
   monitors: { title: "监控项", icon: Layers3, closable: true },
   notifications: { title: "通知渠道", icon: Bell, closable: true },
+  inbox: { title: "通知中心", icon: Inbox, closable: true },
   settings: { title: "系统设置", icon: Settings2, closable: true }
 };
 

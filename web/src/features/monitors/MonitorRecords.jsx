@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ExternalLink, History, RefreshCw, Search } from "lucide-react";
+import { Edit3, ExternalLink, LoaderCircle, Play, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDate } from "../../lib/formatters";
 import { Badge } from "../../components/ui/Badge";
@@ -12,16 +12,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/Table";
 import { ResultRenderer } from "../../components/results/ResultRenderer";
 import { MonitorSummary } from "../../components/monitor/MonitorSummary";
+import { Button } from "../../components/ui/Button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../../components/ui/AlertDialog";
+import { Switch } from "../../components/ui/Switch";
+import { MonitorConfigurationDetails } from "../../components/monitor/MonitorConfigurationDetails";
 
-export function MonitorRecordsDialog({ monitor, descriptor, onClose, onOpenTab }) {
-  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="modal-wide"><DialogHeader><div><span className="eyebrow">EXECUTION HISTORY</span><DialogTitle>{monitor.name} · 执行记录</DialogTitle><DialogDescription>查看监控内容、每次采集结果、条件状态和通知结果。</DialogDescription></div><IconButton className="records-open-tab" size="default" title="在页签中打开" aria-label="在页签中打开" onClick={() => onOpenTab(monitor)}><ExternalLink size={16} /></IconButton></DialogHeader><div className="modal-body records-modal-body"><MonitorSummary monitor={monitor} descriptor={descriptor} /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} /></div></DialogContent></Dialog>;
+export function MonitorRecordsDialog({ monitor, descriptor, onClose, onOpenTab, onRecordsDeleted }) {
+  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="modal-wide"><DialogHeader><div><span className="eyebrow">EXECUTION HISTORY</span><DialogTitle>{monitor.name} · 执行记录</DialogTitle><DialogDescription>查看监控内容、每次采集结果、条件状态和通知结果。</DialogDescription></div><IconButton className="records-open-tab" size="default" title="在页签中打开" aria-label="在页签中打开" onClick={() => onOpenTab(monitor)}><ExternalLink size={16} /></IconButton></DialogHeader><div className="modal-body records-modal-body"><MonitorSummary monitor={monitor} descriptor={descriptor} /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} onRecordsDeleted={onRecordsDeleted} /></div></DialogContent></Dialog>;
 }
 
-export function MonitorRecordsPage({ monitor, descriptor }) {
-  return <div className="page-stack"><div className="page-heading"><div><div className="eyebrow">MONITOR DETAIL</div><h1>{monitor.name}</h1><p>查看监控内容、执行记录和结果集详情。</p></div><div className="settings-icon"><History size={18} /></div></div><Card className="section-card"><MonitorSummary monitor={monitor} descriptor={descriptor} /><div className="records-section-divider" /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} /></Card></div>;
+export function MonitorRecordsPage({ monitor, descriptor, channels = [], initialRecordID = "", onRecordRouteChange, onRecordsDeleted, onEdit, onRun, onDelete, onToggleEnabled, togglingMonitorId = "" }) {
+  const [running, setRunning] = useState(false);
+  const [recordsRefreshVersion, setRecordsRefreshVersion] = useState(0);
+  const run = async () => {
+    if (!onRun || running) return;
+    setRunning(true);
+    try {
+      const record = await onRun(monitor);
+      if (record) setRecordsRefreshVersion((current) => current + 1);
+    } finally {
+      setRunning(false);
+    }
+  };
+  return <div className="page-stack"><div className="page-heading monitor-detail-heading"><div><div className="eyebrow">MONITOR DETAIL</div><h1>{monitor.name}</h1><p>查看监控配置、执行计划、触发条件和历史记录。</p></div><div className="monitor-detail-actions"><div className="monitor-detail-enabled" title={monitor.enabled ? "停用监控" : "启用监控"}><Switch checked={monitor.enabled} disabled={!onToggleEnabled || togglingMonitorId === monitor.id} aria-label={monitor.enabled ? "停用监控" : "启用监控"} onCheckedChange={() => onToggleEnabled?.(monitor)} /><span>{monitor.enabled ? "已启用" : "已停用"}</span></div><Button variant="outline" className="monitor-detail-command" title={running ? "正在执行" : "立即执行"} aria-label={running ? "正在执行" : "立即执行"} disabled={running} onClick={() => void run()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}<span>{running ? "执行中..." : "立即执行"}</span></Button><Button variant="outline" className="monitor-detail-command" title="编辑监控" aria-label="编辑监控" onClick={() => onEdit?.(monitor)}><Edit3 size={15} /><span>编辑</span></Button><Button variant="outline" className="monitor-detail-command destructive-outline" title="删除监控" aria-label="删除监控" onClick={() => onDelete?.(monitor)}><Trash2 size={15} /><span>删除</span></Button></div></div><Card className="section-card monitor-detail-card"><MonitorConfigurationDetails monitor={monitor} descriptor={descriptor} channels={channels} /><div className="records-section-divider" /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} initialRecordID={initialRecordID} onRecordRouteChange={onRecordRouteChange} onRecordsDeleted={onRecordsDeleted} refreshVersion={recordsRefreshVersion} /></Card></div>;
 }
 
-function MonitorRecordsPanel({ monitor, descriptor }) {
+function MonitorRecordsPanel({ monitor, descriptor, initialRecordID = "", onRecordRouteChange, onRecordsDeleted, refreshVersion = 0 }) {
   const [records, setRecords] = useState([]);
   const [pageInfo, setPageInfo] = useState({ page: 1, page_size: 20, total: 0, total_pages: 0 });
   const [searchInput, setSearchInput] = useState("");
@@ -31,6 +47,8 @@ function MonitorRecordsPanel({ monitor, descriptor }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [confirmDeleteRecords, setConfirmDeleteRecords] = useState(false);
+  const [deletingRecords, setDeletingRecords] = useState(false);
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -51,7 +69,24 @@ function MonitorRecordsPanel({ monitor, descriptor }) {
     }
   }, [eventType, monitor.id, pageInfo.page, pageInfo.page_size, search, status]);
 
-  useEffect(() => { void loadRecords(); }, [loadRecords]);
+  useEffect(() => { void loadRecords(); }, [loadRecords, refreshVersion]);
+  useEffect(() => {
+    if (!initialRecordID) {
+      if (onRecordRouteChange) setSelectedRecord(null);
+      return;
+    }
+    if (selectedRecord?.id === initialRecordID) return;
+    let cancelled = false;
+    api(`/api/v1/monitors/${monitor.id}/records/${initialRecordID}`)
+      .then((record) => { if (!cancelled) setSelectedRecord(record); })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError.message);
+          onRecordRouteChange?.("");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [initialRecordID, monitor.id, onRecordRouteChange, selectedRecord?.id]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setSearch(searchInput.trim());
@@ -65,14 +100,63 @@ function MonitorRecordsPanel({ monitor, descriptor }) {
     setPageInfo((current) => ({ ...current, page: 1 }));
   };
   const changePageSize = (value) => setPageInfo((current) => ({ ...current, page: 1, page_size: value }));
+  const openRecord = (record) => {
+    setSelectedRecord(record);
+    onRecordRouteChange?.(record.id);
+  };
+  const closeRecord = () => {
+    setSelectedRecord(null);
+    onRecordRouteChange?.("");
+  };
+  const deleteRecords = async (event) => {
+    event.preventDefault();
+    if (deletingRecords) return;
+    setDeletingRecords(true);
+    try {
+      const response = await api(`/api/v1/monitors/${monitor.id}/records`, { method: "DELETE" });
+      closeRecord();
+      setRecords([]);
+      setPageInfo((current) => ({ ...current, page: 1, total: 0, total_pages: 0 }));
+      setConfirmDeleteRecords(false);
+      onRecordsDeleted?.(response?.deleted || 0);
+    } catch (deleteError) {
+      setError(deleteError.message);
+    } finally {
+      setDeletingRecords(false);
+    }
+  };
 
-  return <><div className="records-toolbar"><div><strong>{pageInfo.total}</strong><span> 条执行记录</span></div><IconButton variant="outline" size="default" title="刷新记录" aria-label="刷新记录" onClick={() => void loadRecords()}><RefreshCw size={15} /></IconButton></div><div className="records-filters"><div className="records-search"><Search size={14} /><Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜索错误、事件、状态或结果内容" aria-label="搜索执行记录" /></div><Select value={status} onValueChange={updateFilter(setStatus)}><SelectTrigger className="records-filter-select" aria-label="按执行结果筛选"><SelectValue placeholder="全部结果" /></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem><SelectItem value="success">成功</SelectItem><SelectItem value="failed">失败</SelectItem></SelectContent></Select><Select value={eventType} onValueChange={updateFilter(setEventType)}><SelectTrigger className="records-filter-select" aria-label="按事件筛选"><SelectValue placeholder="全部事件" /></SelectTrigger><SelectContent><SelectItem value="all">全部事件</SelectItem><SelectItem value="triggered">触发</SelectItem><SelectItem value="recovered">恢复</SelectItem><SelectItem value="none">无事件</SelectItem></SelectContent></Select></div>{loading ? <div className="records-empty">正在加载执行记录...</div> : error ? <div className="records-empty field-error">{error}</div> : records.length === 0 ? <div className="records-empty">{pageInfo.total === 0 && (search || status !== "all" || eventType !== "all") ? "没有匹配的执行记录" : "暂无执行记录"}</div> : <><Table><TableHeader><TableRow><TableHead>开始时间</TableHead><TableHead>耗时</TableHead><TableHead>执行结果</TableHead><TableHead>条件状态</TableHead><TableHead>事件</TableHead><TableHead>错误</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id} className="record-row" onClick={() => setSelectedRecord(record)}><TableCell>{formatDate(record.started_at)}</TableCell><TableCell>{record.duration_ms} ms</TableCell><TableCell><Badge tone={record.success ? "success" : "warning"}>{record.success ? "成功" : "失败"}</Badge></TableCell><TableCell>{record.condition_state || "unknown"}</TableCell><TableCell>{record.event_type || "none"}</TableCell><TableCell><span className="record-error" title={record.error_message || "-"}>{record.error_message || "-"}</span></TableCell></TableRow>)}</TableBody></Table><Pagination page={pageInfo.page} pageSize={pageInfo.page_size} total={pageInfo.total} onPageChange={(page) => setPageInfo((current) => ({ ...current, page }))} onPageSizeChange={changePageSize} disabled={loading} /></>}{selectedRecord && <RecordDetailDialog monitor={monitor} record={selectedRecord} descriptor={descriptor} onClose={() => setSelectedRecord(null)} />}</>;
+  return <>
+    <div className="records-toolbar"><div><strong>{pageInfo.total}</strong><span> 条执行记录</span></div><div className="records-toolbar-actions"><Button variant="outline" size="sm" className="destructive-outline" disabled={loading || pageInfo.total === 0} onClick={() => setConfirmDeleteRecords(true)}><Trash2 size={14} />清空记录</Button><IconButton variant="outline" size="default" title="刷新记录" aria-label="刷新记录" onClick={() => void loadRecords()}><RefreshCw size={15} /></IconButton></div></div>
+    <div className="records-filters"><div className="records-search"><Search size={14} /><Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜索错误、事件、状态或结果内容" aria-label="搜索执行记录" /></div><Select value={status} onValueChange={updateFilter(setStatus)}><SelectTrigger className="records-filter-select" aria-label="按执行结果筛选"><SelectValue placeholder="全部结果" /></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem><SelectItem value="success">成功</SelectItem><SelectItem value="failed">失败</SelectItem></SelectContent></Select><Select value={eventType} onValueChange={updateFilter(setEventType)}><SelectTrigger className="records-filter-select" aria-label="按事件筛选"><SelectValue placeholder="全部事件" /></SelectTrigger><SelectContent><SelectItem value="all">全部事件</SelectItem><SelectItem value="triggered">触发</SelectItem><SelectItem value="recovered">恢复</SelectItem><SelectItem value="none">无事件</SelectItem></SelectContent></Select></div>
+    {loading ? <div className="records-empty">正在加载执行记录...</div> : error ? <div className="records-empty field-error">{error}</div> : records.length === 0 ? <div className="records-empty">{pageInfo.total === 0 && (search || status !== "all" || eventType !== "all") ? "没有匹配的执行记录" : "暂无执行记录"}</div> : <><Table className="records-table"><TableHeader><TableRow><TableHead>开始时间</TableHead><TableHead>耗时</TableHead><TableHead>执行结果</TableHead><TableHead>条件状态</TableHead><TableHead>事件</TableHead><TableHead>错误</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => { const condition = conditionMeta(record.condition_state); const event = eventMeta(record.event_type); return <TableRow key={record.id} className="record-row" onClick={() => openRecord(record)}><TableCell className="record-primary-cell" data-label="开始时间"><span>{formatDate(record.started_at)}</span><span className="record-mobile-badges"><Badge tone={record.success ? "success" : "warning"}>{record.success ? "成功" : "失败"}</Badge><Badge tone={condition.tone}>{condition.label}</Badge><Badge tone={event.tone}>{event.label}</Badge></span></TableCell><TableCell className="record-duration-cell" data-label="耗时">{record.duration_ms} ms</TableCell><TableCell className="record-result-cell" data-label="执行结果"><Badge tone={record.success ? "success" : "warning"}>{record.success ? "成功" : "失败"}</Badge></TableCell><TableCell className="record-condition-cell" data-label="条件状态">{condition.label}</TableCell><TableCell className="record-event-cell" data-label="事件">{event.label}</TableCell><TableCell className="record-error-cell" data-label="错误"><span className="record-error" title={record.error_message || "-"}>{record.error_message || "-"}</span></TableCell></TableRow>; })}</TableBody></Table><Pagination page={pageInfo.page} pageSize={pageInfo.page_size} total={pageInfo.total} onPageChange={(page) => setPageInfo((current) => ({ ...current, page }))} onPageSizeChange={changePageSize} disabled={loading} /></>}
+    {selectedRecord && <RecordDetailDialog record={selectedRecord} descriptor={descriptor} onClose={closeRecord} />}
+    <AlertDialog open={confirmDeleteRecords} onOpenChange={(open) => !open && !deletingRecords && setConfirmDeleteRecords(false)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><Trash2 size={18} /></div><AlertDialogTitle>删除全部执行记录</AlertDialogTitle><AlertDialogDescription>将永久删除“{monitor.name}”的全部历史执行记录。监控配置和通知不会被删除，此操作无法撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deletingRecords}>取消</AlertDialogCancel><AlertDialogAction disabled={deletingRecords} onClick={deleteRecords}>{deletingRecords ? "删除中..." : "确认删除"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+  </>;
 }
 
-function RecordDetailDialog({ monitor, record, descriptor, onClose }) {
-  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="modal-wide record-detail-dialog"><DialogHeader><div><span className="eyebrow">RECORD DETAIL</span><DialogTitle>执行详情</DialogTitle><DialogDescription>{formatDate(record.started_at)} · {record.duration_ms} ms</DialogDescription></div></DialogHeader><div className="modal-body record-detail-body"><MonitorSummary monitor={monitor} descriptor={descriptor} /><div className="records-section-divider" /><RecordDetailContent record={record} descriptor={descriptor} /></div></DialogContent></Dialog>;
+function RecordDetailDialog({ record, descriptor, onClose }) {
+  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="modal-wide record-detail-dialog"><DialogHeader><div><span className="eyebrow">RECORD DETAIL</span><DialogTitle>执行详情</DialogTitle><DialogDescription>{formatDate(record.started_at)} · {record.duration_ms} ms</DialogDescription></div></DialogHeader><div className="modal-body record-detail-body"><RecordDetailContent record={record} descriptor={descriptor} /></div></DialogContent></Dialog>;
 }
 
 function RecordDetailContent({ record, descriptor }) {
-  return <><div className="record-detail-grid"><div><span>执行结果</span><strong>{record.success ? "成功" : "失败"}</strong></div><div><span>条件状态</span><strong>{record.condition_state || "unknown"}</strong></div><div><span>事件类型</span><strong>{record.event_type || "none"}</strong></div><div><span>结果哈希</span><code>{record.result_hash || "-"}</code></div></div>{record.error_message && <div className="record-error-block">{record.error_message}</div>}<section><h3>采集结果</h3><ResultRenderer descriptor={descriptor} result={record.result} /></section><section><h3>通知结果</h3><pre>{JSON.stringify(record.notification_result || {}, null, 2)}</pre></section></>;
+  const condition = conditionMeta(record.condition_state);
+  const event = eventMeta(record.event_type);
+  return <><div className="record-detail-badges"><RecordMetaBadge label="执行结果" value={record.success ? "成功" : "失败"} tone={record.success ? "success" : "warning"} /><RecordMetaBadge label="条件状态" value={condition.label} tone={condition.tone} /><RecordMetaBadge label="事件类型" value={event.label} tone={event.tone} /><RecordMetaBadge label="执行耗时" value={`${record.duration_ms} ms`} /><RecordMetaBadge className="record-hash-badge" label="结果哈希" value={record.result_hash || "-"} mono /></div>{record.error_message && <div className="record-error-block">{record.error_message}</div>}<section><h3>采集结果</h3><ResultRenderer descriptor={descriptor} result={record.result} /></section><section><h3>通知结果</h3><pre>{JSON.stringify(record.notification_result || {}, null, 2)}</pre></section></>;
+}
+
+function RecordMetaBadge({ label, value, tone = "neutral", mono = false, className = "" }) {
+  return <Badge variant="outline" tone={tone} className={`record-meta-badge ${className}`} title={`${label}：${value}`}><span>{label}</span><strong className={mono ? "record-meta-mono" : ""}>{value}</strong></Badge>;
+}
+
+function conditionMeta(state) {
+  if (state === "true") return { label: "满足", tone: "success" };
+  if (state === "false") return { label: "未满足", tone: "muted" };
+  return { label: "未知", tone: "warning" };
+}
+
+function eventMeta(type) {
+  if (type === "triggered") return { label: "已触发", tone: "warning" };
+  if (type === "recovered") return { label: "已恢复", tone: "success" };
+  return { label: "无事件", tone: "muted" };
 }

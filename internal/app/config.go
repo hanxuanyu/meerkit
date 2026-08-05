@@ -30,8 +30,10 @@ type ServerConfig struct {
 }
 
 type StorageConfig struct {
-	DataDir   string `yaml:"data_dir" mapstructure:"data_dir"`
-	Retention string `yaml:"retention" mapstructure:"retention"`
+	DataDir               string `yaml:"data_dir" mapstructure:"data_dir"`
+	Retention             string `yaml:"retention" mapstructure:"retention"`
+	NotificationRetention string `yaml:"notification_retention" mapstructure:"notification_retention"`
+	CleanupInterval       string `yaml:"cleanup_interval" mapstructure:"cleanup_interval"`
 }
 
 type SchedulerConfig struct {
@@ -76,8 +78,8 @@ type SecurityConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Server:    ServerConfig{Address: "127.0.0.1", Port: 8080},
-		Storage:   StorageConfig{DataDir: "./data", Retention: "30d"},
+		Server:    ServerConfig{Address: "0.0.0.0", Port: 8080},
+		Storage:   StorageConfig{DataDir: "./data", Retention: "30d", NotificationRetention: "30d", CleanupInterval: "1h"},
 		Scheduler: SchedulerConfig{Timezone: "Local", MaxConcurrency: 16, PollMilliseconds: 500},
 		Logging: LoggingConfig{
 			Level: "info", Format: "text", AddSource: true,
@@ -102,7 +104,7 @@ func LoadConfig(args []string) (Config, error) {
 	flags := pflag.NewFlagSet("meerkit", pflag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", "", "path to config.yaml")
-	listen := flags.String("listen", "", "listen address, for example 127.0.0.1:8080")
+	listen := flags.String("listen", "", "listen address, for example 0.0.0.0:8080")
 	flags.String("data-dir", "", "SQLite data directory")
 	flags.String("retention", "", "record retention, for example 30d")
 	flags.String("timezone", "", "scheduler timezone")
@@ -169,6 +171,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", defaults.Server.Port)
 	v.SetDefault("storage.data_dir", defaults.Storage.DataDir)
 	v.SetDefault("storage.retention", defaults.Storage.Retention)
+	v.SetDefault("storage.notification_retention", defaults.Storage.NotificationRetention)
+	v.SetDefault("storage.cleanup_interval", defaults.Storage.CleanupInterval)
 	v.SetDefault("scheduler.timezone", defaults.Scheduler.Timezone)
 	v.SetDefault("scheduler.max_concurrency", defaults.Scheduler.MaxConcurrency)
 	v.SetDefault("scheduler.poll_milliseconds", defaults.Scheduler.PollMilliseconds)
@@ -195,29 +199,31 @@ func bindEnvironment(v *viper.Viper) error {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "__"))
 	v.AutomaticEnv()
 	envKeys := map[string]string{
-		"server.address":               "MEERKIT_SERVER__ADDRESS",
-		"server.port":                  "MEERKIT_SERVER__PORT",
-		"storage.data_dir":             "MEERKIT_STORAGE__DATA_DIR",
-		"storage.retention":            "MEERKIT_STORAGE__RETENTION",
-		"scheduler.timezone":           "MEERKIT_SCHEDULER__TIMEZONE",
-		"scheduler.max_concurrency":    "MEERKIT_SCHEDULER__MAX_CONCURRENCY",
-		"scheduler.poll_milliseconds":  "MEERKIT_SCHEDULER__POLL_MILLISECONDS",
-		"logging.level":                "MEERKIT_LOGGING__LEVEL",
-		"logging.format":               "MEERKIT_LOGGING__FORMAT",
-		"logging.console.enabled":      "MEERKIT_LOGGING__CONSOLE__ENABLED",
-		"logging.console.access":       "MEERKIT_LOGGING__CONSOLE__ACCESS",
-		"logging.add_source":           "MEERKIT_LOGGING__ADD_SOURCE",
-		"logging.file.enabled":         "MEERKIT_LOGGING__FILE__ENABLED",
-		"logging.file.directory":       "MEERKIT_LOGGING__FILE__DIRECTORY",
-		"logging.file.filename":        "MEERKIT_LOGGING__FILE__FILENAME",
-		"logging.file.max_size_mb":     "MEERKIT_LOGGING__FILE__MAX_SIZE_MB",
-		"logging.file.max_backups":     "MEERKIT_LOGGING__FILE__MAX_BACKUPS",
-		"logging.file.max_age_days":    "MEERKIT_LOGGING__FILE__MAX_AGE_DAYS",
-		"logging.file.compress":        "MEERKIT_LOGGING__FILE__COMPRESS",
-		"logging.file.access.enabled":  "MEERKIT_LOGGING__FILE__ACCESS__ENABLED",
-		"logging.file.access.filename": "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
-		"security.session_ttl":         "MEERKIT_SECURITY__SESSION_TTL",
-		"security.master_key_file":     "MEERKIT_SECURITY__MASTER_KEY_FILE",
+		"server.address":                 "MEERKIT_SERVER__ADDRESS",
+		"server.port":                    "MEERKIT_SERVER__PORT",
+		"storage.data_dir":               "MEERKIT_STORAGE__DATA_DIR",
+		"storage.retention":              "MEERKIT_STORAGE__RETENTION",
+		"storage.notification_retention": "MEERKIT_STORAGE__NOTIFICATION_RETENTION",
+		"storage.cleanup_interval":       "MEERKIT_STORAGE__CLEANUP_INTERVAL",
+		"scheduler.timezone":             "MEERKIT_SCHEDULER__TIMEZONE",
+		"scheduler.max_concurrency":      "MEERKIT_SCHEDULER__MAX_CONCURRENCY",
+		"scheduler.poll_milliseconds":    "MEERKIT_SCHEDULER__POLL_MILLISECONDS",
+		"logging.level":                  "MEERKIT_LOGGING__LEVEL",
+		"logging.format":                 "MEERKIT_LOGGING__FORMAT",
+		"logging.console.enabled":        "MEERKIT_LOGGING__CONSOLE__ENABLED",
+		"logging.console.access":         "MEERKIT_LOGGING__CONSOLE__ACCESS",
+		"logging.add_source":             "MEERKIT_LOGGING__ADD_SOURCE",
+		"logging.file.enabled":           "MEERKIT_LOGGING__FILE__ENABLED",
+		"logging.file.directory":         "MEERKIT_LOGGING__FILE__DIRECTORY",
+		"logging.file.filename":          "MEERKIT_LOGGING__FILE__FILENAME",
+		"logging.file.max_size_mb":       "MEERKIT_LOGGING__FILE__MAX_SIZE_MB",
+		"logging.file.max_backups":       "MEERKIT_LOGGING__FILE__MAX_BACKUPS",
+		"logging.file.max_age_days":      "MEERKIT_LOGGING__FILE__MAX_AGE_DAYS",
+		"logging.file.compress":          "MEERKIT_LOGGING__FILE__COMPRESS",
+		"logging.file.access.enabled":    "MEERKIT_LOGGING__FILE__ACCESS__ENABLED",
+		"logging.file.access.filename":   "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
+		"security.session_ttl":           "MEERKIT_SECURITY__SESSION_TTL",
+		"security.master_key_file":       "MEERKIT_SECURITY__MASTER_KEY_FILE",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -307,6 +313,12 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if _, err := parseRetention(cfg.Storage.Retention); err != nil {
 		return cfg, fmt.Errorf("storage.retention: %w", err)
 	}
+	if _, err := parseRetention(cfg.Storage.NotificationRetention); err != nil {
+		return cfg, fmt.Errorf("storage.notification_retention: %w", err)
+	}
+	if _, err := parseRetention(cfg.Storage.CleanupInterval); err != nil {
+		return cfg, fmt.Errorf("storage.cleanup_interval: %w", err)
+	}
 	if _, err := time.LoadLocation(cfg.Scheduler.Timezone); err != nil && cfg.Scheduler.Timezone != "Local" {
 		return cfg, fmt.Errorf("scheduler.timezone: %w", err)
 	}
@@ -376,6 +388,16 @@ func (c Config) ListenAddress() string {
 
 func (c Config) RetentionDuration() time.Duration {
 	duration, _ := parseRetention(c.Storage.Retention)
+	return duration
+}
+
+func (c Config) NotificationRetentionDuration() time.Duration {
+	duration, _ := parseRetention(c.Storage.NotificationRetention)
+	return duration
+}
+
+func (c Config) CleanupIntervalDuration() time.Duration {
+	duration, _ := parseRetention(c.Storage.CleanupInterval)
 	return duration
 }
 

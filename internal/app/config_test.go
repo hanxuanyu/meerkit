@@ -23,6 +23,9 @@ func TestLoadConfigPrecedence(t *testing.T) {
 	if config.Storage.DataDir != "./from-file" {
 		t.Fatalf("file value was not loaded: %s", config.Storage.DataDir)
 	}
+	if config.Storage.NotificationRetention != "30d" || config.Storage.CleanupInterval != "1h" {
+		t.Fatalf("cleanup defaults were not loaded: %#v", config.Storage)
+	}
 }
 
 func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
@@ -51,14 +54,24 @@ func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
 		t.Fatalf("metadata config file = %q, want %q", config.Metadata.ConfigFile, path)
 	}
 	var pollDescription string
+	var notificationRetentionDescription string
+	var cleanupIntervalDescription string
 	for _, item := range config.Metadata.Items {
 		if item.Path == "scheduler.poll_milliseconds" {
 			pollDescription = item.Description
-			break
+		}
+		if item.Path == "storage.notification_retention" {
+			notificationRetentionDescription = item.Description
+		}
+		if item.Path == "storage.cleanup_interval" {
+			cleanupIntervalDescription = item.Description
 		}
 	}
 	if !strings.Contains(pollDescription, "不决定监控执行频率") {
 		t.Fatalf("poll metadata description does not explain cron behavior: %q", pollDescription)
+	}
+	if notificationRetentionDescription == "" || cleanupIntervalDescription == "" {
+		t.Fatalf("cleanup metadata descriptions are missing: notification=%q interval=%q", notificationRetentionDescription, cleanupIntervalDescription)
 	}
 }
 
@@ -81,11 +94,14 @@ func TestLoadConfigCreatesDefaultFileWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generated config.yaml was not created: %v", err)
 	}
-	if !strings.Contains(string(data), "server:") || !strings.Contains(string(data), "port: 8080") {
+	if !strings.Contains(string(data), "server:") || !strings.Contains(string(data), "address: 0.0.0.0") || !strings.Contains(string(data), "port: 8080") {
 		t.Fatalf("generated config does not contain defaults: %s", data)
 	}
 	if config.Server.Port != DefaultConfig().Server.Port {
 		t.Fatalf("generated default port = %d, want %d", config.Server.Port, DefaultConfig().Server.Port)
+	}
+	if config.Server.Address != "0.0.0.0" {
+		t.Fatalf("generated default address = %q, want 0.0.0.0", config.Server.Address)
 	}
 	if config.Metadata.ConfigFile == "" {
 		t.Fatal("generated config file was not reported in metadata")

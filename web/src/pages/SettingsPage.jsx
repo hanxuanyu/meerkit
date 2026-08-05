@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Database, FileCog, Server } from "lucide-react";
+import { FileCog } from "lucide-react";
 import { api } from "../lib/api";
 import { Badge } from "../components/ui/Badge";
 import { Card } from "../components/ui/Card";
@@ -24,7 +24,7 @@ export function SettingsPage() {
     return () => { cancelled = true; };
   }, []);
 
-  return <div className="page-stack"><div className="page-heading"><div><div className="eyebrow">RUNTIME CONFIGURATION</div><h1>系统设置</h1><p>配置在服务启动时加载，当前生效值由默认值、config.yaml、环境变量和命令行参数合并而成。</p></div></div><div className="settings-grid"><Card className="settings-card"><div className="settings-icon"><Server size={18} /></div><div><h2>单二进制服务</h2><p>Web 资源已嵌入 Go 服务，服务参数由外部配置管理。</p><code>MEERKIT_SERVER__PORT</code></div></Card><Card className="settings-card"><div className="settings-icon"><Database size={18} /></div><div><h2>SQLite 存储</h2><p>监控配置、执行结果和通知渠道使用轻量化本地数据库保存。</p><code>MEERKIT_STORAGE__DATA_DIR</code></div></Card></div><Card className="section-card settings-config-card"><div className="section-header"><div><h2>当前配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "未加载 config.yaml，当前使用默认值和运行时覆盖。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>{error ? <div className="settings-config-error">{error}</div> : metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}</Card></div>;
+  return <div className="page-stack"><div className="page-heading"><div><div className="eyebrow">RUNTIME CONFIGURATION</div><h1>系统设置</h1><p>配置在服务启动时加载，当前生效值由默认值、config.yaml、环境变量和命令行参数合并而成。</p></div></div><Card className="section-card settings-config-card"><div className="section-header"><div><h2>当前配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "未加载 config.yaml，当前使用默认值和运行时覆盖。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>{error ? <div className="settings-config-error">{error}</div> : metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}</Card></div>;
 }
 
 function ConfigTable({ items }) {

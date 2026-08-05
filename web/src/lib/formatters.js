@@ -28,11 +28,11 @@ export function placeholderFor(key) {
 }
 
 export function pageTitle(page) {
-  if (page?.startsWith("monitor-records:")) return "执行记录";
-  return { overview: "总览", monitors: "监控项", notifications: "通知渠道", settings: "系统设置" }[page];
+  if (page?.startsWith("monitor-details:") || page?.startsWith("monitor-records:")) return "执行记录";
+  return { overview: "总览", monitors: "监控项", inbox: "通知中心", notifications: "通知渠道", settings: "系统设置" }[page];
 }
 
-export function formatDate(value) {
-  if (!value) return "尚未执行";
+export function formatDate(value, fallback = "尚未执行") {
+  if (!value) return fallback;
   return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }

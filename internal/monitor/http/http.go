@@ -40,6 +40,7 @@ func New() *Module { return &Module{} }
 func (m *Module) Descriptor() core.ModuleDescriptor {
 	return core.ModuleDescriptor{
 		Type: "http", Version: "2", Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应内容变化。",
+		ListSummary: &core.ModuleListSummaryDescriptor{Fields: []string{"url"}},
 		ConfigSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"url"},

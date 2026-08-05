@@ -42,6 +42,13 @@ type RecordListOptions struct {
 	EventType string
 }
 
+type NotificationListOptions struct {
+	Page       int
+	PageSize   int
+	Search     string
+	UnreadOnly bool
+}
+
 func OpenStore(dataDir string) (*Store, error) {
 	if err := ensureDir(dataDir); err != nil {
 		return nil, err
@@ -104,7 +111,24 @@ CREATE TABLE IF NOT EXISTS notification_channels (
   config_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
-);`)
+);
+CREATE TABLE IF NOT EXISTS in_app_notifications (
+  id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL,
+  monitor_id TEXT NOT NULL DEFAULT '',
+  record_id TEXT NOT NULL DEFAULT '',
+  event_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_in_app_notifications_created ON in_app_notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_in_app_notifications_unread ON in_app_notifications(is_read, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_channels_builtin_inapp ON notification_channels(notifier_type) WHERE notifier_type='inapp';
+INSERT OR IGNORE INTO notification_channels(id,name,notifier_type,enabled,config_json,created_at,updated_at)
+VALUES('builtin-inapp','站内通知','inapp',1,'{"title_template":"{{monitor.name}} · {{event.type}}","body_template":"{{event.summary}}"}',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'));`)
 	return err
 }
 
@@ -247,6 +271,11 @@ func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([
 	return result.Items, err
 }
 
+func (s *Store) GetRecord(ctx context.Context, monitorID, recordID string) (core.MonitorRecord, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
+	return scanRecord(row)
+}
+
 func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options RecordListOptions) (PageResult[core.MonitorRecord], error) {
 	page, pageSize := normalizePage(options.Page, options.PageSize)
 	where := []string{"monitor_id=?"}
@@ -310,7 +339,15 @@ func scanRecord(scanner interface{ Scan(...any) error }) (core.MonitorRecord, er
 	return record, nil
 }
 
-func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
+func (s *Store) DeleteMonitorRecords(ctx context.Context, monitorID string) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM monitor_records WHERE monitor_id=?`, monitorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) PruneRecords(ctx context.Context, before time.Time) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM monitor_records WHERE finished_at < ?`, before.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
@@ -355,6 +392,105 @@ func (s *Store) ListChannels(ctx context.Context) ([]core.NotificationChannel, e
 	return channels, rows.Err()
 }
 
+func (s *Store) CreateInAppNotification(ctx context.Context, notification core.InAppNotification) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO in_app_notifications(id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at) VALUES(?,?,?,?,?,?,?,?,?,NULL)`, notification.ID, notification.ChannelID, notification.MonitorID, notification.RecordID, notification.EventType, notification.Title, notification.Content, boolInt(notification.Read), notification.CreatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetInAppNotification(ctx context.Context, id string) (core.InAppNotification, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM in_app_notifications WHERE id=?`, id)
+	return scanInAppNotification(row)
+}
+
+func (s *Store) ListInAppNotificationsPage(ctx context.Context, options NotificationListOptions) (PageResult[core.InAppNotification], error) {
+	page, pageSize := normalizePage(options.Page, options.PageSize)
+	where := []string{"1=1"}
+	args := make([]any, 0, 4)
+	if options.UnreadOnly {
+		where = append(where, "is_read=0")
+	}
+	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
+		pattern := "%" + search + "%"
+		where = append(where, "(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)")
+		args = append(args, pattern, pattern)
+	}
+	clause := strings.Join(where, " AND ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM in_app_notifications WHERE "+clause, args...).Scan(&total); err != nil {
+		return PageResult[core.InAppNotification]{}, err
+	}
+	result := PageResult[core.InAppNotification]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.InAppNotification{}}
+	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM in_app_notifications WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return PageResult[core.InAppNotification]{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		notification, err := scanInAppNotification(rows)
+		if err != nil {
+			return PageResult[core.InAppNotification]{}, err
+		}
+		result.Items = append(result.Items, notification)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) CountUnreadInAppNotifications(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM in_app_notifications WHERE is_read=0`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) MarkInAppNotificationRead(ctx context.Context, id string) (core.InAppNotification, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `UPDATE in_app_notifications SET is_read=1,read_at=COALESCE(read_at,?) WHERE id=?`, now, id); err != nil {
+		return core.InAppNotification{}, err
+	}
+	return s.GetInAppNotification(ctx, id)
+}
+
+func (s *Store) MarkAllInAppNotificationsRead(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE in_app_notifications SET is_read=1,read_at=? WHERE is_read=0`, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) DeleteReadInAppNotifications(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM in_app_notifications WHERE is_read=1`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) PruneInAppNotifications(ctx context.Context, before time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM in_app_notifications WHERE created_at < ?`, before.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func scanInAppNotification(scanner interface{ Scan(...any) error }) (core.InAppNotification, error) {
+	var notification core.InAppNotification
+	var read int
+	var createdAt string
+	var readAt sql.NullString
+	if err := scanner.Scan(&notification.ID, &notification.ChannelID, &notification.MonitorID, &notification.RecordID, &notification.EventType, &notification.Title, &notification.Content, &read, &createdAt, &readAt); err != nil {
+		return notification, err
+	}
+	notification.Read = read == 1
+	notification.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	if readAt.Valid {
+		value, _ := time.Parse(time.RFC3339Nano, readAt.String)
+		notification.ReadAt = &value
+	}
+	return notification, nil
+}
+
 func scanChannel(scanner interface{ Scan(...any) error }) (core.NotificationChannel, error) {
 	var channel core.NotificationChannel
 	var enabled int
@@ -366,6 +502,7 @@ func scanChannel(scanner interface{ Scan(...any) error }) (core.NotificationChan
 	channel.Config = json.RawMessage(config)
 	channel.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	channel.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	channel.BuiltIn = channel.ID == core.BuiltInNotificationChannelID || channel.NotifierType == "inapp"
 	return channel, nil
 }
 

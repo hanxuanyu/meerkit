@@ -24,9 +24,16 @@ type Context struct {
 func NewContext(event core.NotificationEvent) Context {
 	return Context{
 		Monitor: map[string]any{"id": event.MonitorID, "name": event.MonitorName, "module_type": event.ModuleType},
-		Event:   map[string]any{"type": event.EventType, "event_type": event.EventType, "condition_state": event.ConditionState, "summary": event.Summary, "triggered_at": event.TriggeredAt.Format(time.RFC3339)},
+		Event:   map[string]any{"type": event.EventType, "event_type": event.EventType, "record_id": event.RecordID, "detail_path": detailPath(event), "condition_state": event.ConditionState, "summary": event.Summary, "triggered_at": event.TriggeredAt.Format(time.RFC3339)},
 		Result:  event.CurrentResult, Previous: event.PreviousResult,
 	}
+}
+
+func detailPath(event core.NotificationEvent) string {
+	if event.MonitorID == "" || event.RecordID == "" {
+		return ""
+	}
+	return fmt.Sprintf("/monitors/%s/records/%s", event.MonitorID, event.RecordID)
 }
 
 func Scan(value any) []string {

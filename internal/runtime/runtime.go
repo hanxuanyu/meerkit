@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -188,7 +189,7 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", observation.Summary, "error_code", record.ErrorCode)
 	}
 	if eventType != "none" {
-		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: observation.Summary, CurrentResult: current, ConditionDetail: evaluation.Details}
+		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, RecordID: record.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: observation.Summary, CurrentResult: current, ConditionDetail: evaluation.Details}
 		if previousErr == nil {
 			event.PreviousResult = previous.Result
 		}
@@ -280,7 +281,6 @@ type Scheduler struct {
 	defaultTimezone  string
 	poll             time.Duration
 	maxConcurrency   int
-	retention        time.Duration
 	semaphore        chan struct{}
 	logger           *slog.Logger
 	tasksMu          sync.Mutex
@@ -289,12 +289,12 @@ type Scheduler struct {
 }
 
 func NewScheduler(runner *Runner, store *store.Store, config app.Config, logger *slog.Logger) *Scheduler {
-	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, retention: config.RetentionDuration(), semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string)}
+	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string)}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
 	if s.logger != nil {
-		s.logger.Info("scheduler started", "poll_ms", s.poll.Milliseconds(), "max_concurrency", s.maxConcurrency, "retention", s.retention.String())
+		s.logger.Info("scheduler started", "poll_ms", s.poll.Milliseconds(), "max_concurrency", s.maxConcurrency)
 	}
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
@@ -303,22 +303,12 @@ func (s *Scheduler) Start(ctx context.Context) {
 			s.logger.Info("scheduler stopped")
 		}
 	}()
-	lastPrune := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
 			s.syncAndRun(ctx, now)
-			if time.Since(lastPrune) >= time.Hour {
-				before := time.Now().Add(-s.retention)
-				if deleted, err := s.store.Prune(ctx, before); err != nil && s.logger != nil {
-					s.logger.Error("prune records failed", "error", err)
-				} else if s.logger != nil {
-					s.logger.Info("records pruned", "deleted", deleted, "before", before)
-				}
-				lastPrune = time.Now()
-			}
 		}
 	}
 }
@@ -357,17 +347,16 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 			task = &scheduleTask{expressions: append([]string(nil), monitor.Schedules...), next: next}
 			s.tasks[monitor.ID] = task
 		}
-		if !now.Before(task.next) {
-			next, scheduleErr := nextScheduleTime(task.expressions, s.defaultTimezone, now)
-			if scheduleErr == nil {
-				task.next = next
-				if s.logger != nil {
-					s.logger.Debug("scheduled monitor queued", "monitor_id", monitor.ID, "next_run", task.next, "schedules", task.expressions)
-				}
-				s.launch(ctx, monitor.ID)
-			} else if s.logger != nil {
+		due, scheduleErr := advanceScheduleTask(task, s.defaultTimezone, now)
+		if scheduleErr != nil {
+			if s.logger != nil {
 				s.logger.Warn("monitor schedule became invalid", "monitor_id", monitor.ID, "schedules", task.expressions, "error", scheduleErr)
 			}
+		} else if due {
+			if s.logger != nil {
+				s.logger.Debug("scheduled monitor queued", "monitor_id", monitor.ID, "next_run", task.next, "schedules", task.expressions)
+			}
+			s.launch(ctx, monitor.ID)
 		}
 	}
 	for id := range s.tasks {
@@ -376,6 +365,18 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 			delete(s.invalidSchedules, id)
 		}
 	}
+}
+
+func advanceScheduleTask(task *scheduleTask, timezone string, now time.Time) (bool, error) {
+	if now.Before(task.next) {
+		return false, nil
+	}
+	next, err := nextScheduleTime(task.expressions, timezone, now)
+	if err != nil {
+		return false, err
+	}
+	task.next = next
+	return true, nil
 }
 
 func (s *Scheduler) launch(ctx context.Context, monitorID string) {
@@ -485,4 +486,81 @@ func ValidateSchedules(expressions []string, timezone string) error {
 		}
 	}
 	return nil
+}
+
+func DescribeSchedule(expression string) string {
+	expression = strings.TrimSpace(expression)
+	descriptors := map[string]string{
+		"@yearly": "每年执行一次", "@annually": "每年执行一次", "@monthly": "每月执行一次",
+		"@weekly": "每周执行一次", "@daily": "每天执行一次", "@midnight": "每天零点执行",
+		"@hourly": "每小时执行一次",
+	}
+	if description, ok := descriptors[strings.ToLower(expression)]; ok {
+		return description
+	}
+	if strings.HasPrefix(strings.ToLower(expression), "@every ") {
+		return "每 " + strings.TrimSpace(expression[len("@every "):]) + " 执行一次"
+	}
+	fields := strings.Fields(expression)
+	if len(fields) == 6 {
+		if interval, ok := stepValue(fields[0]); ok && allWildcard(fields[1:]) {
+			return fmt.Sprintf("每 %d 秒执行一次", interval)
+		}
+		if fields[0] == "0" {
+			fields = fields[1:]
+		} else {
+			return "按自定义 Cron 计划执行"
+		}
+	}
+	if len(fields) != 5 {
+		return "按自定义 Cron 计划执行"
+	}
+	minute, hour, dayOfMonth, month, dayOfWeek := fields[0], fields[1], fields[2], fields[3], fields[4]
+	if allWildcard(fields) {
+		return "每分钟执行一次"
+	}
+	if interval, ok := stepValue(minute); ok && allWildcard(fields[1:]) {
+		return fmt.Sprintf("每 %d 分钟执行一次", interval)
+	}
+	if fixedMinute, ok := fixedNumber(minute); ok && hour == "*" && dayOfMonth == "*" && month == "*" && dayOfWeek == "*" {
+		return fmt.Sprintf("每小时第 %02d 分钟执行", fixedMinute)
+	}
+	fixedMinute, minuteOK := fixedNumber(minute)
+	fixedHour, hourOK := fixedNumber(hour)
+	if minuteOK && hourOK && month == "*" {
+		clock := fmt.Sprintf("%02d:%02d", fixedHour, fixedMinute)
+		switch {
+		case dayOfMonth == "*" && dayOfWeek == "*":
+			return "每天 " + clock + " 执行"
+		case dayOfMonth == "*" && dayOfWeek == "1-5":
+			return "每个工作日 " + clock + " 执行"
+		case dayOfWeek == "*":
+			if day, ok := fixedNumber(dayOfMonth); ok {
+				return fmt.Sprintf("每月 %d 日 %s 执行", day, clock)
+			}
+		}
+	}
+	return "按自定义 Cron 计划执行"
+}
+
+func stepValue(value string) (int, bool) {
+	if !strings.HasPrefix(value, "*/") {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(strings.TrimPrefix(value, "*/"))
+	return parsed, err == nil && parsed > 0
+}
+
+func fixedNumber(value string) (int, bool) {
+	parsed, err := strconv.Atoi(value)
+	return parsed, err == nil
+}
+
+func allWildcard(values []string) bool {
+	for _, value := range values {
+		if value != "*" {
+			return false
+		}
+	}
+	return true
 }

@@ -106,4 +106,72 @@ func TestListRecordsPageFiltersAndPaginates(t *testing.T) {
 	if search.Total != 1 || search.Items[0].EventType != "recovered" {
 		t.Fatalf("unexpected record search: %+v", search)
 	}
+	deleted, err := database.DeleteMonitorRecords(ctx, monitor.ID)
+	if err != nil || deleted != 3 {
+		t.Fatalf("delete records deleted=%d err=%v", deleted, err)
+	}
+	empty, err := database.ListRecordsPage(ctx, monitor.ID, RecordListOptions{PageSize: 20})
+	if err != nil || empty.Total != 0 {
+		t.Fatalf("records after delete: %+v err=%v", empty, err)
+	}
+}
+
+func TestBuiltInChannelAndInAppNotificationLifecycle(t *testing.T) {
+	ctx := context.Background()
+	database, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	channel, err := database.GetChannel(ctx, core.BuiltInNotificationChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !channel.BuiltIn || channel.NotifierType != "inapp" || !channel.Enabled {
+		t.Fatalf("unexpected built-in channel: %+v", channel)
+	}
+
+	now := time.Now().UTC()
+	for index := 0; index < 3; index++ {
+		notification := core.InAppNotification{
+			ID: "notification-" + string(rune('1'+index)), ChannelID: channel.ID, MonitorID: "monitor-1", RecordID: "record-1",
+			EventType: "triggered", Title: "Alert", Content: "body", CreatedAt: now.Add(time.Duration(index) * time.Minute),
+		}
+		if err := database.CreateInAppNotification(ctx, notification); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := database.ListInAppNotificationsPage(ctx, NotificationListOptions{Page: 1, PageSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 || page.TotalPages != 2 || len(page.Items) != 2 || page.Items[0].ID != "notification-3" {
+		t.Fatalf("unexpected notification page: %+v", page)
+	}
+	count, err := database.CountUnreadInAppNotifications(ctx)
+	if err != nil || count != 3 {
+		t.Fatalf("unread count=%d err=%v", count, err)
+	}
+	read, err := database.MarkInAppNotificationRead(ctx, "notification-3")
+	if err != nil || !read.Read || read.ReadAt == nil {
+		t.Fatalf("mark read returned %+v err=%v", read, err)
+	}
+	updated, err := database.MarkAllInAppNotificationsRead(ctx)
+	if err != nil || updated != 2 {
+		t.Fatalf("mark all updated=%d err=%v", updated, err)
+	}
+	count, _ = database.CountUnreadInAppNotifications(ctx)
+	if count != 0 {
+		t.Fatalf("unread count after mark all=%d", count)
+	}
+	deleted, err := database.DeleteReadInAppNotifications(ctx)
+	if err != nil || deleted != 3 {
+		t.Fatalf("delete read notifications deleted=%d err=%v", deleted, err)
+	}
+	page, err = database.ListInAppNotificationsPage(ctx, NotificationListOptions{PageSize: 20})
+	if err != nil || page.Total != 0 {
+		t.Fatalf("notifications after delete: %+v err=%v", page, err)
+	}
 }

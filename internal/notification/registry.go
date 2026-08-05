@@ -2,16 +2,19 @@ package notification
 
 import (
 	"meerkit/internal/core"
+	"meerkit/internal/notification/inapp"
 	"meerkit/internal/notification/smtp"
 	"meerkit/internal/notification/webhook"
+	"meerkit/internal/store"
 )
 
 type Registry struct {
 	notifiers map[string]core.NotifierModule
 }
 
-func NewRegistry() *Registry {
+func NewRegistry(store *store.Store, hub *inapp.Hub) *Registry {
 	registry := &Registry{notifiers: make(map[string]core.NotifierModule)}
+	registry.Register(inapp.New(store, hub))
 	registry.Register(webhook.New())
 	registry.Register(smtp.New())
 	return registry

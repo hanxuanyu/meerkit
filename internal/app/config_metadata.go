@@ -60,10 +60,12 @@ func configDefinitions() []configDefinition {
 		return configDefinition{path: path, environment: env, flag: flag, description: description, value: getter, defaultVal: defaultGetter}
 	}
 	return []configDefinition{
-		value("server.address", "MEERKIT_SERVER__ADDRESS", "listen", "HTTP 服务监听地址。使用 --listen 时会同时覆盖地址和端口。", func(c Config) any { return c.Server.Address }, func(c Config) any { return c.Server.Address }),
+		value("server.address", "MEERKIT_SERVER__ADDRESS", "listen", "HTTP 服务监听地址，默认为 0.0.0.0，即监听所有网络接口。使用 --listen 时会同时覆盖地址和端口。", func(c Config) any { return c.Server.Address }, func(c Config) any { return c.Server.Address }),
 		value("server.port", "MEERKIT_SERVER__PORT", "listen", "HTTP 服务监听端口。使用 --listen 时会同时覆盖地址和端口。", func(c Config) any { return c.Server.Port }, func(c Config) any { return c.Server.Port }),
 		value("storage.data_dir", "MEERKIT_STORAGE__DATA_DIR", "data-dir", "SQLite 数据库和运行数据所在目录。", func(c Config) any { return c.Storage.DataDir }, func(c Config) any { return c.Storage.DataDir }),
-		value("storage.retention", "MEERKIT_STORAGE__RETENTION", "retention", "监控执行记录的保留时间。", func(c Config) any { return c.Storage.Retention }, func(c Config) any { return c.Storage.Retention }),
+		value("storage.retention", "MEERKIT_STORAGE__RETENTION", "retention", "监控执行记录的最长保留时间，支持 30d、12h 等持续时间格式。", func(c Config) any { return c.Storage.Retention }, func(c Config) any { return c.Storage.Retention }),
+		value("storage.notification_retention", "MEERKIT_STORAGE__NOTIFICATION_RETENTION", "", "站内通知的最长保留时间；到期后无论已读状态都会由清理任务删除。", func(c Config) any { return c.Storage.NotificationRetention }, func(c Config) any { return c.Storage.NotificationRetention }),
+		value("storage.cleanup_interval", "MEERKIT_STORAGE__CLEANUP_INTERVAL", "", "过期通知和执行记录清理任务的执行频率，服务启动时也会立即清理一次。", func(c Config) any { return c.Storage.CleanupInterval }, func(c Config) any { return c.Storage.CleanupInterval }),
 		value("scheduler.timezone", "MEERKIT_SCHEDULER__TIMEZONE", "timezone", "所有监控 cron 表达式使用的统一时区。", func(c Config) any { return c.Scheduler.Timezone }, func(c Config) any { return c.Scheduler.Timezone }),
 		value("scheduler.max_concurrency", "MEERKIT_SCHEDULER__MAX_CONCURRENCY", "max-concurrency", "同时执行的监控任务上限。", func(c Config) any { return c.Scheduler.MaxConcurrency }, func(c Config) any { return c.Scheduler.MaxConcurrency }),
 		value("scheduler.poll_milliseconds", "MEERKIT_SCHEDULER__POLL_MILLISECONDS", "", "调度器同步扫描间隔，用于发现配置变化并检查 cron 是否到期，不决定监控执行频率。", func(c Config) any { return c.Scheduler.PollMilliseconds }, func(c Config) any { return c.Scheduler.PollMilliseconds }),

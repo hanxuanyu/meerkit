@@ -17,7 +17,15 @@ function ResultSet({ set, result, descriptor }) {
 function ResultField({ field, value, descriptor }) {
   const type = field.type || "string";
   const display = formatResultValue(value, field);
-  return <div className={`result-field result-field-${type}`}><div className="result-field-label"><span>{field.label}</span>{field.unit && <small>{field.unit}</small>}</div>{field.format === "condition_list" ? <ConditionList value={value} descriptor={descriptor} /> : type === "boolean" ? <Badge tone={value ? "success" : "muted"}>{value ? "是" : "否"}</Badge> : ["json", "object", "map", "array"].includes(type) ? <pre>{display}</pre> : <strong title={String(display)}>{display}</strong>}</div>;
+  if (value === undefined || value === null || value === "") return null;
+  const longText = typeof value === "string" && (value.length > 120 || value.includes("\n"));
+  const complex = field.format === "condition_list" || ["json", "object", "map", "array", "text"].includes(type) || longText;
+  if (!complex) {
+    const visibleValue = type === "boolean" ? (value ? "是" : "否") : display;
+    const tone = type === "boolean" ? (value ? "success" : "muted") : "neutral";
+    return <Badge variant="outline" tone={tone} className={`result-value-badge result-value-${type}`} title={`${field.label}：${visibleValue}`}><span>{field.label}</span><strong>{visibleValue}</strong></Badge>;
+  }
+  return <div className={`result-field result-field-${type}`}><div className="result-field-label"><span>{field.label}</span>{field.unit && <small>{field.unit}</small>}</div>{field.format === "condition_list" ? <ConditionList value={value} descriptor={descriptor} /> : <pre>{display}</pre>}</div>;
 }
 
 function ConditionList({ value, descriptor }) {

@@ -22,6 +22,7 @@ func New() *Module { return &Module{} }
 func (m *Module) Descriptor() core.ModuleDescriptor {
 	return core.ModuleDescriptor{
 		Type: "tcp", Version: "1", Name: "TCP", Description: "连接 TCP 服务并观察可选响应变化。",
+		ListSummary: &core.ModuleListSummaryDescriptor{Fields: []string{"host", "port"}, Separator: ":"},
 		ConfigSchema: map[string]any{"type": "object", "required": []string{"host", "port"}, "properties": map[string]any{
 			"host": map[string]any{"type": "string", "title": "主机"}, "port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "title": "端口"},
 			"timeout_seconds": map[string]any{"type": "integer", "default": 10, "minimum": 1, "maximum": 300}, "send": map[string]any{"type": "string", "title": "发送内容"}, "send_base64": map[string]any{"type": "boolean", "default": false},
