@@ -18,6 +18,24 @@ type FieldDescriptor struct {
 	Path      bool     `json:"path,omitempty"`
 }
 
+type ResultFieldDescriptor struct {
+	Name        string   `json:"name"`
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type"`
+	Format      string   `json:"format,omitempty"`
+	Unit        string   `json:"unit,omitempty"`
+	Operators   []string `json:"operators"`
+	Path        bool     `json:"path,omitempty"`
+}
+
+type ResultSetDescriptor struct {
+	Key         string                  `json:"key"`
+	Label       string                  `json:"label"`
+	Description string                  `json:"description,omitempty"`
+	Fields      []ResultFieldDescriptor `json:"fields"`
+}
+
 type ParameterType string
 
 const (
@@ -85,15 +103,17 @@ type ModuleDescriptor struct {
 	Parameters   []ParameterDescriptor `json:"parameters"`
 	ResultSchema map[string]any        `json:"result_schema"`
 	Fields       []FieldDescriptor     `json:"fields"`
+	ResultSets   []ResultSetDescriptor `json:"result_sets,omitempty"`
 }
 
 type Observation struct {
-	Success       bool           `json:"success"`
-	SchemaVersion string         `json:"schema_version"`
-	Result        map[string]any `json:"result"`
-	Summary       string         `json:"summary"`
-	ErrorCode     string         `json:"error_code,omitempty"`
-	ErrorMessage  string         `json:"error_message,omitempty"`
+	Success       bool                      `json:"success"`
+	SchemaVersion string                    `json:"schema_version"`
+	Result        map[string]any            `json:"result"`
+	ResultSets    map[string]map[string]any `json:"result_sets,omitempty"`
+	Summary       string                    `json:"summary"`
+	ErrorCode     string                    `json:"error_code,omitempty"`
+	ErrorMessage  string                    `json:"error_message,omitempty"`
 }
 
 type MonitorModule interface {
@@ -134,8 +154,7 @@ type Monitor struct {
 	Name                   string          `json:"name"`
 	ModuleType             string          `json:"module_type"`
 	ModuleVersion          string          `json:"module_version"`
-	Schedule               string          `json:"schedule"`
-	Timezone               string          `json:"timezone"`
+	Schedules              []string        `json:"schedules"`
 	Enabled                bool            `json:"enabled"`
 	ModuleConfig           json.RawMessage `json:"module_config"`
 	ConditionConfig        json.RawMessage `json:"condition_config"`

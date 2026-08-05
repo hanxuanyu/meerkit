@@ -28,6 +28,7 @@ export function placeholderFor(key) {
 }
 
 export function pageTitle(page) {
+  if (page?.startsWith("monitor-records:")) return "执行记录";
   return { overview: "总览", monitors: "监控项", notifications: "通知渠道", settings: "系统设置" }[page];
 }
 

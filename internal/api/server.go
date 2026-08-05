@@ -59,9 +59,13 @@ func (a *APIServer) Router() http.Handler {
 	api.GET("/system", func(c *gin.Context) {
 		writeJSON(c.Writer, http.StatusOK, map[string]any{"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention, "timezone": a.config.Scheduler.Timezone})
 	})
+	api.GET("/system/config", func(c *gin.Context) {
+		writeJSON(c.Writer, http.StatusOK, a.config.Metadata)
+	})
 
 	api.GET("/notification-channels", legacyParts(a.handleChannels))
 	api.POST("/notification-channels", legacyParts(a.handleChannels))
+	api.POST("/notification-channels/test", legacy(a.testNotification))
 	api.GET("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.PATCH("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.PUT("/notification-channels/:id", func(c *gin.Context) { a.handleChannels(c.Writer, c.Request, []string{c.Param("id")}) })
@@ -75,6 +79,7 @@ func (a *APIServer) Router() http.Handler {
 	api.PUT("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.DELETE("/monitors/:id", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id")}) })
 	api.POST("/monitors/:id/run", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "run"}) })
+	api.POST("/monitors/test", legacy(a.testMonitor))
 	api.GET("/monitors/:id/records", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records"}) })
 	api.GET("/monitors/:id/next-runs", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "next-runs"}) })
 
@@ -233,6 +238,36 @@ func (a *APIServer) handleChannels(w http.ResponseWriter, r *http.Request, parts
 	}
 }
 
+func (a *APIServer) testNotification(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		NotifierType string          `json:"notifier_type"`
+		Config       json.RawMessage `json:"config"`
+	}
+	if err := decodeBody(w, r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	notifier, ok := a.notifiers.Get(payload.NotifierType)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "notifier_not_found", "notifier not found")
+		return
+	}
+	payload.Config = ensureRawJSON(payload.Config, "{}")
+	if err := notifier.ValidateConfig(payload.Config); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_notifier_config", err.Error())
+		return
+	}
+	event := core.NotificationEvent{EventType: "test", MonitorName: "Meerkit test notification", ModuleType: "system", TriggeredAt: time.Now().UTC(), ConditionState: "true", Summary: "This is a test notification."}
+	if err := notifier.Send(r.Context(), payload.Config, event); err != nil {
+		writeError(w, http.StatusBadRequest, "notification_failed", err.Error())
+		return
+	}
+	if a.logger != nil {
+		a.logger.Info("notification configuration test sent", "notifier_type", payload.NotifierType)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "sent"})
+}
+
 func (a *APIServer) createChannel(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Name         string          `json:"name"`
@@ -278,12 +313,18 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	if len(parts) == 0 {
 		switch r.Method {
 		case http.MethodGet:
-			monitors, err := a.store.ListMonitors(r.Context())
+			monitors, err := a.store.ListMonitorsPage(r.Context(), store.MonitorListOptions{
+				Page:       queryInt(r, "page", 1),
+				PageSize:   queryInt(r, "page_size", 20),
+				Search:     r.URL.Query().Get("q"),
+				ModuleType: r.URL.Query().Get("module_type"),
+				Status:     r.URL.Query().Get("status"),
+			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"items": monitors})
+			writeJSON(w, http.StatusOK, monitors)
 		case http.MethodPost:
 			a.createMonitor(w, r)
 		default:
@@ -314,13 +355,18 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 				return
 			}
-			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-			records, err := a.store.ListRecords(r.Context(), id, limit)
+			records, err := a.store.ListRecordsPage(r.Context(), id, store.RecordListOptions{
+				Page:      queryInt(r, "page", 1),
+				PageSize:  queryInt(r, "page_size", 20),
+				Search:    r.URL.Query().Get("q"),
+				Status:    r.URL.Query().Get("status"),
+				EventType: r.URL.Query().Get("event_type"),
+			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"items": records})
+			writeJSON(w, http.StatusOK, records)
 		case "next-runs":
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -331,7 +377,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				writeError(w, http.StatusNotFound, "monitor_not_found", err.Error())
 				return
 			}
-			next, err := runtimeapp.NextScheduleTimes(monitor.Schedule, monitor.Timezone, a.config.Scheduler.Timezone, 5)
+			next, err := runtimeapp.NextScheduleTimes(monitor.Schedules, a.config.Scheduler.Timezone, 5)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 				return
@@ -366,11 +412,48 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	}
 }
 
+func (a *APIServer) testMonitor(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		ModuleType   string          `json:"module_type"`
+		ModuleConfig json.RawMessage `json:"module_config"`
+	}
+	if err := decodeBody(w, r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	module, ok := a.modules.Get(payload.ModuleType)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "module_not_found", "monitor module not found")
+		return
+	}
+	payload.ModuleConfig = ensureRawJSON(payload.ModuleConfig, "{}")
+	if err := module.ValidateConfig(payload.ModuleConfig); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_module_config", err.Error())
+		return
+	}
+	observation, executeErr := module.Execute(r.Context(), payload.ModuleConfig)
+	if observation.Result == nil {
+		observation.Result = map[string]any{}
+	}
+	if executeErr != nil {
+		observation.Success = false
+		if observation.ErrorCode == "" {
+			observation.ErrorCode = "execution_error"
+		}
+		if observation.ErrorMessage == "" {
+			observation.ErrorMessage = executeErr.Error()
+		}
+	}
+	if a.logger != nil {
+		a.logger.Info("monitor test completed", "module_type", payload.ModuleType, "success", observation.Success && executeErr == nil, "error_code", observation.ErrorCode)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": observation.Success && executeErr == nil, "observation": observation})
+}
+
 type monitorPayload struct {
 	Name                   string          `json:"name"`
 	ModuleType             string          `json:"module_type"`
-	Schedule               string          `json:"schedule"`
-	Timezone               string          `json:"timezone"`
+	Schedules              []string        `json:"schedules"`
 	Enabled                *bool           `json:"enabled"`
 	ModuleConfig           json.RawMessage `json:"module_config"`
 	ConditionConfig        json.RawMessage `json:"condition_config"`
@@ -392,14 +475,11 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "unknown module_type")
 		return
 	}
-	if payload.Schedule == "" {
-		payload.Schedule = "*/5 * * * *"
+	payload.Schedules = normalizeSchedules(payload.Schedules)
+	if len(payload.Schedules) == 0 {
+		payload.Schedules = []string{"*/5 * * * *"}
 	}
-	timezone := payload.Timezone
-	if timezone == "" {
-		timezone = a.config.Scheduler.Timezone
-	}
-	if err := runtimeapp.ValidateSchedule(payload.Schedule, timezone, a.config.Scheduler.Timezone); err != nil {
+	if err := runtimeapp.ValidateSchedules(payload.Schedules, a.config.Scheduler.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}
@@ -419,13 +499,13 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		enabled = *payload.Enabled
 	}
 	now := time.Now().UTC()
-	monitor := core.Monitor{ID: core.NewID(), Name: payload.Name, ModuleType: payload.ModuleType, ModuleVersion: module.Descriptor().Version, Schedule: payload.Schedule, Timezone: timezone, Enabled: enabled, ModuleConfig: moduleConfig, ConditionConfig: conditionConfig, NotificationChannelIDs: payload.NotificationChannelIDs, RuntimeState: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
+	monitor := core.Monitor{ID: core.NewID(), Name: payload.Name, ModuleType: payload.ModuleType, ModuleVersion: module.Descriptor().Version, Schedules: payload.Schedules, Enabled: enabled, ModuleConfig: moduleConfig, ConditionConfig: conditionConfig, NotificationChannelIDs: payload.NotificationChannelIDs, RuntimeState: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
 	if err := a.store.CreateMonitor(r.Context(), monitor); err != nil {
 		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
 	}
 	if a.logger != nil {
-		a.logger.Info("monitor created", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "schedule", monitor.Schedule, "enabled", monitor.Enabled)
+		a.logger.Info("monitor created", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "schedules", monitor.Schedules, "enabled", monitor.Enabled)
 	}
 	writeJSON(w, http.StatusCreated, monitor)
 }
@@ -453,11 +533,8 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		writeError(w, http.StatusBadRequest, "validation_error", "unknown module_type")
 		return
 	}
-	if payload.Schedule != "" {
-		current.Schedule = payload.Schedule
-	}
-	if payload.Timezone != "" {
-		current.Timezone = payload.Timezone
+	if payload.Schedules != nil {
+		current.Schedules = normalizeSchedules(payload.Schedules)
 	}
 	if payload.Enabled != nil {
 		current.Enabled = *payload.Enabled
@@ -471,7 +548,7 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 	if payload.NotificationChannelIDs != nil {
 		current.NotificationChannelIDs = payload.NotificationChannelIDs
 	}
-	if err := runtimeapp.ValidateSchedule(current.Schedule, current.Timezone, a.config.Scheduler.Timezone); err != nil {
+	if err := runtimeapp.ValidateSchedules(current.Schedules, a.config.Scheduler.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}
@@ -489,7 +566,7 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		return
 	}
 	if a.logger != nil {
-		a.logger.Info("monitor updated", "monitor_id", current.ID, "monitor_name", current.Name, "module_type", current.ModuleType, "schedule", current.Schedule, "enabled", current.Enabled)
+		a.logger.Info("monitor updated", "monitor_id", current.ID, "monitor_name", current.Name, "module_type", current.ModuleType, "schedules", current.Schedules, "enabled", current.Enabled)
 	}
 	writeJSON(w, http.StatusOK, current)
 }
@@ -504,6 +581,31 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) error {
 func ensureRawJSON(value json.RawMessage, fallback string) json.RawMessage {
 	if len(value) == 0 {
 		return json.RawMessage(fallback)
+	}
+	return value
+}
+
+func normalizeSchedules(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func queryInt(r *http.Request, key string, fallback int) int {
+	value, err := strconv.Atoi(r.URL.Query().Get(key))
+	if err != nil || value < 1 {
+		return fallback
 	}
 	return value
 }

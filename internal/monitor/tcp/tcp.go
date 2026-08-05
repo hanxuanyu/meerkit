@@ -32,8 +32,8 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 			{Key: "port", Label: "端口", Type: core.ParameterInteger, Required: true, Minimum: core.Float64(1), Maximum: core.Float64(65535), Placeholder: "8080", Order: 20},
 			{Key: "timeout_seconds", Label: "连接超时", Type: core.ParameterDuration, Default: 10, Minimum: core.Float64(1), Maximum: core.Float64(300), Unit: "秒", Order: 30},
 			{Key: "send", Label: "发送内容", Type: core.ParameterText, FullWidth: true, Rows: 5, Description: "留空时只建立 TCP 连接。", Order: 40},
-			{Key: "read_response", Label: "读取响应", Type: core.ParameterBoolean, Default: false, Order: 200},
-			{Key: "send_base64", Label: "发送内容使用 Base64", Type: core.ParameterBoolean, Default: false, Order: 210},
+			{Key: "read_response", Label: "读取响应", Type: core.ParameterBoolean, Default: false, Order: 200, Description: "连接后读取一次服务端响应。"},
+			{Key: "send_base64", Label: "发送内容使用 Base64", Type: core.ParameterBoolean, Default: false, Order: 210, Description: "将发送内容按 Base64 解码后再写入 TCP 连接。"},
 			{Key: "read_timeout_seconds", Label: "读取超时", Type: core.ParameterDuration, Default: 3, Minimum: core.Float64(1), Maximum: core.Float64(60), Unit: "秒", Order: 300, VisibleWhen: []core.ParameterCondition{{Field: "read_response", Operator: "equals", Value: true}}},
 			{Key: "max_read_bytes", Label: "最大读取字节数", Type: core.ParameterInteger, Default: 65536, Minimum: core.Float64(1), Maximum: core.Float64(1048576), Unit: "字节", Order: 310, VisibleWhen: []core.ParameterCondition{{Field: "read_response", Operator: "equals", Value: true}}},
 		},
@@ -45,6 +45,18 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 			{Name: "duration_ms", Label: "连接耗时(ms)", Type: "number", Operators: []string{"gt", "gte", "lt", "lte", "changed"}}, {Name: "response_text", Label: "响应文本", Type: "string", Operators: []string{"equals", "not_equals", "contains", "not_contains", "regex", "changed"}},
 			{Name: "response_hash", Label: "响应哈希", Type: "string", Operators: []string{"equals", "not_equals", "changed"}}, {Name: "bytes_read", Label: "响应字节数", Type: "number", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
 		},
+		ResultSets: []core.ResultSetDescriptor{{
+			Key: "connection", Label: "TCP 连接", Description: "连接探活以及可选的单次收发结果。", Fields: []core.ResultFieldDescriptor{
+				{Name: "success", Label: "执行成功", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
+				{Name: "connected", Label: "连接成功", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
+				{Name: "duration_ms", Label: "连接耗时", Type: "number", Unit: "ms", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
+				{Name: "remote_addr", Label: "远端地址", Type: "string", Operators: []string{"equals", "not_equals", "contains", "changed"}},
+				{Name: "response_text", Label: "响应文本", Type: "text", Operators: []string{"equals", "not_equals", "contains", "not_contains", "regex", "changed"}},
+				{Name: "response_bytes", Label: "响应二进制", Type: "binary", Format: "base64", Operators: []string{"exists", "changed"}},
+				{Name: "response_hash", Label: "响应哈希", Type: "string", Operators: []string{"equals", "not_equals", "changed"}},
+				{Name: "bytes_read", Label: "响应字节数", Type: "number", Unit: "字节", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
+			},
+		}},
 	}
 }
 
@@ -75,7 +87,8 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	address := net.JoinHostPort(stringValue(config, "host", ""), strconv.Itoa(intValue(config, "port", 0)))
 	connection, err := (&net.Dialer{Timeout: time.Duration(intValue(config, "timeout_seconds", 10)) * time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
-		return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false, "connected": false, "duration_ms": time.Since(started).Milliseconds()}}, err
+		result := map[string]any{"success": false, "connected": false, "duration_ms": time.Since(started).Milliseconds()}
+		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"connection": copyMap(result)}}, err
 	}
 	defer connection.Close()
 	result := map[string]any{"success": true, "connected": true, "duration_ms": time.Since(started).Milliseconds(), "remote_addr": connection.RemoteAddr().String(), "response_text": "", "response_bytes": "", "response_hash": hash(""), "bytes_read": 0}
@@ -104,7 +117,15 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 		result["response_hash"] = hash(string(data))
 		result["bytes_read"] = count
 	}
-	return core.Observation{Success: true, SchemaVersion: "1", Result: result, Summary: "TCP connected"}, nil
+	return core.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"connection": copyMap(result)}, Summary: "TCP connected"}, nil
+}
+
+func copyMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 func failed() core.Observation {

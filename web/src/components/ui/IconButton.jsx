@@ -19,6 +19,7 @@ const iconButtonVariants = cva(
   }
 );
 
-export const IconButton = React.forwardRef(function IconButton({ children, className, variant, size, type = "button", ...props }, ref) {
-  return <button ref={ref} type={type} className={cn(iconButtonVariants({ variant, size, className }))} {...props}>{children}</button>;
+export const IconButton = React.forwardRef(function IconButton({ children, className, variant, size, type = "button", title, "aria-label": ariaLabel, ...props }, ref) {
+  const hint = title || ariaLabel;
+  return <button ref={ref} type={type} title={hint} aria-label={ariaLabel || title} className={cn(iconButtonVariants({ variant, size, className }))} {...props}>{children}</button>;
 });

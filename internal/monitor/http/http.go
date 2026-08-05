@@ -76,8 +76,8 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 			{Key: "form_fields", Label: "表单字段", Type: core.ParameterMap, FullWidth: true, Order: 210, Description: "表单模式下每行定义一个字段。", VisibleWhen: bodyModeConditions("form_urlencoded", "multipart_form")},
 			{Key: "json_body", Label: "JSON 请求体", Type: core.ParameterText, FullWidth: true, Format: "json", Rows: 8, Order: 220, Placeholder: "{\n  \"key\": \"value\"\n}", Description: "支持对象、数组和其他合法 JSON 值。", VisibleWhen: bodyModeConditions("raw_json")},
 			{Key: "raw_body", Label: "原始请求体", Type: core.ParameterText, FullWidth: true, Rows: 8, Order: 230, Placeholder: "输入要发送的原始文本内容", VisibleWhen: bodyModeConditions("raw_text")},
-			{Key: "follow_redirects", Label: "跟随重定向", Type: core.ParameterBoolean, Default: true, Order: 300},
-			{Key: "verify_tls", Label: "校验 TLS 证书", Type: core.ParameterBoolean, Default: true, Order: 310},
+			{Key: "follow_redirects", Label: "跟随重定向", Type: core.ParameterBoolean, Default: true, Order: 300, Description: "自动跟随 3xx 重定向响应。"},
+			{Key: "verify_tls", Label: "校验 TLS 证书", Type: core.ParameterBoolean, Default: true, Order: 310, Description: "校验 HTTPS 服务端证书；关闭后允许不受信任的证书。"},
 			{Key: "max_redirects", Label: "最大重定向次数", Type: core.ParameterInteger, Default: defaultMaxRedirects, Minimum: core.Float64(1), Maximum: core.Float64(50), Order: 320, VisibleWhen: equalsCondition("follow_redirects", true)},
 		},
 		ResultSchema: map[string]any{"type": "object", "properties": map[string]any{
@@ -92,6 +92,19 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 			{Name: "body_json", Label: "响应 JSON", Type: "json", Path: true, Operators: []string{"equals", "not_equals", "contains", "gt", "gte", "lt", "lte", "changed"}},
 			{Name: "body_hash", Label: "内容哈希", Type: "string", Operators: []string{"equals", "not_equals", "changed"}},
 		},
+		ResultSets: []core.ResultSetDescriptor{{
+			Key: "response", Label: "HTTP 响应", Description: "本次 HTTP 请求得到的响应与解析结果。", Fields: []core.ResultFieldDescriptor{
+				{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
+				{Name: "status_code", Label: "状态码", Type: "number", Operators: []string{"equals", "not_equals", "gt", "gte", "lt", "lte", "changed"}},
+				{Name: "duration_ms", Label: "响应耗时", Description: "请求完成所需的毫秒数。", Type: "number", Unit: "ms", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
+				{Name: "response_headers", Label: "响应头", Type: "map", Operators: []string{"exists", "contains", "changed"}},
+				{Name: "body_text", Label: "响应文本", Type: "text", Operators: []string{"equals", "not_equals", "contains", "not_contains", "regex", "changed"}},
+				{Name: "body_json", Label: "响应 JSON", Type: "json", Path: true, Operators: []string{"exists", "equals", "not_equals", "contains", "changed"}},
+				{Name: "body_hash", Label: "内容哈希", Type: "string", Operators: []string{"equals", "not_equals", "changed"}},
+				{Name: "body_size", Label: "响应大小", Type: "number", Unit: "字节", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
+				{Name: "truncated", Label: "响应是否截断", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
+			},
+		}},
 	}
 }
 
@@ -209,13 +222,15 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	started := time.Now()
 	response, err := client.Do(request)
 	if err != nil {
-		return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}}, err
+		result := map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}
+		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}}, err
 	}
 	defer response.Body.Close()
 	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if readErr != nil {
-		return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false, "status_code": response.StatusCode}}, readErr
+		result := map[string]any{"success": false, "status_code": response.StatusCode}
+		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}}, readErr
 	}
 	truncated := int64(len(data)) > maxBytes
 	if truncated {
@@ -230,7 +245,15 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 			result["body_json"] = parsed
 		}
 	}
-	return core.Observation{Success: true, SchemaVersion: "1", Result: result, Summary: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+	return core.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+}
+
+func copyMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 func (m *Module) client(config map[string]any) *http.Client {

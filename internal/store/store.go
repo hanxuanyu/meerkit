@@ -18,6 +18,30 @@ type Store struct {
 	db *sql.DB
 }
 
+type PageResult[T any] struct {
+	Items      []T `json:"items"`
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+type MonitorListOptions struct {
+	Page       int
+	PageSize   int
+	Search     string
+	ModuleType string
+	Status     string
+}
+
+type RecordListOptions struct {
+	Page      int
+	PageSize  int
+	Search    string
+	Status    string
+	EventType string
+}
+
 func OpenStore(dataDir string) (*Store, error) {
 	if err := ensureDir(dataDir); err != nil {
 		return nil, err
@@ -45,8 +69,7 @@ CREATE TABLE IF NOT EXISTS monitors (
   name TEXT NOT NULL,
   module_type TEXT NOT NULL,
   module_version TEXT NOT NULL,
-  schedule TEXT NOT NULL,
-  timezone TEXT NOT NULL,
+  schedules_json TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   module_config_json TEXT NOT NULL,
   condition_config_json TEXT NOT NULL,
@@ -91,13 +114,13 @@ func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *Store) CreateMonitor(ctx context.Context, monitor core.Monitor) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO monitors
-(id,name,module_type,module_version,schedule,timezone,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, monitor.ID, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.Schedule, monitor.Timezone, boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.CreatedAt.UTC().Format(time.RFC3339Nano), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano))
+(id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, monitor.ID, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.CreatedAt.UTC().Format(time.RFC3339Nano), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) UpdateMonitor(ctx context.Context, monitor core.Monitor) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE monitors SET name=?,module_type=?,module_version=?,schedule=?,timezone=?,enabled=?,module_config_json=?,condition_config_json=?,notification_channel_ids_json=?,runtime_state_json=?,updated_at=? WHERE id=?`, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.Schedule, monitor.Timezone, boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano), monitor.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE monitors SET name=?,module_type=?,module_version=?,schedules_json=?,enabled=?,module_config_json=?,condition_config_json=?,notification_channel_ids_json=?,runtime_state_json=?,updated_at=? WHERE id=?`, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano), monitor.ID)
 	return err
 }
 
@@ -116,12 +139,12 @@ func (s *Store) DeleteMonitor(ctx context.Context, id string) error {
 }
 
 func (s *Store) GetMonitor(ctx context.Context, id string) (core.Monitor, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,module_type,module_version,schedule,timezone,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE id=?`, id)
 	return scanMonitor(row)
 }
 
 func (s *Store) ListMonitors(ctx context.Context) ([]core.Monitor, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,schedule,timezone,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -137,15 +160,67 @@ func (s *Store) ListMonitors(ctx context.Context) ([]core.Monitor, error) {
 	return result, rows.Err()
 }
 
+func (s *Store) ListMonitorsPage(ctx context.Context, options MonitorListOptions) (PageResult[core.Monitor], error) {
+	page, pageSize := normalizePage(options.Page, options.PageSize)
+	where := []string{"1=1"}
+	args := make([]any, 0, 8)
+	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
+		pattern := "%" + search + "%"
+		where = append(where, "(LOWER(name) LIKE ? OR LOWER(module_type) LIKE ? OR LOWER(module_config_json) LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+	if moduleType := strings.TrimSpace(options.ModuleType); moduleType != "" && moduleType != "all" {
+		where = append(where, "module_type=?")
+		args = append(args, moduleType)
+	}
+	switch options.Status {
+	case "enabled":
+		where = append(where, "enabled=1")
+	case "disabled":
+		where = append(where, "enabled=0")
+	case "triggered":
+		where = append(where, "json_extract(runtime_state_json, '$.condition_active')=1")
+	case "healthy":
+		where = append(where, "json_extract(runtime_state_json, '$.last_success')=1 AND COALESCE(json_extract(runtime_state_json, '$.condition_active'), 0)=0")
+	case "waiting":
+		where = append(where, "enabled=1 AND COALESCE(json_extract(runtime_state_json, '$.last_success'), 0)=0")
+	}
+
+	clause := strings.Join(where, " AND ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM monitors WHERE "+clause, args...).Scan(&total); err != nil {
+		return PageResult[core.Monitor]{}, err
+	}
+	result := PageResult[core.Monitor]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.Monitor{}}
+	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return PageResult[core.Monitor]{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		monitor, err := scanMonitor(rows)
+		if err != nil {
+			return PageResult[core.Monitor]{}, err
+		}
+		result.Items = append(result.Items, monitor)
+	}
+	if err := rows.Err(); err != nil {
+		return PageResult[core.Monitor]{}, err
+	}
+	return result, nil
+}
+
 func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) {
 	var monitor core.Monitor
 	var enabled int
-	var moduleConfig, conditionConfig, channelIDs, runtimeState string
+	var schedules, moduleConfig, conditionConfig, channelIDs, runtimeState string
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&monitor.ID, &monitor.Name, &monitor.ModuleType, &monitor.ModuleVersion, &monitor.Schedule, &monitor.Timezone, &enabled, &moduleConfig, &conditionConfig, &channelIDs, &runtimeState, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&monitor.ID, &monitor.Name, &monitor.ModuleType, &monitor.ModuleVersion, &schedules, &enabled, &moduleConfig, &conditionConfig, &channelIDs, &runtimeState, &createdAt, &updatedAt); err != nil {
 		return monitor, err
 	}
 	monitor.Enabled = enabled == 1
+	_ = json.Unmarshal([]byte(schedules), &monitor.Schedules)
 	monitor.ModuleConfig = json.RawMessage(moduleConfig)
 	monitor.ConditionConfig = json.RawMessage(conditionConfig)
 	monitor.RuntimeState = json.RawMessage(runtimeState)
@@ -168,23 +243,50 @@ func (s *Store) UpdateRecordNotifications(ctx context.Context, id string, result
 }
 
 func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([]core.MonitorRecord, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
+	result, err := s.ListRecordsPage(ctx, monitorID, RecordListOptions{Page: 1, PageSize: limit})
+	return result.Items, err
+}
+
+func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options RecordListOptions) (PageResult[core.MonitorRecord], error) {
+	page, pageSize := normalizePage(options.Page, options.PageSize)
+	where := []string{"monitor_id=?"}
+	args := []any{monitorID}
+	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
+		pattern := "%" + search + "%"
+		where = append(where, "(LOWER(error_message) LIKE ? OR LOWER(event_type) LIKE ? OR LOWER(condition_state) LIKE ? OR LOWER(result_hash) LIKE ? OR LOWER(result_json) LIKE ?)")
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? ORDER BY started_at DESC LIMIT %d`, limit), monitorID)
+	switch options.Status {
+	case "success":
+		where = append(where, "success=1")
+	case "failed":
+		where = append(where, "success=0")
+	}
+	if eventType := strings.TrimSpace(options.EventType); eventType != "" && eventType != "all" {
+		where = append(where, "event_type=?")
+		args = append(args, eventType)
+	}
+
+	clause := strings.Join(where, " AND ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM monitor_records WHERE "+clause, args...).Scan(&total); err != nil {
+		return PageResult[core.MonitorRecord]{}, err
+	}
+	result := PageResult[core.MonitorRecord]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.MonitorRecord{}}
+	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
-		return nil, err
+		return PageResult[core.MonitorRecord]{}, err
 	}
 	defer rows.Close()
-	var records []core.MonitorRecord
 	for rows.Next() {
 		record, err := scanRecord(rows)
 		if err != nil {
-			return nil, err
+			return PageResult[core.MonitorRecord]{}, err
 		}
-		records = append(records, record)
+		result.Items = append(result.Items, record)
 	}
-	return records, rows.Err()
+	return result, rows.Err()
 }
 
 func (s *Store) LatestSuccessfulRecord(ctx context.Context, monitorID string) (core.MonitorRecord, error) {
@@ -280,6 +382,23 @@ func jsonString(value any) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+func normalizePage(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	return page, pageSize
+}
+
+func totalPages(total, pageSize int) int {
+	if total == 0 {
+		return 0
+	}
+	return (total + pageSize - 1) / pageSize
 }
 
 func sortedRecordIDs(records []core.MonitorRecord) []string {

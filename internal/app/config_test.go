@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,5 +46,48 @@ func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
 	}
 	if config.Logging.File.Access.Filename != "access.log" {
 		t.Fatalf("environment access file name was not loaded: %s", config.Logging.File.Access.Filename)
+	}
+	if config.Metadata.ConfigFile != path {
+		t.Fatalf("metadata config file = %q, want %q", config.Metadata.ConfigFile, path)
+	}
+	var pollDescription string
+	for _, item := range config.Metadata.Items {
+		if item.Path == "scheduler.poll_milliseconds" {
+			pollDescription = item.Description
+			break
+		}
+	}
+	if !strings.Contains(pollDescription, "不决定监控执行频率") {
+		t.Fatalf("poll metadata description does not explain cron behavior: %q", pollDescription)
+	}
+}
+
+func TestLoadConfigCreatesDefaultFileWhenMissing(t *testing.T) {
+	directory := t.TempDir()
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(workingDirectory)
+
+	config, err := LoadConfig(nil)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "config.yaml"))
+	if err != nil {
+		t.Fatalf("generated config.yaml was not created: %v", err)
+	}
+	if !strings.Contains(string(data), "server:") || !strings.Contains(string(data), "port: 8080") {
+		t.Fatalf("generated config does not contain defaults: %s", data)
+	}
+	if config.Server.Port != DefaultConfig().Server.Port {
+		t.Fatalf("generated default port = %d, want %d", config.Server.Port, DefaultConfig().Server.Port)
+	}
+	if config.Metadata.ConfigFile == "" {
+		t.Fatal("generated config file was not reported in metadata")
 	}
 }

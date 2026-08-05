@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +82,15 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	observation, executeErr := module.Execute(ctx, monitor.ModuleConfig)
 	if observation.Result == nil {
 		observation.Result = map[string]any{}
+	}
+	// Result sets remain protocol-owned while the persisted result exposes each set
+	// under its key, allowing the shared condition engine to address set.field.
+	for key, values := range observation.ResultSets {
+		setValues := make(map[string]any, len(values))
+		for field, value := range values {
+			setValues[field] = value
+		}
+		observation.Result[key] = setValues
 	}
 	duration := time.Since(started)
 	observation.Result["success"] = observation.Success && executeErr == nil
@@ -229,9 +240,8 @@ func (r *Runner) sendNotifications(ctx context.Context, recordID string, channel
 }
 
 type scheduleTask struct {
-	expression string
-	timezone   string
-	next       time.Time
+	expressions []string
+	next        time.Time
 }
 
 type Scheduler struct {
@@ -303,30 +313,30 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 		}
 		present[monitor.ID] = true
 		task := s.tasks[monitor.ID]
-		if task == nil || task.expression != monitor.Schedule || task.timezone != monitor.Timezone {
-			location, schedule, scheduleErr := parseSchedule(monitor.Schedule, monitor.Timezone, s.defaultTimezone)
+		signature := strings.Join(monitor.Schedules, "\x00")
+		if task == nil || strings.Join(task.expressions, "\x00") != signature {
+			next, scheduleErr := nextScheduleTime(monitor.Schedules, s.defaultTimezone, now)
 			if scheduleErr != nil {
-				signature := monitor.Schedule + "\x00" + monitor.Timezone
 				if s.invalidSchedules[monitor.ID] != signature && s.logger != nil {
-					s.logger.Warn("monitor schedule is invalid", "monitor_id", monitor.ID, "schedule", monitor.Schedule, "timezone", monitor.Timezone, "error", scheduleErr)
+					s.logger.Warn("monitor schedule is invalid", "monitor_id", monitor.ID, "schedules", monitor.Schedules, "timezone", s.defaultTimezone, "error", scheduleErr)
 				}
 				s.invalidSchedules[monitor.ID] = signature
 				continue
 			}
 			delete(s.invalidSchedules, monitor.ID)
-			task = &scheduleTask{expression: monitor.Schedule, timezone: monitor.Timezone, next: schedule.Next(now.In(location))}
+			task = &scheduleTask{expressions: append([]string(nil), monitor.Schedules...), next: next}
 			s.tasks[monitor.ID] = task
 		}
 		if !now.Before(task.next) {
-			location, schedule, scheduleErr := parseSchedule(task.expression, task.timezone, s.defaultTimezone)
+			next, scheduleErr := nextScheduleTime(task.expressions, s.defaultTimezone, now)
 			if scheduleErr == nil {
-				task.next = schedule.Next(now.In(location))
+				task.next = next
 				if s.logger != nil {
-					s.logger.Debug("scheduled monitor queued", "monitor_id", monitor.ID, "next_run", task.next)
+					s.logger.Debug("scheduled monitor queued", "monitor_id", monitor.ID, "next_run", task.next, "schedules", task.expressions)
 				}
 				s.launch(ctx, monitor.ID)
 			} else if s.logger != nil {
-				s.logger.Warn("monitor schedule became invalid", "monitor_id", monitor.ID, "schedule", task.expression, "error", scheduleErr)
+				s.logger.Warn("monitor schedule became invalid", "monitor_id", monitor.ID, "schedules", task.expressions, "error", scheduleErr)
 			}
 		}
 	}
@@ -354,42 +364,95 @@ func (s *Scheduler) launch(ctx context.Context, monitorID string) {
 	}
 }
 
-func parseSchedule(expression, timezone, defaultTimezone string) (*time.Location, cron.Schedule, error) {
-	locationName := timezone
-	if locationName == "" {
-		locationName = defaultTimezone
-	}
-	location := time.Local
-	if locationName != "" && locationName != "Local" {
-		loaded, err := time.LoadLocation(locationName)
-		if err != nil {
-			return nil, nil, err
-		}
-		location = loaded
-	}
+func parseSchedule(expression string) (cron.Schedule, error) {
 	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	schedule, err := parser.Parse(expression)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return location, schedule, nil
+	return schedule, nil
 }
 
-func NextScheduleTimes(expression, timezone, defaultTimezone string, count int) ([]time.Time, error) {
-	location, schedule, err := parseSchedule(expression, timezone, defaultTimezone)
+func schedulerLocation(name string) (*time.Location, error) {
+	if name == "" || name == "Local" {
+		return time.Local, nil
+	}
+	return time.LoadLocation(name)
+}
+
+func nextScheduleTime(expressions []string, timezone string, after time.Time) (time.Time, error) {
+	location, err := schedulerLocation(timezone)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(expressions) == 0 {
+		return time.Time{}, errors.New("at least one cron expression is required")
+	}
+	next := time.Time{}
+	for _, expression := range expressions {
+		schedule, parseErr := parseSchedule(expression)
+		if parseErr != nil {
+			return time.Time{}, fmt.Errorf("%q: %w", expression, parseErr)
+		}
+		candidate := schedule.Next(after.In(location))
+		if next.IsZero() || candidate.Before(next) {
+			next = candidate
+		}
+	}
+	return next, nil
+}
+
+func NextScheduleTimes(expressions []string, timezone string, count int) ([]time.Time, error) {
+	if count <= 0 {
+		return []time.Time{}, nil
+	}
+	location, err := schedulerLocation(timezone)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]time.Time, 0, count)
-	next := time.Now().In(location)
-	for i := 0; i < count; i++ {
-		next = schedule.Next(next)
-		result = append(result, next)
+	if len(expressions) == 0 {
+		return nil, errors.New("at least one cron expression is required")
 	}
-	return result, nil
+	now := time.Now().In(location)
+	result := make([]time.Time, 0, len(expressions)*count)
+	for _, expression := range expressions {
+		schedule, parseErr := parseSchedule(expression)
+		if parseErr != nil {
+			return nil, fmt.Errorf("%q: %w", expression, parseErr)
+		}
+		next := now
+		for i := 0; i < count; i++ {
+			next = schedule.Next(next)
+			result = append(result, next)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Before(result[j]) })
+	unique := result[:0]
+	for _, value := range result {
+		if len(unique) == 0 || !value.Equal(unique[len(unique)-1]) {
+			unique = append(unique, value)
+		}
+		if len(unique) == count {
+			break
+		}
+	}
+	return unique, nil
 }
 
-func ValidateSchedule(expression, timezone, defaultTimezone string) error {
-	_, _, err := parseSchedule(expression, timezone, defaultTimezone)
-	return err
+func ValidateSchedules(expressions []string, timezone string) error {
+	if len(expressions) == 0 {
+		return errors.New("at least one cron expression is required")
+	}
+	if _, err := schedulerLocation(timezone); err != nil {
+		return err
+	}
+	for _, expression := range expressions {
+		if strings.TrimSpace(expression) == "" {
+			return errors.New("cron expression cannot be empty")
+		}
+		if _, err := parseSchedule(expression); err != nil {
+			return fmt.Errorf("%q: %w", expression, err)
+		}
+	}
+	return nil
 }

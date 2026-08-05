@@ -78,6 +78,14 @@ func EvaluateConditions(config ConditionConfig, current, previous map[string]any
 func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResult {
 	result := RuleResult{Field: rule.Field, Operator: rule.Operator}
 	value, ok := lookupValue(current, rule.Field, rule.Path)
+	if rule.Operator == "exists" {
+		result.State = boolState(ok)
+		return result
+	}
+	if rule.Operator == "not_exists" {
+		result.State = boolState(!ok)
+		return result
+	}
 	if rule.Operator == "changed" {
 		if previous == nil {
 			result.State = "false"
@@ -107,9 +115,11 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 	case "not_equals", "neq":
 		matched = !valuesEqual(value, rule.Value)
 	case "contains":
-		matched = strings.Contains(fmt.Sprint(value), fmt.Sprint(rule.Value))
+		matched, err = containsValue(value, rule.Value)
 	case "not_contains":
-		matched = !strings.Contains(fmt.Sprint(value), fmt.Sprint(rule.Value))
+		var contains bool
+		contains, err = containsValue(value, rule.Value)
+		matched = !contains
 	case "regex":
 		var expression string
 		expression, ok = rule.Value.(string)
@@ -140,6 +150,39 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 				}
 			}
 		}
+	case "between":
+		bounds, boundsOK := rule.Value.([]any)
+		if !boundsOK {
+			if text, textOK := rule.Value.(string); textOK {
+				parts := strings.Split(text, ",")
+				if len(parts) == 2 {
+					bounds = []any{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])}
+					boundsOK = true
+				}
+			}
+		}
+		if !boundsOK || len(bounds) != 2 {
+			err = fmt.Errorf("between value must contain two numbers")
+			break
+		}
+		left, leftErr := numberValue(value)
+		low, lowErr := numberValue(bounds[0])
+		high, highErr := numberValue(bounds[1])
+		if leftErr != nil || lowErr != nil || highErr != nil {
+			err = fmt.Errorf("between values must be numeric")
+		} else {
+			matched = left >= low && left <= high
+		}
+	case "length_gt", "length_eq":
+		length, lengthErr := valueLength(value)
+		threshold, thresholdErr := numberValue(rule.Value)
+		if lengthErr != nil || thresholdErr != nil {
+			err = fmt.Errorf("value or comparison is not measurable")
+		} else if rule.Operator == "length_gt" {
+			matched = float64(length) > threshold
+		} else {
+			matched = float64(length) == threshold
+		}
 	case "is_true":
 		matched, ok = value.(bool)
 		if !ok {
@@ -163,6 +206,41 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 	}
 	result.State = boolState(matched)
 	return result
+}
+
+func containsValue(value, target any) (bool, error) {
+	switch typed := value.(type) {
+	case string:
+		return strings.Contains(typed, fmt.Sprint(target)), nil
+	case []any:
+		for _, item := range typed {
+			if valuesEqual(item, target) {
+				return true, nil
+			}
+		}
+		return false, nil
+	case map[string]any:
+		key := fmt.Sprint(target)
+		if _, ok := typed[key]; ok {
+			return true, nil
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("value does not support contains")
+	}
+}
+
+func valueLength(value any) (int, error) {
+	switch typed := value.(type) {
+	case string:
+		return len([]rune(typed)), nil
+	case []any:
+		return len(typed), nil
+	case map[string]any:
+		return len(typed), nil
+	default:
+		return 0, fmt.Errorf("value has no length")
+	}
 }
 
 func lookupValue(root map[string]any, field, path string) (any, bool) {

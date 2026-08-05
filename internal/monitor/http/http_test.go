@@ -29,6 +29,9 @@ func TestExecuteCapturesJSONResponse(t *testing.T) {
 	if !ok || body["data"].(map[string]any)["version"] != float64(2) {
 		t.Fatalf("unexpected JSON result: %#v", observation.Result["body_json"])
 	}
+	if _, err := json.Marshal(observation); err != nil {
+		t.Fatalf("observation result sets must be serializable: %v", err)
+	}
 }
 
 func TestExecuteSupportsHTTPMethods(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
@@ -20,6 +21,7 @@ type Config struct {
 	Scheduler SchedulerConfig `yaml:"scheduler" mapstructure:"scheduler"`
 	Logging   LoggingConfig   `yaml:"logging" mapstructure:"logging"`
 	Security  SecurityConfig  `yaml:"security" mapstructure:"security"`
+	Metadata  ConfigMetadata  `yaml:"-" mapstructure:"-"`
 }
 
 type ServerConfig struct {
@@ -122,17 +124,22 @@ func LoadConfig(args []string) (Config, error) {
 	if path == "" {
 		path = os.Getenv("MEERKIT_CONFIG_FILE")
 	}
-	if path != "" {
-		v.SetConfigFile(path)
-	} else {
-		v.SetConfigName("config")
-		v.SetConfigType("yaml")
-		v.AddConfigPath(".")
+	explicitConfig := path != ""
+	if path == "" {
+		path = "config.yaml"
 	}
+	v.SetConfigFile(path)
 	if err := v.ReadInConfig(); err != nil {
 		var notFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &notFound) || path != "" {
+		missing := errors.As(err, &notFound) || errors.Is(err, os.ErrNotExist)
+		if !missing || explicitConfig {
 			return Config{}, fmt.Errorf("read config %s: %w", pathOrDefault(path), err)
+		}
+		if err := writeDefaultConfig(path); err != nil {
+			return Config{}, fmt.Errorf("create default config %s: %w", path, err)
+		}
+		if err := v.ReadInConfig(); err != nil {
+			return Config{}, fmt.Errorf("read generated config %s: %w", path, err)
 		}
 	}
 
@@ -148,7 +155,12 @@ func LoadConfig(args []string) (Config, error) {
 		}
 		cfg.Server.Address, cfg.Server.Port = host, port
 	}
-	return normalizeConfig(cfg)
+	normalized, err := normalizeConfig(cfg)
+	if err != nil {
+		return Config{}, err
+	}
+	normalized.Metadata = buildConfigMetadata(v, flags, normalized)
+	return normalized, nil
 }
 
 func setDefaults(v *viper.Viper) {
@@ -243,6 +255,14 @@ func pathOrDefault(path string) string {
 		return "config.yaml"
 	}
 	return path
+}
+
+func writeDefaultConfig(path string) error {
+	data, err := yaml.Marshal(DefaultConfig())
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
