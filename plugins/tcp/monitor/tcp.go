@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -15,7 +16,10 @@ import (
 	"github.com/hanxuanyu/meerkit/sdk"
 )
 
-type Module struct{}
+type Module struct {
+	Logger      *slog.Logger
+	DialContext func(context.Context, string, string) (net.Conn, error)
+}
 
 func New() *Module { return &Module{} }
 
@@ -86,30 +90,43 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 	}
 	started := time.Now()
 	address := net.JoinHostPort(stringValue(config, "host", ""), strconv.Itoa(intValue(config, "port", 0)))
-	connection, err := (&net.Dialer{Timeout: time.Duration(intValue(config, "timeout_seconds", 10)) * time.Second}).DialContext(ctx, "tcp", address)
+	m.logger().InfoContext(ctx, "tcp connection opening", "address", address, "timeout_seconds", intValue(config, "timeout_seconds", 10), "send_enabled", stringValue(config, "send", "") != "", "read_response", boolValue(config, "read_response", false))
+	dialContext := m.DialContext
+	if dialContext == nil {
+		dialContext = (&net.Dialer{Timeout: time.Duration(intValue(config, "timeout_seconds", 10)) * time.Second}).DialContext
+	}
+	connection, err := dialContext(ctx, "tcp", address)
 	if err != nil {
-		result := map[string]any{"success": false, "connected": false, "duration_ms": time.Since(started).Milliseconds()}
+		duration := time.Since(started).Milliseconds()
+		m.logger().ErrorContext(ctx, "tcp connection failed", "address", address, "duration_ms", duration, "error", err)
+		result := map[string]any{"success": false, "connected": false, "duration_ms": duration}
 		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"connection": copyMap(result)}}, err
 	}
 	defer connection.Close()
 	result := map[string]any{"success": true, "connected": true, "duration_ms": time.Since(started).Milliseconds(), "remote_addr": connection.RemoteAddr().String(), "response_text": "", "response_bytes": "", "response_hash": hash(""), "bytes_read": 0}
+	m.logger().InfoContext(ctx, "tcp connection established", "address", address, "remote_address", connection.RemoteAddr().String(), "duration_ms", result["duration_ms"])
 	if send := stringValue(config, "send", ""); send != "" {
 		data := []byte(send)
 		if boolValue(config, "send_base64", false) {
 			data, err = base64.StdEncoding.DecodeString(send)
 			if err != nil {
+				m.logger().ErrorContext(ctx, "tcp payload decoding failed", "address", address, "encoding", "base64", "error", err)
 				return sdk.Observation{Success: false, SchemaVersion: "1", Result: result}, err
 			}
 		}
-		if _, err := connection.Write(data); err != nil {
+		written, err := connection.Write(data)
+		if err != nil {
+			m.logger().ErrorContext(ctx, "tcp payload send failed", "address", address, "bytes_written", written, "error", err)
 			return sdk.Observation{Success: false, SchemaVersion: "1", Result: result}, err
 		}
+		m.logger().InfoContext(ctx, "tcp payload sent", "address", address, "bytes_written", written)
 	}
 	if boolValue(config, "read_response", false) {
 		_ = connection.SetReadDeadline(time.Now().Add(time.Duration(intValue(config, "read_timeout_seconds", 3)) * time.Second))
 		data := make([]byte, intValue(config, "max_read_bytes", 65536))
 		count, readErr := connection.Read(data)
 		if readErr != nil && count == 0 {
+			m.logger().ErrorContext(ctx, "tcp response read failed", "address", address, "error", readErr)
 			return sdk.Observation{Success: false, SchemaVersion: "1", Result: result}, readErr
 		}
 		data = data[:count]
@@ -117,8 +134,17 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 		result["response_bytes"] = base64.StdEncoding.EncodeToString(data)
 		result["response_hash"] = hash(string(data))
 		result["bytes_read"] = count
+		m.logger().InfoContext(ctx, "tcp response read", "address", address, "bytes_read", count, "response_hash", result["response_hash"])
 	}
+	m.logger().InfoContext(ctx, "tcp execution completed", "address", address, "duration_ms", time.Since(started).Milliseconds(), "bytes_read", result["bytes_read"])
 	return sdk.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"connection": copyMap(result)}, Summary: "TCP connected"}, nil
+}
+
+func (m *Module) logger() *slog.Logger {
+	if m.Logger != nil {
+		return m.Logger
+	}
+	return slog.Default()
 }
 
 func copyMap(source map[string]any) map[string]any {

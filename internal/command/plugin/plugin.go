@@ -30,7 +30,7 @@ func manager(command *cobra.Command, load ConfigLoader) (*pluginruntime.Manager,
 	if err != nil {
 		return nil, nil, err
 	}
-	value, err := pluginruntime.NewManager(database, monitor.NewRegistry(), pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir})
+	value, err := pluginruntime.NewManager(database, monitor.NewRegistry(), pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, LogLevel: config.Plugins.LogLevel, LogFormat: config.Plugins.LogFormat})
 	if err != nil {
 		database.Close()
 		return nil, nil, err

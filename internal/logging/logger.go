@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
+	sdklogging "github.com/hanxuanyu/meerkit/sdk/logging"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"meerkit/internal/app"
@@ -50,14 +50,11 @@ func New(config app.LoggingConfig) (*slog.Logger, *slog.Logger, func() error, er
 }
 
 func newLogger(output io.Writer, format string, level slog.Level, addSource bool, channel string) *slog.Logger {
-	options := &slog.HandlerOptions{Level: level, AddSource: addSource}
-	var handler slog.Handler
-	if strings.EqualFold(format, "json") {
-		handler = slog.NewJSONHandler(output, options)
-	} else {
-		handler = slog.NewTextHandler(output, options)
+	logger := sdklogging.NewLogger(output, format, level, addSource)
+	if format == "simple" {
+		return logger
 	}
-	return slog.New(handler).With("service", "meerkit", "channel", channel)
+	return logger.With("service", "meerkit", "channel", channel)
 }
 
 func createOutput(prefix string, console bool, file app.LogFileConfig) (io.Writer, func() error, error) {
@@ -100,16 +97,5 @@ func createOutput(prefix string, console bool, file app.LogFileConfig) (io.Write
 }
 
 func ParseLevel(value string) (slog.Level, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn", "warning":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	default:
-		return slog.LevelInfo, fmt.Errorf("unsupported log level %q", value)
-	}
+	return sdklogging.ParseLevel(value)
 }

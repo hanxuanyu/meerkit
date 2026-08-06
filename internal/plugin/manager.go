@@ -57,6 +57,8 @@ type ManagerOptions struct {
 	DataDir     string
 	TrustedKeys map[string]ed25519.PublicKey
 	Logger      *slog.Logger
+	LogLevel    string
+	LogFormat   string
 }
 
 type process struct {
@@ -70,6 +72,8 @@ type Manager struct {
 	registry           *monitor.Registry
 	root               string
 	logger             *slog.Logger
+	pluginLogLevel     string
+	pluginLogFormat    string
 	mu                 sync.Mutex
 	processes          map[string]*process
 	watcher            *fsnotify.Watcher
@@ -82,7 +86,15 @@ func NewManager(database *store.Store, registry *monitor.Registry, options Manag
 	if err != nil {
 		return nil, fmt.Errorf("resolve plugin data directory: %w", err)
 	}
-	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
+	pluginLogLevel := strings.TrimSpace(options.LogLevel)
+	if pluginLogLevel == "" {
+		pluginLogLevel = "info"
+	}
+	pluginLogFormat := strings.TrimSpace(options.LogFormat)
+	if pluginLogFormat == "" {
+		pluginLogFormat = "simple"
+	}
+	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, pluginLogLevel: pluginLogLevel, pluginLogFormat: pluginLogFormat, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
 	for _, directory := range []string{"inbox", "staging", "packages", "installed", "development", "rejected", "logs"} {
 		if err := os.MkdirAll(filepath.Join(manager.root, directory), 0o750); err != nil {
 			return nil, err
@@ -108,10 +120,24 @@ func (m *Manager) Details(ctx context.Context, id, version string) (core.PluginD
 	if err != nil {
 		return core.PluginDetails{}, err
 	}
-	return core.PluginDetails{PluginInstallation: value, Readme: value.Readme}, nil
+	descriptors := make([]core.ModuleDescriptor, 0, len(value.Modules))
+	for _, module := range value.Modules {
+		descriptor, descriptorErr := m.store.GetDescriptorSnapshot(ctx, module.Type, module.Version)
+		if errors.Is(descriptorErr, sql.ErrNoRows) {
+			continue
+		}
+		if descriptorErr != nil {
+			return core.PluginDetails{}, fmt.Errorf("load descriptor for plugin module %s: %w", module.Type, descriptorErr)
+		}
+		descriptors = append(descriptors, descriptor)
+	}
+	return core.PluginDetails{PluginInstallation: value, Readme: value.Readme, ModuleDescriptors: descriptors}, nil
 }
 
 func (m *Manager) Import(ctx context.Context, archivePath string, options ImportOptions) (core.PluginInstallation, error) {
+	if m.logger != nil {
+		m.logger.Info("plugin import started", "package", filepath.Base(archivePath), "official", options.Official, "enable", options.Enable)
+	}
 	if !isArchive(archivePath) {
 		return core.PluginInstallation{}, fmt.Errorf("plugin package must be a .zip or .tar.gz archive")
 	}
@@ -226,6 +252,9 @@ func (m *Manager) Import(ctx context.Context, archivePath string, options Import
 	if err := m.store.UpsertPlugin(ctx, installation); err != nil {
 		return core.PluginInstallation{}, err
 	}
+	if m.logger != nil {
+		m.logger.Info("plugin installed", "plugin_id", installation.ID, "name", installation.Name, "version", installation.Version, "trust_state", installation.TrustState, "verified", installation.Verified)
+	}
 	if options.Enable {
 		if err := m.Enable(ctx, manifest.ID, manifest.Version, options.AllowUnverified || options.Official); err != nil {
 			return installation, err
@@ -246,17 +275,31 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 	if !installation.Verified && !allowUnverified {
 		return fmt.Errorf("plugin %s is unverified; explicit risk confirmation is required", id)
 	}
+	if m.logger != nil {
+		m.logger.Info("plugin activation started", "plugin_id", id, "name", installation.Name, "version", installation.Version, "log_format", m.pluginLogFormat, "log_level", m.pluginLogLevel)
+	}
 	logPath := filepath.Join(m.root, "logs", id+"-"+version+".log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return m.markFailure(ctx, installation, err)
 	}
-	client := hplugin.NewClient(&hplugin.ClientConfig{HandshakeConfig: sdk.Handshake, Plugins: map[string]hplugin.Plugin{"monitor": &sdk.MonitorPlugin{}}, Cmd: exec.Command(installation.BinaryPath), AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC}, Managed: true, Stderr: logFile, SyncStdout: logFile, SyncStderr: logFile, Logger: hclog.New(&hclog.LoggerOptions{Name: "plugin." + id, Output: logFile, Level: hclog.Info})})
+	command := exec.Command(installation.BinaryPath)
+	command.Env = append(os.Environ(),
+		"MEERKIT_PLUGIN_ID="+installation.ID,
+		"MEERKIT_PLUGIN_NAME="+installation.Name,
+		"MEERKIT_PLUGIN_VERSION="+installation.Version,
+		"MEERKIT_PLUGIN_LOG_LEVEL="+m.pluginLogLevel,
+		"MEERKIT_PLUGIN_LOG_FORMAT="+m.pluginLogFormat,
+	)
+	client := hplugin.NewClient(&hplugin.ClientConfig{HandshakeConfig: sdk.Handshake, Plugins: map[string]hplugin.Plugin{"monitor": &sdk.MonitorPlugin{}}, Cmd: command, AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC}, Managed: true, Stderr: logFile, SyncStdout: logFile, SyncStderr: logFile, Logger: hclog.NewNullLogger()})
 	cleanupCandidate := func() { client.Kill(); _ = logFile.Close() }
 	rpcClient, err := client.Client()
 	if err != nil {
 		cleanupCandidate()
 		return m.markFailure(ctx, installation, err)
+	}
+	if m.logger != nil {
+		m.logger.Info("plugin process connected", "plugin_id", id, "version", installation.Version)
 	}
 	dispensed, err := rpcClient.Dispense("monitor")
 	if err != nil {
@@ -274,6 +317,9 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 	if err != nil {
 		cleanupCandidate()
 		return m.markFailure(ctx, installation, err)
+	}
+	if m.logger != nil {
+		m.logger.Info("plugin health check passed", "plugin_id", id, "version", installation.Version)
 	}
 	descriptors, err := provider.ListModules()
 	if err != nil {
@@ -304,6 +350,9 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		}
 		modules = append(modules, module)
 		moduleTypes = append(moduleTypes, descriptor.Type)
+	}
+	if m.logger != nil {
+		m.logger.Info("plugin modules registered", "plugin_id", id, "version", installation.Version, "module_count", len(moduleTypes), "modules", moduleTypes)
 	}
 	if err := m.registry.ValidateReplaceOwner(id, moduleTypes); err != nil {
 		cleanupCandidate()
@@ -361,6 +410,9 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		_ = m.stopActive(id)
 		return err
 	}
+	if m.logger != nil {
+		m.logger.Info("plugin activated", "plugin_id", id, "name", installation.Name, "version", installation.Version, "module_count", len(moduleTypes), "status", installation.Status)
+	}
 	return nil
 }
 
@@ -387,6 +439,9 @@ func (m *Manager) TrustPublisher(ctx context.Context, id, version, fingerprint s
 }
 
 func (m *Manager) Disable(ctx context.Context, id, version string) error {
+	if m.logger != nil {
+		m.logger.Info("plugin disable started", "plugin_id", id, "version", version)
+	}
 	if err := m.stopActive(id); err != nil {
 		return err
 	}
@@ -395,7 +450,13 @@ func (m *Manager) Disable(ctx context.Context, id, version string) error {
 		return err
 	}
 	installation.Enabled, installation.Status, installation.Error, installation.UpdatedAt = false, "disabled", "", time.Now().UTC()
-	return m.store.UpsertPlugin(ctx, installation)
+	if err := m.store.UpsertPlugin(ctx, installation); err != nil {
+		return err
+	}
+	if m.logger != nil {
+		m.logger.Info("plugin disabled", "plugin_id", id, "version", version, "status", installation.Status)
+	}
+	return nil
 }
 func (m *Manager) stopActive(id string) error {
 	m.registry.RemoveOwner(id)
@@ -404,11 +465,17 @@ func (m *Manager) stopActive(id string) error {
 	delete(m.processes, id)
 	m.mu.Unlock()
 	if active != nil {
+		if m.logger != nil {
+			m.logger.Info("plugin process stopping", "plugin_id", id, "version", active.version)
+		}
 		active.gate.Stop()
 		active.gate.Wait()
 		active.client.Kill()
 		if active.logFile != nil {
 			_ = active.logFile.Close()
+		}
+		if m.logger != nil {
+			m.logger.Info("plugin process stopped", "plugin_id", id, "version", active.version)
 		}
 	}
 	return nil
@@ -436,6 +503,9 @@ func (m *Manager) Uninstall(ctx context.Context, id, version string) error {
 	}
 	_ = os.RemoveAll(filepath.Join(m.root, "installed", id, version))
 	_ = os.RemoveAll(filepath.Join(m.root, "packages", id, version))
+	if m.logger != nil {
+		m.logger.Info("plugin uninstalled", "plugin_id", id, "version", version)
+	}
 	return nil
 }
 
@@ -485,11 +555,17 @@ func (m *Manager) Scan(ctx context.Context) ([]core.PluginInstallation, error) {
 		source := filepath.Join(m.root, "inbox", entry.Name())
 		value, importErr := m.Import(ctx, source, ImportOptions{})
 		if importErr != nil {
+			if m.logger != nil {
+				m.logger.Error("plugin inbox import rejected", "package", entry.Name(), "error", importErr)
+			}
 			_ = m.reject(source, importErr)
 			continue
 		}
 		_ = os.Remove(source)
 		result = append(result, value)
+	}
+	if len(result) > 0 && m.logger != nil {
+		m.logger.Info("plugin inbox scan completed", "imported", len(result))
 	}
 	return result, nil
 }
@@ -499,6 +575,15 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	enabled := 0
+	for _, value := range plugins {
+		if value.Enabled {
+			enabled++
+		}
+	}
+	if m.logger != nil {
+		m.logger.Info("plugin manager starting", "installed", len(plugins), "enabled", enabled, "plugin_log_format", m.pluginLogFormat, "plugin_log_level", m.pluginLogLevel)
+	}
 	for _, value := range plugins {
 		if value.Enabled {
 			if err := m.Enable(ctx, value.ID, value.Version, true); err != nil && m.logger != nil {
@@ -506,7 +591,9 @@ func (m *Manager) Start(ctx context.Context) error {
 			}
 		}
 	}
-	_, _ = m.Scan(ctx)
+	if _, err := m.Scan(ctx); err != nil && m.logger != nil {
+		m.logger.Warn("plugin inbox scan failed", "error", err)
+	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -519,6 +606,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.watcher, m.watchCancel = watcher, cancel
 	go m.watch(watchCtx)
 	go m.supervise(watchCtx)
+	if m.logger != nil {
+		m.logger.Info("plugin manager started", "active", m.activeCount(), "inbox", filepath.Join(m.root, "inbox"))
+	}
 	return nil
 }
 
@@ -541,9 +631,14 @@ func (m *Manager) supervise(ctx context.Context) {
 					m.registry.RemoveOwner(id)
 					if m.logger != nil {
 						m.logger.Error("plugin process exited", "plugin_id", id, "version", value.version)
+						m.logger.Info("plugin restart started", "plugin_id", id, "version", value.version)
 					}
-					if err := m.Enable(ctx, id, value.version, true); err != nil && m.logger != nil {
-						m.logger.Error("restart plugin failed", "plugin_id", id, "version", value.version, "error", err)
+					if err := m.Enable(ctx, id, value.version, true); err != nil {
+						if m.logger != nil {
+							m.logger.Error("plugin restart failed", "plugin_id", id, "version", value.version, "error", err)
+						}
+					} else if m.logger != nil {
+						m.logger.Info("plugin restart completed", "plugin_id", id, "version", value.version)
 					}
 				}
 			}
@@ -593,6 +688,9 @@ func (m *Manager) importWhenStable(ctx context.Context, path string) {
 	}
 }
 func (m *Manager) Close() {
+	if m.logger != nil {
+		m.logger.Info("plugin manager stopping", "active", m.activeCount())
+	}
 	if m.watchCancel != nil {
 		m.watchCancel()
 	}
@@ -608,6 +706,15 @@ func (m *Manager) Close() {
 	for _, id := range ids {
 		_ = m.stopActive(id)
 	}
+	if m.logger != nil {
+		m.logger.Info("plugin manager stopped")
+	}
+}
+
+func (m *Manager) activeCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.processes)
 }
 
 func (m *Manager) SeedOfficial(ctx context.Context, directory string) error {
@@ -668,6 +775,9 @@ func (m *Manager) SyncDevelopment(ctx context.Context, directory string) ([]core
 	if err != nil {
 		return nil, fmt.Errorf("read development plugin directory: %w", err)
 	}
+	if m.logger != nil {
+		m.logger.Info("development plugin synchronization started", "source_dir", directory)
+	}
 	result := make([]core.PluginInstallation, 0)
 	active := make(map[string]struct{})
 	for _, entry := range entries {
@@ -689,6 +799,9 @@ func (m *Manager) SyncDevelopment(ctx context.Context, directory string) ([]core
 		}
 		if err := manifest.Validate(sdk.ProtocolVersion); err != nil {
 			return nil, fmt.Errorf("development plugin %s: %w", entry.Name(), err)
+		}
+		if m.logger != nil {
+			m.logger.Info("development plugin build started", "plugin_id", manifest.ID, "version", manifest.Version, "source_dir", sourceDir)
 		}
 		if _, err := os.Stat(filepath.Join(sourceDir, "go.mod")); err != nil {
 			return nil, fmt.Errorf("development plugin %s has no go.mod: %w", entry.Name(), err)
@@ -751,6 +864,9 @@ func (m *Manager) SyncDevelopment(ctx context.Context, directory string) ([]core
 			}
 		}
 		result = append(result, installation)
+		if m.logger != nil {
+			m.logger.Info("development plugin build completed", "plugin_id", installation.ID, "name", installation.Name, "version", installation.Version, "enabled", installation.Enabled)
+		}
 		active[installation.ID+"@"+installation.Version] = struct{}{}
 	}
 	if len(result) == 0 {
@@ -772,6 +888,9 @@ func (m *Manager) SyncDevelopment(ctx context.Context, directory string) ([]core
 		}
 		_ = os.RemoveAll(filepath.Join(m.root, "development", value.ID, value.Version))
 	}
+	if m.logger != nil {
+		m.logger.Info("development plugin synchronization completed", "plugins", len(result))
+	}
 	return result, nil
 }
 
@@ -792,6 +911,9 @@ func buildDevelopmentPlugin(ctx context.Context, sourceDir, outputPath string) e
 func (m *Manager) markFailure(ctx context.Context, value core.PluginInstallation, cause error) error {
 	value.Enabled, value.Status, value.Error, value.UpdatedAt = false, "degraded", cause.Error(), time.Now().UTC()
 	_ = m.store.UpsertPlugin(ctx, value)
+	if m.logger != nil {
+		m.logger.Error("plugin status changed", "plugin_id", value.ID, "name", value.Name, "version", value.Version, "status", value.Status, "error", cause)
+	}
 	return cause
 }
 func (m *Manager) reject(source string, cause error) error {

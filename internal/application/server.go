@@ -29,16 +29,29 @@ type ServerOptions struct {
 }
 
 func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOptions ...ServerOptions) error {
+	options := ServerOptions{}
+	if len(serverOptions) > 0 {
+		options = serverOptions[0]
+	}
 	logger, accessLogger, closeLogger, err := logging.New(config.Logging)
 	if err != nil {
 		return err
 	}
 	defer closeLogger()
+	runtimeMode := "release"
+	if options.Version == "dev" {
+		runtimeMode = "development"
+	}
+	logger.Info("Meerkit runtime selected", "version", options.Version, "runtime_mode", runtimeMode, "address", config.ListenAddress(), "data_dir", config.Storage.DataDir, "config_file", config.Metadata.ConfigFile)
+	logger.Info("Meerkit scheduler configuration", "timezone", config.Scheduler.Timezone, "max_concurrency", config.Scheduler.MaxConcurrency, "poll_ms", config.Scheduler.PollMilliseconds)
+	logger.Info("Meerkit retention configuration", "records", config.Storage.Retention, "notifications", config.Storage.NotificationRetention, "cleanup_interval", config.Storage.CleanupInterval)
+	logger.Info("Meerkit logging configuration", "host_level", config.Logging.Level, "host_format", config.Logging.Format, "plugin_level", config.Plugins.LogLevel, "plugin_format", config.Plugins.LogFormat)
 	database, err := store.OpenStore(config.Storage.DataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
+	logger.Info("Meerkit storage initialized", "data_dir", config.Storage.DataDir)
 	api.SetFrontendFS(frontend)
 	modules := monitor.NewRegistry()
 	trustedKeys := make(map[string]ed25519.PublicKey, len(config.Plugins.TrustedKeys))
@@ -49,28 +62,31 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 		}
 		trustedKeys[id] = ed25519.PublicKey(value)
 	}
-	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger})
+	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: config.Plugins.LogLevel, LogFormat: config.Plugins.LogFormat})
 	if err != nil {
 		return err
 	}
 	defer pluginManager.Close()
-	options := ServerOptions{}
-	if len(serverOptions) > 0 {
-		options = serverOptions[0]
-	}
-	useSource := config.Plugins.Mode == "source" || (config.Plugins.Mode == "auto" && options.Version == "dev")
+	useSource := options.Version == "dev"
 	if useSource {
 		var developmentPlugins []core.PluginInstallation
 		developmentPlugins, err = pluginManager.SyncDevelopment(ctx, config.Plugins.SourceDir)
-		if err != nil && !(config.Plugins.Mode == "auto" && errors.Is(err, pluginruntime.ErrNoDevelopmentPlugins)) {
+		if err != nil && !errors.Is(err, pluginruntime.ErrNoDevelopmentPlugins) {
 			return err
 		}
 		useSource = err == nil
 		if useSource {
-			logger.Info("development plugin source mode enabled", "source_dir", config.Plugins.SourceDir, "plugins", len(developmentPlugins))
+			logger.Info("plugin runtime mode selected", "mode", "source", "reason", "development host with source plugins", "source_dir", config.Plugins.SourceDir, "plugins", len(developmentPlugins))
+		} else {
+			logger.Info("development plugin sources not found; falling back to packages", "source_dir", config.Plugins.SourceDir)
 		}
 	}
 	if !useSource {
+		reason := "release host"
+		if options.Version == "dev" {
+			reason = "development sources unavailable"
+		}
+		logger.Info("plugin runtime mode selected", "mode", "package", "reason", reason)
 		if err := pluginManager.ClearDevelopment(ctx); err != nil {
 			return err
 		}
@@ -83,11 +99,25 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	if err := pluginManager.Start(ctx); err != nil {
 		return err
 	}
+	installations, err := pluginManager.List(ctx)
+	if err != nil {
+		return err
+	}
+	activePlugins := 0
+	for _, installation := range installations {
+		if !installation.Enabled {
+			continue
+		}
+		activePlugins++
+		logger.Info("active plugin", "plugin_id", installation.ID, "name", installation.Name, "version", installation.Version, "status", installation.Status, "modules", len(installation.Modules))
+	}
+	logger.Info("plugin activation summary", "installed", len(installations), "active", activePlugins)
 	inAppHub := inapp.NewHub()
 	notifiers := notification.NewRegistry(database, inAppHub)
 	runner := runtimeapp.NewRunner(database, modules, notifiers, logger)
 	scheduler := runtimeapp.NewScheduler(runner, database, config, logger)
 	cleaner := runtimeapp.NewCleanupWorker(database, config, logger, func(unreadCount int) { inAppHub.Publish(inapp.StreamEvent{Type: "pruned", UnreadCount: unreadCount}) })
+	logger.Info("Meerkit background workers configured", "scheduler", true, "cleanup", true, "max_concurrency", config.Scheduler.MaxConcurrency, "cleanup_interval", config.Storage.CleanupInterval)
 	sessionTTL, _ := time.ParseDuration(config.Security.SessionTTL)
 	authService := auth.NewService(database, sessionTTL)
 	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger)
@@ -98,6 +128,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	go func() {
 		defer close(shutdownDone)
 		<-ctx.Done()
+		logger.Info("Meerkit shutdown requested", "reason", ctx.Err())
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
@@ -110,5 +141,6 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	if ctx.Err() != nil {
 		<-shutdownDone
 	}
+	logger.Info("Meerkit stopped")
 	return nil
 }

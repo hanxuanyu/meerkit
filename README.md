@@ -75,16 +75,19 @@ scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/ar
 
 ### 开发模式直接运行插件源码
 
-宿主未通过 `-ldflags "-X main.version=..."` 指定版本时默认为 `dev`，因此在仓库根目录执行 `go run .` 会使用 `plugins.mode: auto` 自动发现 `plugins/*/meerkit-plugin.yaml`（跳过 `plugins/template`），在每次启动时重新构建并运行源码插件。修改 HTTP、TCP 等内置插件后只需重新执行 `go run .`，无需先生成插件包、导入或升级；即使清单版本未变化，开发二进制也会被当前源码覆盖。
+宿主未通过 `-ldflags "-X main.version=..."` 指定版本时默认为 `dev`，因此在仓库根目录执行 `go run .` 会自动发现 `plugins/*/meerkit-plugin.yaml`（跳过 `plugins/template`），在每次启动时重新构建并运行源码插件。修改 HTTP、TCP 等内置插件后只需重新执行 `go run .`，无需先生成插件包、导入或升级；即使清单版本未变化，开发二进制也会被当前源码覆盖。
 
 ```yaml
 plugins:
-  mode: auto
   source_dir: ./plugins
+  log_level: info
+  log_format: simple
   trusted_keys: {}
 ```
 
-`mode` 可设为 `source` 以强制使用源码，或设为 `package` 以便在开发版本中验证发行包加载流程，也可分别使用 `MEERKIT_PLUGINS__MODE` 和 `MEERKIT_PLUGINS__SOURCE_DIR` 覆盖。开发构建的暂存文件和最终二进制只写入 `${storage.data_dir}/plugins`（默认即仓库根目录的 `data/plugins`），不会在插件源码目录中生成 `data` 或制品目录。源码插件在管理页标记为“开发源码”，没有可导出的签名包；切换到 `package` 或使用带正式版本号的发行程序后，宿主会清理开发安装记录并恢复使用可执行文件同级的插件包。
+插件运行模式由宿主版本自动决定，不再需要 `plugins.mode`：`dev` 版本优先构建源码插件，未发现源码时回退发行包；带正式版本号的宿主只加载发行包。`MEERKIT_PLUGINS__SOURCE_DIR` 可覆盖源码目录。开发构建的暂存文件和最终二进制只写入 `${storage.data_dir}/plugins`（默认即仓库根目录的 `data/plugins`），不会在插件源码目录中生成 `data` 或制品目录。源码插件在管理页标记为“开发源码”，没有可导出的签名包；正式版本启动后会清理开发安装记录并恢复使用可执行文件同级的插件包。
+
+宿主的 `logging.format` 支持 `text`、`simple` 和 `json`，默认使用 `simple`。插件日志可通过 `plugins.log_level` 与 `plugins.log_format` 单独配置（对应环境变量为 `MEERKIT_PLUGINS__LOG_LEVEL`、`MEERKIT_PLUGINS__LOG_FORMAT`），同样默认使用 `simple`，输出形如 `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http`，便于快速浏览。
 
 Windows PowerShell 使用等效脚本：
 

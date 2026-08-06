@@ -78,6 +78,30 @@ func TestNewWritesJSONLog(t *testing.T) {
 	}
 }
 
+func TestNewWritesSimpleLogWithoutFixedContext(t *testing.T) {
+	directory := t.TempDir()
+	config := app.LoggingConfig{Level: "info", Format: "simple", Console: app.ConsoleLogConfig{Enabled: false}, File: app.LogFileConfig{Enabled: true, Directory: directory, Filename: "meerkit.simple.log", MaxSizeMB: 1}}
+	logger, _, closeLogger, err := New(config)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	logger.Info("plugin activated", "plugin_id", "meerkit.http")
+	if err := closeLogger(); err != nil {
+		t.Fatalf("close logger: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "meerkit.simple.log"))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	output := string(data)
+	if !strings.Contains(output, "[INFO] plugin activated plugin_id=meerkit.http") {
+		t.Fatalf("unexpected simple log: %s", output)
+	}
+	if strings.Contains(output, "service=") || strings.Contains(output, "channel=") {
+		t.Fatalf("simple log contains fixed context: %s", output)
+	}
+}
+
 func TestNewSeparatesBusinessAndAccessLogs(t *testing.T) {
 	directory := t.TempDir()
 	config := app.LoggingConfig{

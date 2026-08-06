@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -33,6 +34,7 @@ var bodyMethods = []string{"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 
 type Module struct {
 	Client *http.Client
+	Logger *slog.Logger
 }
 
 func New() *Module { return &Module{} }
@@ -221,16 +223,23 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 	}
 	client := m.client(config)
 	started := time.Now()
+	target := safeRequestTarget(request.URL)
+	m.logger().InfoContext(ctx, "http request sending", "method", request.Method, "target", target, "timeout_seconds", valueInt(config, "timeout_seconds", defaultTimeoutSeconds), "body_mode", valueString(config, "body_mode", "none"), "follow_redirects", valueBool(config, "follow_redirects", true), "proxy_enabled", valueString(config, "proxy_url", "") != "")
 	response, err := client.Do(request)
 	if err != nil {
-		result := map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}
+		duration := time.Since(started).Milliseconds()
+		err = safeRequestError(err, target)
+		m.logger().ErrorContext(ctx, "http request failed", "method", request.Method, "target", target, "duration_ms", duration, "error", err)
+		result := map[string]any{"success": false, "status_code": 0, "duration_ms": duration}
 		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
 	}
 	defer response.Body.Close()
 	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if readErr != nil {
-		result := map[string]any{"success": false, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds()}
+		duration := time.Since(started).Milliseconds()
+		m.logger().ErrorContext(ctx, "http response read failed", "method", request.Method, "target", target, "status_code", response.StatusCode, "duration_ms", duration, "error", readErr)
+		result := map[string]any{"success": false, "status_code": response.StatusCode, "duration_ms": duration}
 		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
 	}
 	truncated := int64(len(data)) > maxBytes
@@ -240,13 +249,48 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 	bodyText := normalize(string(data), valueString(config, "normalize", "trim"))
 	result := map[string]any{"success": true, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds(), "response_headers": flatten(response.Header), "body_text": bodyText, "body_hash": hash(bodyText), "body_size": len(data), "truncated": truncated}
 	mode := strings.ToLower(valueString(config, "response_mode", "auto"))
+	parsedJSON := false
 	if mode == "json" || (mode == "auto" && strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "json")) {
 		var parsed any
 		if json.Unmarshal(data, &parsed) == nil {
 			result["body_json"] = parsed
+			parsedJSON = true
 		}
 	}
+	m.logger().InfoContext(ctx, "http response processed", "method", request.Method, "target", target, "status_code", response.StatusCode, "duration_ms", result["duration_ms"], "content_type", response.Header.Get("Content-Type"), "body_size", len(data), "truncated", truncated, "json_parsed", parsedJSON, "body_hash", result["body_hash"])
 	return sdk.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
+}
+
+func (m *Module) logger() *slog.Logger {
+	if m.Logger != nil {
+		return m.Logger
+	}
+	return slog.Default()
+}
+
+func safeRequestTarget(value *url.URL) string {
+	path := value.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	return value.Scheme + "://" + value.Host + path
+}
+
+func safeRequestError(err error, target string) error {
+	var requestError *url.Error
+	if errors.As(err, &requestError) {
+		operation := requestError.Op
+		cause := requestError.Err
+		for {
+			var nested *url.Error
+			if !errors.As(cause, &nested) {
+				break
+			}
+			cause = nested.Err
+		}
+		return fmt.Errorf("%s %s: %w", operation, target, cause)
+	}
+	return err
 }
 
 func copyMap(source map[string]any) map[string]any {

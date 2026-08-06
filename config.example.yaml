@@ -12,7 +12,7 @@ scheduler:
     poll_milliseconds: 500
 logging:
     level: info
-    format: text
+    format: simple
     add_source: true
     console:
         enabled: true
@@ -32,6 +32,7 @@ security:
     session_ttl: 720h
     master_key_file: ./data/master.key
 plugins:
-    mode: auto
     source_dir: ./plugins
+    log_level: info
+    log_format: simple
     trusted_keys: {}

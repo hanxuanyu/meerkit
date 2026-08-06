@@ -78,8 +78,9 @@ type SecurityConfig struct {
 }
 
 type PluginConfig struct {
-	Mode        string            `yaml:"mode" mapstructure:"mode"`
 	SourceDir   string            `yaml:"source_dir" mapstructure:"source_dir"`
+	LogLevel    string            `yaml:"log_level" mapstructure:"log_level"`
+	LogFormat   string            `yaml:"log_format" mapstructure:"log_format"`
 	TrustedKeys map[string]string `yaml:"trusted_keys" mapstructure:"trusted_keys"`
 }
 
@@ -97,7 +98,7 @@ func DefaultConfig() Config {
 		Storage:   StorageConfig{DataDir: "./data", Retention: "30d", NotificationRetention: "30d", CleanupInterval: "1h"},
 		Scheduler: SchedulerConfig{Timezone: "Local", MaxConcurrency: 16, PollMilliseconds: 500},
 		Logging: LoggingConfig{
-			Level: "info", Format: "text", AddSource: true,
+			Level: "info", Format: "simple", AddSource: true,
 			Console: ConsoleLogConfig{Enabled: true, Access: false},
 			File: LogFileConfig{
 				Enabled: true, Directory: "./logs", Filename: "meerkit.log",
@@ -106,7 +107,7 @@ func DefaultConfig() Config {
 			},
 		},
 		Security: SecurityConfig{SessionTTL: "720h", MasterKeyFile: "./data/master.key"},
-		Plugins:  PluginConfig{Mode: "auto", SourceDir: "./plugins", TrustedKeys: map[string]string{}},
+		Plugins:  PluginConfig{SourceDir: "./plugins", LogLevel: "info", LogFormat: "simple", TrustedKeys: map[string]string{}},
 	}
 }
 
@@ -235,8 +236,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file.access.filename", defaults.Logging.File.Access.Filename)
 	v.SetDefault("security.session_ttl", defaults.Security.SessionTTL)
 	v.SetDefault("security.master_key_file", defaults.Security.MasterKeyFile)
-	v.SetDefault("plugins.mode", defaults.Plugins.Mode)
 	v.SetDefault("plugins.source_dir", defaults.Plugins.SourceDir)
+	v.SetDefault("plugins.log_level", defaults.Plugins.LogLevel)
+	v.SetDefault("plugins.log_format", defaults.Plugins.LogFormat)
 	v.SetDefault("plugins.trusted_keys", defaults.Plugins.TrustedKeys)
 }
 
@@ -270,8 +272,9 @@ func bindEnvironment(v *viper.Viper) error {
 		"logging.file.access.filename":   "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
 		"security.session_ttl":           "MEERKIT_SECURITY__SESSION_TTL",
 		"security.master_key_file":       "MEERKIT_SECURITY__MASTER_KEY_FILE",
-		"plugins.mode":                   "MEERKIT_PLUGINS__MODE",
 		"plugins.source_dir":             "MEERKIT_PLUGINS__SOURCE_DIR",
+		"plugins.log_level":              "MEERKIT_PLUGINS__LOG_LEVEL",
+		"plugins.log_format":             "MEERKIT_PLUGINS__LOG_FORMAT",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -329,14 +332,14 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.Storage.DataDir == "" {
 		return cfg, errors.New("storage.data_dir cannot be empty")
 	}
-	level := strings.ToLower(strings.TrimSpace(cfg.Logging.Level))
-	if level != "debug" && level != "info" && level != "warn" && level != "warning" && level != "error" {
-		return cfg, fmt.Errorf("logging.level must be debug, info, warn, or error")
+	level, err := normalizeLogLevel("logging.level", cfg.Logging.Level)
+	if err != nil {
+		return cfg, err
 	}
 	cfg.Logging.Level = level
-	cfg.Logging.Format = strings.ToLower(strings.TrimSpace(cfg.Logging.Format))
-	if cfg.Logging.Format != "text" && cfg.Logging.Format != "json" {
-		return cfg, errors.New("logging.format must be text or json")
+	cfg.Logging.Format, err = normalizeLogFormat("logging.format", cfg.Logging.Format)
+	if err != nil {
+		return cfg, err
 	}
 	if !cfg.Logging.Console.Enabled && !cfg.Logging.File.Enabled {
 		return cfg, errors.New("at least one logging output must be enabled")
@@ -370,14 +373,37 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if _, err := time.LoadLocation(cfg.Scheduler.Timezone); err != nil && cfg.Scheduler.Timezone != "Local" {
 		return cfg, fmt.Errorf("scheduler.timezone: %w", err)
 	}
-	cfg.Plugins.Mode = strings.ToLower(strings.TrimSpace(cfg.Plugins.Mode))
-	if cfg.Plugins.Mode != "auto" && cfg.Plugins.Mode != "source" && cfg.Plugins.Mode != "package" {
-		return cfg, errors.New("plugins.mode must be auto, source, or package")
-	}
 	if strings.TrimSpace(cfg.Plugins.SourceDir) == "" {
 		return cfg, errors.New("plugins.source_dir cannot be empty")
 	}
+	cfg.Plugins.LogLevel, err = normalizeLogLevel("plugins.log_level", cfg.Plugins.LogLevel)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Plugins.LogFormat, err = normalizeLogFormat("plugins.log_format", cfg.Plugins.LogFormat)
+	if err != nil {
+		return cfg, err
+	}
 	return cfg, nil
+}
+
+func normalizeLogLevel(path, value string) (string, error) {
+	level := strings.ToLower(strings.TrimSpace(value))
+	if level == "warning" {
+		level = "warn"
+	}
+	if level != "debug" && level != "info" && level != "warn" && level != "error" {
+		return "", fmt.Errorf("%s must be debug, info, warn, or error", path)
+	}
+	return level, nil
+}
+
+func normalizeLogFormat(path, value string) (string, error) {
+	format := strings.ToLower(strings.TrimSpace(value))
+	if format != "text" && format != "simple" && format != "json" {
+		return "", fmt.Errorf("%s must be text, simple, or json", path)
+	}
+	return format, nil
 }
 
 func validateLogFile(prefix string, file LogFileConfig, enabled bool) error {

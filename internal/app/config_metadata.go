@@ -69,8 +69,8 @@ func configDefinitions() []configDefinition {
 		value("scheduler.max_concurrency", "MEERKIT_SCHEDULER__MAX_CONCURRENCY", "max-concurrency", "同时执行的监控任务上限。", func(c Config) any { return c.Scheduler.MaxConcurrency }, func(c Config) any { return c.Scheduler.MaxConcurrency }),
 		value("scheduler.poll_milliseconds", "MEERKIT_SCHEDULER__POLL_MILLISECONDS", "", "调度器同步扫描间隔，用于发现配置变化并检查 cron 是否到期，不决定监控执行频率。", func(c Config) any { return c.Scheduler.PollMilliseconds }, func(c Config) any { return c.Scheduler.PollMilliseconds }),
 		value("logging.level", "MEERKIT_LOGGING__LEVEL", "log-level", "业务日志最低输出级别。", func(c Config) any { return c.Logging.Level }, func(c Config) any { return c.Logging.Level }),
-		value("logging.format", "MEERKIT_LOGGING__FORMAT", "log-format", "日志格式，可选 text 或 json。", func(c Config) any { return c.Logging.Format }, func(c Config) any { return c.Logging.Format }),
-		value("logging.add_source", "MEERKIT_LOGGING__ADD_SOURCE", "", "业务日志是否包含源码位置。", func(c Config) any { return c.Logging.AddSource }, func(c Config) any { return c.Logging.AddSource }),
+		value("logging.format", "MEERKIT_LOGGING__FORMAT", "log-format", "宿主日志格式，可选 text、simple 或 json；simple 输出 [HH:mm:ss] [LEVEL] message 形式的极简单行日志。", func(c Config) any { return c.Logging.Format }, func(c Config) any { return c.Logging.Format }),
+		value("logging.add_source", "MEERKIT_LOGGING__ADD_SOURCE", "", "业务日志是否包含源码位置；simple 格式为保持极简不会输出源码位置。", func(c Config) any { return c.Logging.AddSource }, func(c Config) any { return c.Logging.AddSource }),
 		value("logging.console.enabled", "MEERKIT_LOGGING__CONSOLE__ENABLED", "log-console", "是否将业务日志输出到标准输出。", func(c Config) any { return c.Logging.Console.Enabled }, func(c Config) any { return c.Logging.Console.Enabled }),
 		value("logging.console.access", "MEERKIT_LOGGING__CONSOLE__ACCESS", "log-console-access", "是否将 HTTP access 日志输出到标准输出。", func(c Config) any { return c.Logging.Console.Access }, func(c Config) any { return c.Logging.Console.Access }),
 		value("logging.file.enabled", "MEERKIT_LOGGING__FILE__ENABLED", "log-file-enabled", "是否将业务日志写入轮转文件。", func(c Config) any { return c.Logging.File.Enabled }, func(c Config) any { return c.Logging.File.Enabled }),
@@ -84,8 +84,9 @@ func configDefinitions() []configDefinition {
 		value("logging.file.access.filename", "MEERKIT_LOGGING__FILE__ACCESS__FILENAME", "access-log-filename", "HTTP access 日志文件名。", func(c Config) any { return c.Logging.File.Access.Filename }, func(c Config) any { return c.Logging.File.Access.Filename }),
 		value("security.session_ttl", "MEERKIT_SECURITY__SESSION_TTL", "", "管理会话的有效期。", func(c Config) any { return c.Security.SessionTTL }, func(c Config) any { return c.Security.SessionTTL }),
 		value("security.master_key_file", "MEERKIT_SECURITY__MASTER_KEY_FILE", "", "主密钥文件路径。", func(c Config) any { return c.Security.MasterKeyFile }, func(c Config) any { return c.Security.MasterKeyFile }),
-		value("plugins.mode", "MEERKIT_PLUGINS__MODE", "", "插件运行模式。auto 在 dev 版本且存在源码插件时直接构建源码，正式版本使用发行包；source 强制使用源码；package 强制使用发行包。", func(c Config) any { return c.Plugins.Mode }, func(c Config) any { return c.Plugins.Mode }),
-		value("plugins.source_dir", "MEERKIT_PLUGINS__SOURCE_DIR", "", "源码插件根目录，相对路径基于 Meerkit 启动时的工作目录解析；仅 source 模式或 auto 开发模式使用。", func(c Config) any { return c.Plugins.SourceDir }, func(c Config) any { return c.Plugins.SourceDir }),
+		value("plugins.source_dir", "MEERKIT_PLUGINS__SOURCE_DIR", "", "开发版宿主自动发现的源码插件根目录，相对路径基于 Meerkit 启动时的工作目录解析；正式版本不会加载源码插件。", func(c Config) any { return c.Plugins.SourceDir }, func(c Config) any { return c.Plugins.SourceDir }),
+		value("plugins.log_level", "MEERKIT_PLUGINS__LOG_LEVEL", "", "插件进程最低日志级别，可选 debug、info、warn 或 error。", func(c Config) any { return c.Plugins.LogLevel }, func(c Config) any { return c.Plugins.LogLevel }),
+		value("plugins.log_format", "MEERKIT_PLUGINS__LOG_FORMAT", "", "插件日志格式，可选 text、simple 或 json，默认使用适合日志弹窗快速浏览的 simple。", func(c Config) any { return c.Plugins.LogFormat }, func(c Config) any { return c.Plugins.LogFormat }),
 		value("plugins.trusted_keys", "", "", "可信插件签名公钥。键为签名 key ID，值为 Base64 编码的 Ed25519 公钥；修改后需重启服务。", func(c Config) any { return c.Plugins.TrustedKeys }, func(c Config) any { return c.Plugins.TrustedKeys }),
 	}
 }

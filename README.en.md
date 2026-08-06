@@ -75,16 +75,19 @@ Inside each generated release archive, official plugins are stored in the `plugi
 
 ### Run plugin sources in development
 
-The host version defaults to `dev` when no version is injected through `-ldflags "-X main.version=..."`. Running `go run .` from the repository root therefore uses `plugins.mode: auto` to discover `plugins/*/meerkit-plugin.yaml` (excluding `plugins/template`) and rebuild each source plugin on every startup. Changes to the built-in HTTP and TCP plugins only require another `go run .`; no package, import, upgrade, or manifest version bump is needed.
+The host version defaults to `dev` when no version is injected through `-ldflags "-X main.version=..."`. Running `go run .` from the repository root therefore discovers `plugins/*/meerkit-plugin.yaml` (excluding `plugins/template`) and rebuilds each source plugin on every startup. Changes to the built-in HTTP and TCP plugins only require another `go run .`; no package, import, upgrade, or manifest version bump is needed.
 
 ```yaml
 plugins:
-  mode: auto
   source_dir: ./plugins
+  log_level: info
+  log_format: simple
   trusted_keys: {}
 ```
 
-Set `mode` to `source` to force source loading, or to `package` to test packaged-plugin loading with a development host. `MEERKIT_PLUGINS__MODE` and `MEERKIT_PLUGINS__SOURCE_DIR` provide equivalent environment overrides. Development staging files and binaries are written only under `${storage.data_dir}/plugins` (the repository-root `data/plugins` directory by default), never under a plugin source directory. Source plugins are marked as development sources in the management page and have no exportable signed archive. When package mode or a versioned release host starts, development installation records are removed before packaged plugins are restored from the directory next to the executable.
+Plugin loading is now derived from the host version and no longer requires `plugins.mode`: a `dev` host prefers source plugins and falls back to packages when none are present, while a versioned release host loads packages only. `MEERKIT_PLUGINS__SOURCE_DIR` can override the source directory. Development staging files and binaries are written only under `${storage.data_dir}/plugins` (the repository-root `data/plugins` directory by default), never under a plugin source directory. Source plugins are marked as development sources in the management page and have no exportable signed archive. A release host removes development installation records before restoring packaged plugins next to the executable.
+
+Host `logging.format` accepts `text`, `simple`, and `json`, defaulting to `simple`. Plugin logging is configured independently with `plugins.log_level` and `plugins.log_format` (or `MEERKIT_PLUGINS__LOG_LEVEL` and `MEERKIT_PLUGINS__LOG_FORMAT`) and also defaults to `simple`, producing compact lines such as `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http` for quick scanning.
 
 Use the equivalent PowerShell scripts on Windows:
 

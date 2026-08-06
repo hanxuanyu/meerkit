@@ -42,7 +42,8 @@ type PluginInstallation struct {
 
 type PluginDetails struct {
 	PluginInstallation
-	Readme string `json:"readme,omitempty"`
+	Readme            string             `json:"readme,omitempty"`
+	ModuleDescriptors []ModuleDescriptor `json:"module_descriptors,omitempty"`
 }
 
 type TrustedPluginSigner struct {

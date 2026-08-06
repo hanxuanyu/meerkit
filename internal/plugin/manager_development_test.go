@@ -6,9 +6,38 @@ import (
 	"path/filepath"
 	"testing"
 
+	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/store"
 )
+
+func TestDetailsIncludesModuleDescriptorSnapshots(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := store.OpenStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	installation := core.PluginInstallation{ID: "meerkit.http", Version: "1.0.0", Name: "HTTP", Status: "healthy", Modules: []core.PluginModule{{Type: "http", Name: "HTTP", Version: "2"}}}
+	if err := database.UpsertPlugin(context.Background(), installation); err != nil {
+		t.Fatal(err)
+	}
+	descriptor := core.ModuleDescriptor{Type: "http", Version: "2", Name: "HTTP", Parameters: []core.ParameterDescriptor{{Key: "url", Label: "URL", Type: core.ParameterURL, Required: true}}, ResultSets: []core.ResultSetDescriptor{{Key: "response", Label: "响应", Fields: []core.ResultFieldDescriptor{{Name: "status_code", Label: "状态码", Type: "number"}}}}}
+	if err := database.SaveDescriptorSnapshot(context.Background(), descriptor); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(database, monitor.NewRegistry(), ManagerOptions{DataDir: dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, err := manager.Details(context.Background(), installation.ID, installation.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details.ModuleDescriptors) != 1 || len(details.ModuleDescriptors[0].Parameters) != 1 || len(details.ModuleDescriptors[0].ResultSets) != 1 {
+		t.Fatalf("unexpected module descriptors: %#v", details.ModuleDescriptors)
+	}
+}
 
 func TestSyncDevelopmentBuildsSourcePluginsAndSkipsTemplate(t *testing.T) {
 	dataDir := t.TempDir()

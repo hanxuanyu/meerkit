@@ -26,7 +26,7 @@ func BindFlags(command *cobra.Command) {
 	flags.String("timezone", "", "scheduler timezone")
 	flags.Int("max-concurrency", 0, "maximum concurrent checks")
 	flags.String("log-level", "", "log level")
-	flags.String("log-format", "", "log format: text or json")
+	flags.String("log-format", "", "log format: text, simple, or json")
 	flags.String("log-dir", "", "log file directory")
 	flags.String("log-filename", "", "log file name")
 	flags.Bool("log-console", false, "enable business logging on console")

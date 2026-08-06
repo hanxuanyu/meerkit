@@ -1,5 +1,5 @@
-import React from "react";
-import { ExternalLink, KeyRound, LoaderCircle, ShieldAlert, ShieldCheck } from "lucide-react";
+import React, { useState } from "react";
+import { ChevronDown, ExternalLink, KeyRound, LoaderCircle, ShieldAlert, ShieldCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -24,8 +24,8 @@ export function PluginDetailDialog({ plugin, loading, trusting, onClose, onTrust
           {plugin.signer_fingerprint && <MetaBadge label="签名指纹" value={plugin.signer_fingerprint} mono wide />}
         </section>
         <section className="plugin-detail-section">
-          <div className="plugin-detail-section-heading"><h3>监控模块</h3>{plugin.url && <a href={plugin.url} target="_blank" rel="noreferrer">源码与发布地址<ExternalLink size={13} /></a>}</div>
-          <div className="plugin-detail-modules">{(plugin.modules || []).map((module) => <div key={module.type}><strong>{module.name || module.type}</strong><code>{module.type}</code><span>模块 {module.version} · 配置 {module.config_version} · 结果 {module.result_schema_version}</span></div>)}</div>
+          <div className="plugin-detail-section-heading"><h3>模块能力</h3>{plugin.url && <a href={plugin.url} target="_blank" rel="noreferrer">源码与发布地址<ExternalLink size={13} /></a>}</div>
+          <div className="plugin-capability-modules">{(plugin.modules || []).map((module, index) => <ModuleCapability key={module.type} module={module} descriptor={(plugin.module_descriptors || []).find((item) => item.type === module.type)} defaultOpen={index === 0} loading={loading} />)}</div>
         </section>
         <section className="plugin-detail-section">
           <div className="plugin-detail-section-heading"><h3>README</h3>{loading && <LoaderCircle className="spin" size={14} />}</div>
@@ -35,6 +35,61 @@ export function PluginDetailDialog({ plugin, loading, trusting, onClose, onTrust
       <DialogFooter><Button type="button" variant="outline" onClick={onClose}>关闭</Button></DialogFooter>
     </DialogContent>
   </Dialog>;
+}
+
+function ModuleCapability({ module, descriptor, defaultOpen, loading }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const parameters = descriptor?.parameters || [];
+  const resultSets = descriptor?.result_sets?.length
+    ? descriptor.result_sets
+    : descriptor?.fields?.length
+      ? [{ key: "result", label: "执行结果", fields: descriptor.fields }]
+      : [];
+  const resultCount = resultSets.reduce((total, set) => total + (set.fields?.length || 0), 0);
+  return <details className="plugin-capability-module" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>
+      <span className="plugin-capability-identity"><strong>{descriptor?.name || module.name || module.type}</strong><span>{descriptor?.description || "插件提供的监控采集模块"}</span></span>
+      <span className="plugin-capability-summary"><Badge variant="outline">{module.type}</Badge><Badge variant="outline">模块 {module.version}</Badge><Badge tone="muted">输入 {parameters.length}</Badge><Badge tone="muted">输出 {resultCount}</Badge></span>
+      <ChevronDown className="plugin-capability-chevron" size={15} />
+    </summary>
+    {descriptor ? <div className="plugin-capability-columns">
+      <CapabilityGroup title="输入参数" count={parameters.length}>{parameters.length ? <div className="plugin-capability-fields">{parameters.map((parameter) => <ParameterRow key={parameter.key} parameter={parameter} />)}</div> : <CapabilityEmpty>无需配置参数</CapabilityEmpty>}</CapabilityGroup>
+      <CapabilityGroup title="返回结果" count={resultCount}>{resultSets.length ? <div className="plugin-result-sets">{resultSets.map((set) => <div className="plugin-result-set" key={set.key}><div className="plugin-result-set-heading"><strong>{set.label || set.key}</strong><code>{set.key}</code>{set.description && <span>{set.description}</span>}</div><div className="plugin-capability-fields">{(set.fields || []).map((field) => <ResultFieldRow key={`${set.key}:${field.name}`} field={field} />)}</div></div>)}</div> : <CapabilityEmpty>未声明结构化返回字段</CapabilityEmpty>}</CapabilityGroup>
+    </div> : <CapabilityEmpty className="plugin-capability-unavailable">{loading ? "正在加载模块能力..." : "该模块尚无描述快照，成功启用插件后即可查看输入输出能力。"}</CapabilityEmpty>}
+  </details>;
+}
+
+function CapabilityGroup({ title, count, children }) {
+  return <section className="plugin-capability-group"><div className="plugin-capability-group-heading"><h4>{title}</h4><span>{count} 项</span></div>{children}</section>;
+}
+
+function ParameterRow({ parameter }) {
+  const metadata = [];
+  if (parameter.required) metadata.push("必填");
+  if (parameter.secret) metadata.push("敏感");
+  if (parameter.default !== undefined && parameter.default !== null && parameter.default !== "") metadata.push(`默认 ${compactValue(parameter.default)}`);
+  if (parameter.options?.length) metadata.push(`${parameter.options.length} 个选项`);
+  if (parameter.unit) metadata.push(parameter.unit);
+  return <div className="plugin-capability-field" title={parameter.description || ""}><div><strong>{parameter.label || parameter.key}</strong><code>{parameter.key}</code></div><div className="plugin-capability-field-meta"><Badge variant="outline">{parameter.type || "string"}</Badge>{metadata.map((item) => <span key={item}>{item}</span>)}</div></div>;
+}
+
+function ResultFieldRow({ field }) {
+  const metadata = [];
+  if (field.unit) metadata.push(field.unit);
+  if (field.path) metadata.push("支持路径");
+  if (field.operators?.length) metadata.push(`${field.operators.length} 种比较`);
+  return <div className="plugin-capability-field" title={field.description || ""}><div><strong>{field.label || field.name}</strong><code>{field.name}</code></div><div className="plugin-capability-field-meta"><Badge variant="outline">{field.type || "unknown"}</Badge>{field.format && <span>{field.format}</span>}{metadata.map((item) => <span key={item}>{item}</span>)}</div></div>;
+}
+
+function CapabilityEmpty({ className = "", children }) {
+  return <div className={`plugin-capability-empty ${className}`}>{children}</div>;
+}
+
+function compactValue(value) {
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "object") return "已配置";
+  const text = String(value);
+  return text.length > 18 ? `${text.slice(0, 18)}...` : text;
 }
 
 function TrustNotice({ plugin, trusting, onTrust }) {

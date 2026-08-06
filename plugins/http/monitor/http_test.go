@@ -1,12 +1,16 @@
 package httpmonitor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -31,6 +35,43 @@ func TestExecuteCapturesJSONResponse(t *testing.T) {
 	}
 	if _, err := json.Marshal(observation); err != nil {
 		t.Fatalf("observation result sets must be serializable: %v", err)
+	}
+}
+
+func TestExecuteLogsSafeRequestAndResponseSummary(t *testing.T) {
+	var logs bytes.Buffer
+	module := &Module{Logger: slog.New(slog.NewTextHandler(&logs, nil)), Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: io.NopCloser(strings.NewReader("private response")), Request: request}, nil
+	})}}
+	config, _ := json.Marshal(map[string]any{"url": "http://test.local/health?token=query-secret", "headers": map[string]any{"Authorization": "Bearer header-secret"}})
+	if _, err := module.Execute(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	output := logs.String()
+	for _, expected := range []string{"http request sending", "target=http://test.local/health", "http response processed", "status_code=200", "body_size=16"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("missing %q in plugin logs:\n%s", expected, output)
+		}
+	}
+	for _, secret := range []string{"query-secret", "header-secret", "private response"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("plugin logs leaked %q:\n%s", secret, output)
+		}
+	}
+}
+
+func TestExecuteRedactsQueryFromRequestErrors(t *testing.T) {
+	var logs bytes.Buffer
+	module := &Module{Logger: slog.New(slog.NewTextHandler(&logs, nil)), Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Get", URL: request.URL.String(), Err: errors.New("connection refused")}
+	})}}
+	config, _ := json.Marshal(map[string]any{"url": "http://test.local/health?token=query-secret"})
+	_, err := module.Execute(context.Background(), config)
+	if err == nil {
+		t.Fatal("expected request failure")
+	}
+	if strings.Contains(logs.String(), "query-secret") || strings.Contains(err.Error(), "query-secret") {
+		t.Fatalf("request error leaked query: error=%v logs=%s", err, logs.String())
 	}
 }
 

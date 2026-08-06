@@ -103,6 +103,9 @@ func TestLoadConfigCreatesDefaultFileWhenMissing(t *testing.T) {
 	if config.Server.Address != "0.0.0.0" {
 		t.Fatalf("generated default address = %q, want 0.0.0.0", config.Server.Address)
 	}
+	if config.Logging.Format != "simple" {
+		t.Fatalf("generated default log format = %q, want simple", config.Logging.Format)
+	}
 	if config.Metadata.ConfigFile == "" {
 		t.Fatal("generated config file was not reported in metadata")
 	}
@@ -134,34 +137,48 @@ func TestTrustedPluginKeysAreIncludedInConfigMetadata(t *testing.T) {
 	t.Fatal("plugins.trusted_keys is missing from config metadata")
 }
 
-func TestPluginDevelopmentModeConfiguration(t *testing.T) {
+func TestPluginConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("plugins:\n  mode: package\n  source_dir: ./custom-plugins\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("plugins:\n  source_dir: ./custom-plugins\n  log_level: debug\n  log_format: json\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("MEERKIT_PLUGINS__MODE", "source")
 	config, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path})
 	if err != nil {
-		t.Fatalf("load plugin mode: %v", err)
+		t.Fatalf("load plugin config: %v", err)
 	}
-	if config.Plugins.Mode != "source" || config.Plugins.SourceDir != "./custom-plugins" {
+	if config.Plugins.SourceDir != "./custom-plugins" || config.Plugins.LogLevel != "debug" || config.Plugins.LogFormat != "json" {
 		t.Fatalf("plugin config = %#v", config.Plugins)
 	}
 	definitions := map[string]ConfigItem{}
 	for _, item := range config.Metadata.Items {
 		definitions[item.Path] = item
 	}
-	if definitions["plugins.mode"].Source != "environment" || definitions["plugins.source_dir"].Description == "" {
+	if definitions["plugins.source_dir"].Description == "" || definitions["plugins.log_format"].Description == "" {
 		t.Fatalf("plugin config metadata is incomplete: %#v", definitions)
 	}
 }
 
-func TestPluginDevelopmentModeRejectsUnknownValue(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("plugins:\n  mode: unexpected\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestPluginLogConfigurationFromEnvironment(t *testing.T) {
+	t.Setenv("MEERKIT_PLUGINS__LOG_LEVEL", "warning")
+	t.Setenv("MEERKIT_PLUGINS__LOG_FORMAT", "simple")
+	config, err := LoadConfigWithOptions(ConfigOptions{})
+	if err != nil {
+		t.Fatalf("load plugin logging config: %v", err)
 	}
-	if _, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path}); err == nil || !strings.Contains(err.Error(), "plugins.mode") {
-		t.Fatalf("invalid plugin mode error = %v", err)
+	if config.Plugins.LogLevel != "warn" || config.Plugins.LogFormat != "simple" {
+		t.Fatalf("plugin logging config = %#v", config.Plugins)
+	}
+}
+
+func TestRejectsUnknownLogFormats(t *testing.T) {
+	config := DefaultConfig()
+	config.Logging.Format = "pretty"
+	if _, err := normalizeConfig(config); err == nil || !strings.Contains(err.Error(), "logging.format") {
+		t.Fatalf("invalid host log format error = %v", err)
+	}
+	config = DefaultConfig()
+	config.Plugins.LogFormat = "pretty"
+	if _, err := normalizeConfig(config); err == nil || !strings.Contains(err.Error(), "plugins.log_format") {
+		t.Fatalf("invalid plugin log format error = %v", err)
 	}
 }
