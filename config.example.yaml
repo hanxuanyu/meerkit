@@ -1,37 +1,33 @@
 server:
-  address: 0.0.0.0
-  port: 8080
-
+    address: 0.0.0.0
+    port: 8080
 storage:
-  data_dir: ./data
-  retention: 30d
-  notification_retention: 30d
-  cleanup_interval: 1h
-
+    data_dir: ./data
+    retention: 30d
+    notification_retention: 30d
+    cleanup_interval: 1h
 scheduler:
-  timezone: Asia/Shanghai
-  max_concurrency: 16
-  poll_milliseconds: 500
-
+    timezone: Local
+    max_concurrency: 16
+    poll_milliseconds: 500
 logging:
-  level: info
-  format: text
-  add_source: true
-  console:
-    enabled: true
-    access: false
-  file:
-    enabled: true
-    directory: ./logs
-    filename: meerkit.log
-    max_size_mb: 100
-    max_backups: 7
-    max_age_days: 30
-    compress: true
-    access:
-      enabled: true
-      filename: meerkit-access.log
-
+    level: info
+    format: text
+    add_source: true
+    console:
+        enabled: true
+        access: false
+    file:
+        enabled: true
+        directory: ./logs
+        filename: meerkit.log
+        max_size_mb: 100
+        max_backups: 7
+        max_age_days: 30
+        compress: true
+        access:
+            enabled: true
+            filename: meerkit-access.log
 security:
-  session_ttl: 24h
-  master_key_file: ./data/master.key
+    session_ttl: 24h
+    master_key_file: ./data/master.key
