@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { ChevronDown, ExternalLink, KeyRound, LoaderCircle, ShieldAlert, ShieldCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "../../components/ui/Badge";
@@ -25,7 +25,7 @@ export function PluginDetailDialog({ plugin, loading, trusting, onClose, onTrust
         </section>
         <section className="plugin-detail-section">
           <div className="plugin-detail-section-heading"><h3>模块能力</h3>{plugin.url && <a href={plugin.url} target="_blank" rel="noreferrer">源码与发布地址<ExternalLink size={13} /></a>}</div>
-          <div className="plugin-capability-modules">{(plugin.modules || []).map((module, index) => <ModuleCapability key={module.type} module={module} descriptor={(plugin.module_descriptors || []).find((item) => item.type === module.type)} defaultOpen={index === 0} loading={loading} />)}</div>
+          <div className="plugin-capability-modules">{(plugin.modules || []).map((module) => <ModuleCapability key={module.type} module={module} descriptor={(plugin.module_descriptors || []).find((item) => item.type === module.type)} loading={loading} />)}</div>
         </section>
         <section className="plugin-detail-section">
           <div className="plugin-detail-section-heading"><h3>README</h3>{loading && <LoaderCircle className="spin" size={14} />}</div>
@@ -37,8 +37,7 @@ export function PluginDetailDialog({ plugin, loading, trusting, onClose, onTrust
   </Dialog>;
 }
 
-function ModuleCapability({ module, descriptor, defaultOpen, loading }) {
-  const [open, setOpen] = useState(defaultOpen);
+function ModuleCapability({ module, descriptor, loading }) {
   const parameters = descriptor?.parameters || [];
   const resultSets = descriptor?.result_sets?.length
     ? descriptor.result_sets
@@ -46,7 +45,7 @@ function ModuleCapability({ module, descriptor, defaultOpen, loading }) {
       ? [{ key: "result", label: "执行结果", fields: descriptor.fields }]
       : [];
   const resultCount = resultSets.reduce((total, set) => total + (set.fields?.length || 0), 0);
-  return <details className="plugin-capability-module" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <details className="plugin-capability-module">
     <summary>
       <span className="plugin-capability-identity"><strong>{descriptor?.name || module.name || module.type}</strong><span>{descriptor?.description || "插件提供的监控采集模块"}</span></span>
       <span className="plugin-capability-summary"><Badge variant="outline">{module.type}</Badge><Badge variant="outline">模块 {module.version}</Badge><Badge tone="muted">输入 {parameters.length}</Badge><Badge tone="muted">输出 {resultCount}</Badge></span>
