@@ -1,46 +1,22 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "../components/layout/AppShell";
 import { Sidebar } from "../components/layout/Sidebar";
 import { Topbar } from "../components/layout/Topbar";
 import { WorkspaceTabs } from "../components/layout/WorkspaceTabs";
-import { Toaster } from "../components/ui/Toast";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { api } from "../lib/api";
-import { browserNotificationPreferenceKey, disableBrowserNotifications, enableBrowserNotifications, getBrowserNotificationStatus, showBrowserNotification } from "../features/notifications/browserNotifications";
-import { ChannelDialog } from "../features/notifications/ChannelDialog";
-import { NotificationBell, NotificationCenterPage } from "../features/notifications/InAppNotifications";
-import { MonitorDialog } from "../features/monitors/MonitorDialog";
-import { MonitorRecordsDialog, MonitorRecordsPage } from "../features/monitors/MonitorRecords";
+import { disableBrowserNotifications, enableBrowserNotifications } from "../features/notifications/browserNotifications";
+import { NotificationBell } from "../features/notifications/NotificationBell";
+import { NotificationCenterPage } from "../features/notifications/InAppNotifications";
+import { MonitorRecordsPage } from "../features/monitors/MonitorRecords";
 import { MonitorsPage } from "../pages/MonitorsPage";
 import { NotificationsPage } from "../pages/NotificationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { SettingsPage } from "../pages/SettingsPage";
-
-const staticPaths = { overview: "/", monitors: "/monitors", inbox: "/notifications", notifications: "/notification-channels", settings: "/settings" };
-
-function decodePathPart(value) {
-  try { return decodeURIComponent(value); } catch { return value; }
-}
-
-function routeFromPath(pathname) {
-  const recordMatch = pathname.match(/^\/monitors\/([^/]+)\/records(?:\/([^/]+))?\/?$/);
-  if (recordMatch) return { page: `monitor-details:${decodePathPart(recordMatch[1])}`, recordID: recordMatch[2] ? decodePathPart(recordMatch[2]) : "", notificationID: "" };
-  const notificationMatch = pathname.match(/^\/notifications(?:\/([^/]+))?\/?$/);
-  if (notificationMatch) return { page: "inbox", recordID: "", notificationID: notificationMatch[1] ? decodePathPart(notificationMatch[1]) : "" };
-  const page = Object.entries(staticPaths).find(([, path]) => path !== "/" && pathname.replace(/\/$/, "") === path)?.[0] || "overview";
-  return { page, recordID: "", notificationID: "" };
-}
-
-function pathForRoute(page, recordID = "", notificationID = "") {
-  if (page.startsWith("monitor-details:")) {
-    const monitorID = page.slice("monitor-details:".length);
-    return `/monitors/${encodeURIComponent(monitorID)}/records${recordID ? `/${encodeURIComponent(recordID)}` : ""}`;
-  }
-  if (page === "inbox") return `/notifications${notificationID ? `/${encodeURIComponent(notificationID)}` : ""}`;
-  return staticPaths[page] || "/";
-}
+import { AppOverlays } from "./AppOverlays";
+import { pathForRoute, routeFromPath } from "./routes";
+import { useMobileShell } from "./useMobileShell";
+import { useNotificationFeed } from "./useNotificationFeed";
 
 const initialRoute = routeFromPath(window.location.pathname);
 
@@ -50,17 +26,12 @@ export function App() {
   const [recordTabs, setRecordTabs] = useState({});
   const [routeRecordID, setRouteRecordID] = useState(initialRoute.recordID);
   const [routeNotificationID, setRouteNotificationID] = useState(initialRoute.notificationID);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [mobileTopbarHidden, setMobileTopbarHidden] = useState(false);
+  const { sidebarCollapsed, mobileSidebarOpen, mobileTopbarHidden, toggleNavigation, closeMobileSidebar, resetMobileNavigation } = useMobileShell();
   const [modules, setModules] = useState([]);
   const [notifiers, setNotifiers] = useState([]);
   const [monitors, setMonitors] = useState([]);
   const [channels, setChannels] = useState([]);
-  const [recentNotifications, setRecentNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [inboxVersion, setInboxVersion] = useState(0);
-  const [browserNotificationStatus, setBrowserNotificationStatus] = useState(getBrowserNotificationStatus);
+  const { recentNotifications, unreadCount, inboxVersion, browserNotificationStatus, setBrowserNotificationStatus, refreshInboxSummary, bumpInboxVersion } = useNotificationFeed();
   const [selectedMonitor, setSelectedMonitor] = useState(null);
   const [showMonitorDialog, setShowMonitorDialog] = useState(false);
   const [showChannelDialog, setShowChannelDialog] = useState(false);
@@ -96,107 +67,7 @@ export function App() {
     }
   }, [notify]);
 
-  const refreshInboxSummary = useCallback(async () => {
-    try {
-      const [list, count] = await Promise.all([api("/api/v1/in-app-notifications?page=1&page_size=6"), api("/api/v1/in-app-notifications/unread-count")]);
-      setRecentNotifications(list?.items || []);
-      setUnreadCount(count?.count || 0);
-    } catch {
-      // The main refresh path reports connectivity failures; the bell stays quiet until recovery.
-    }
-  }, []);
-
   useEffect(() => { void refresh(); void refreshInboxSummary(); }, [refresh, refreshInboxSummary]);
-  useEffect(() => {
-    let active = true;
-    let socket;
-    let retryTimer;
-    let retryDelay = 1000;
-    const connect = () => {
-      if (!active) return;
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/in-app-notifications/ws`);
-      socket.onopen = () => {
-        retryDelay = 1000;
-        void refreshInboxSummary();
-      };
-      socket.onmessage = (message) => {
-        try {
-          const event = JSON.parse(message.data);
-          if (typeof event.unread_count === "number") setUnreadCount(event.unread_count);
-          if (event.type === "created" && event.notification) {
-            setRecentNotifications((current) => [event.notification, ...current.filter((item) => item.id !== event.notification.id)].slice(0, 6));
-            void showBrowserNotification(event.notification);
-          }
-          else void refreshInboxSummary();
-          setInboxVersion((current) => current + 1);
-        } catch {
-          void refreshInboxSummary();
-        }
-      };
-      socket.onerror = () => socket?.close();
-      socket.onclose = () => {
-        if (!active) return;
-        window.clearTimeout(retryTimer);
-        retryTimer = window.setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 15000);
-      };
-    };
-    connect();
-    return () => {
-      active = false;
-      window.clearTimeout(retryTimer);
-      socket?.close();
-    };
-  }, [refreshInboxSummary]);
-  useEffect(() => {
-    const syncBrowserNotificationStatus = (event) => {
-      if (!event || event.type === "focus" || event.key === browserNotificationPreferenceKey) setBrowserNotificationStatus(getBrowserNotificationStatus());
-    };
-    window.addEventListener("storage", syncBrowserNotificationStatus);
-    window.addEventListener("focus", syncBrowserNotificationStatus);
-    return () => {
-      window.removeEventListener("storage", syncBrowserNotificationStatus);
-      window.removeEventListener("focus", syncBrowserNotificationStatus);
-    };
-  }, []);
-  useEffect(() => {
-    const syncWhenVisible = () => { if (document.visibilityState === "visible") void refreshInboxSummary(); };
-    const timer = window.setInterval(syncWhenVisible, 15000);
-    window.addEventListener("online", syncWhenVisible);
-    document.addEventListener("visibilitychange", syncWhenVisible);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("online", syncWhenVisible);
-      document.removeEventListener("visibilitychange", syncWhenVisible);
-    };
-  }, [refreshInboxSummary]);
-  useEffect(() => {
-    let lastScrollY = window.scrollY;
-    let frame = 0;
-    const updateTopbar = () => {
-      frame = 0;
-      if (!window.matchMedia("(max-width: 640px)").matches) {
-        setMobileTopbarHidden(false);
-        lastScrollY = window.scrollY;
-        return;
-      }
-      const nextScrollY = Math.max(window.scrollY, 0);
-      const delta = nextScrollY - lastScrollY;
-      if (nextScrollY <= 8) setMobileTopbarHidden(false);
-      else if (delta > 8) setMobileTopbarHidden(true);
-      else if (delta < -8) setMobileTopbarHidden(false);
-      if (Math.abs(delta) > 8) lastScrollY = nextScrollY;
-    };
-    const onScroll = () => { if (!frame) frame = window.requestAnimationFrame(updateTopbar); };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, []);
 
   const activateRoute = useCallback((page, { replace = false, recordID = "", notificationID = "" } = {}) => {
     setActivePage(page);
@@ -207,14 +78,9 @@ export function App() {
     if (window.location.pathname !== path) window.history[replace ? "replaceState" : "pushState"]({}, "", path);
   }, []);
   const navigate = useCallback((page) => {
-    setMobileSidebarOpen(false);
-    setMobileTopbarHidden(false);
+    resetMobileNavigation();
     activateRoute(page);
-  }, [activateRoute]);
-  const toggleNavigation = useCallback(() => {
-    if (window.matchMedia("(max-width: 640px)").matches) setMobileSidebarOpen((current) => !current);
-    else setSidebarCollapsed((current) => !current);
-  }, []);
+  }, [activateRoute, resetMobileNavigation]);
 
   useEffect(() => {
     const popState = () => {
@@ -223,12 +89,11 @@ export function App() {
       setOpenTabs((current) => current.includes(route.page) ? current : [...current, route.page]);
       setRouteRecordID(route.recordID);
       setRouteNotificationID(route.notificationID);
-      setMobileSidebarOpen(false);
-      setMobileTopbarHidden(false);
+      resetMobileNavigation();
     };
     window.addEventListener("popstate", popState);
     return () => window.removeEventListener("popstate", popState);
-  }, []);
+  }, [resetMobileNavigation]);
 
   const monitorContext = useCallback((monitor) => ({ monitor, descriptor: modules.find((item) => item.type === monitor.module_type) }), [modules]);
   useEffect(() => {
@@ -286,25 +151,25 @@ export function App() {
     try {
       await api(`/api/v1/in-app-notifications/${id}/read`, { method: "PATCH" });
       await refreshInboxSummary();
-      setInboxVersion((current) => current + 1);
+      bumpInboxVersion();
     } catch (error) {
       notify(error.message, "error");
     }
-  }, [notify, refreshInboxSummary]);
+  }, [bumpInboxVersion, notify, refreshInboxSummary]);
   const markAllNotificationsRead = useCallback(async () => {
     try {
       await api("/api/v1/in-app-notifications/read-all", { method: "POST" });
       await refreshInboxSummary();
-      setInboxVersion((current) => current + 1);
+      bumpInboxVersion();
     } catch (error) {
       notify(error.message, "error");
     }
-  }, [notify, refreshInboxSummary]);
+  }, [bumpInboxVersion, notify, refreshInboxSummary]);
   const handleNotificationsDeleted = useCallback(async (deleted) => {
     await refreshInboxSummary();
-    setInboxVersion((current) => current + 1);
+    bumpInboxVersion();
     notify(deleted ? `已删除 ${deleted} 条已读通知` : "没有可删除的已读通知");
-  }, [notify, refreshInboxSummary]);
+  }, [bumpInboxVersion, notify, refreshInboxSummary]);
   const handleRecordsDeleted = useCallback((deleted) => {
     notify(deleted ? `已删除 ${deleted} 条执行记录` : "没有可删除的执行记录");
     void refresh();
@@ -407,7 +272,12 @@ export function App() {
             : <SettingsPage />;
 
   const notificationBell = <NotificationBell items={recentNotifications} unreadCount={unreadCount} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onOpenCenter={() => navigate("inbox")} onOpenNotification={openNotification} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />;
-  const overlays = <><Toaster position="bottom-right" richColors />{showMonitorDialog && <MonitorDialog monitor={selectedMonitor} modules={modules} channels={channels} onClose={() => setShowMonitorDialog(false)} onSaved={() => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testMonitor} />}{recordsMonitor && <MonitorRecordsDialog monitor={recordsMonitor.monitor} descriptor={recordsMonitor.descriptor} onClose={() => setRecordsMonitor(null)} onOpenTab={openRecordsTab} onRecordsDeleted={handleRecordsDeleted} />}{showChannelDialog && <ChannelDialog channel={selectedChannel} notifiers={notifiers} monitors={monitors} modules={modules} onClose={() => setShowChannelDialog(false)} onSaved={() => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }} onError={(message) => notify(message, "error")} onTest={testNotification} />}<AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><AlertTriangle size={19} /></div><AlertDialogTitle>删除监控项</AlertDialogTitle><AlertDialogDescription>确定要删除“{deleteTarget?.name}”吗？相关配置和历史执行记录将一并删除，此操作无法撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={confirmDeleteMonitor}>{deleting ? "删除中..." : "确认删除"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
+  const overlays = <AppOverlays
+    monitorDialog={{ open: showMonitorDialog, monitor: selectedMonitor, modules, channels, onClose: () => setShowMonitorDialog(false), onSaved: () => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testMonitor }}
+    recordsDialog={{ context: recordsMonitor, onClose: () => setRecordsMonitor(null), onOpenTab: openRecordsTab, onRecordsDeleted: handleRecordsDeleted }}
+    channelDialog={{ open: showChannelDialog, channel: selectedChannel, notifiers, monitors, modules, onClose: () => setShowChannelDialog(false), onSaved: () => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testNotification }}
+    deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
+  />;
 
-  return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={() => setMobileSidebarOpen(false)} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
+  return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={closeMobileSidebar} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
 }

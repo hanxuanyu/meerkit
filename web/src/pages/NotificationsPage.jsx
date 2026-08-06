@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Bell, BellRing, Edit3, ExternalLink, Inbox, LockKeyhole, Plus, RefreshCw, Search } from "lucide-react";
+import { PageHeader } from "../components/layout/PageHeader";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Card } from "../components/ui/Card";
@@ -49,10 +50,7 @@ export function NotificationsPage({ channels = [], onCreate, onRefresh, onEdit, 
   const hasMatches = filteredChannels.length > 0;
 
   return <div className="page-stack">
-    <div className="page-heading page-heading-with-action">
-      <div><div className="eyebrow">DELIVERY CHANNELS</div><h1>通知渠道</h1><p>在条件边沿触发时发送告警和恢复通知。</p></div>
-      <Button onClick={onCreate}><Plus size={16} />添加渠道</Button>
-    </div>
+    <PageHeader className="page-heading-with-action" eyebrow="DELIVERY CHANNELS" title="通知渠道" description="在条件边沿触发时发送告警和恢复通知。" actions={<Button onClick={onCreate}><Plus size={16} />添加渠道</Button>} />
     <Card className="section-card">
       <div className="section-header">
         <div><h2>已配置渠道</h2><p>内置站内通知及外部渠道可被多个监控项复用。</p></div>

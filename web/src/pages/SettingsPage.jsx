@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { FileCog } from "lucide-react";
 import { api } from "../lib/api";
+import { PageHeader } from "../components/layout/PageHeader";
 import { Badge } from "../components/ui/Badge";
 import { Card } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
@@ -24,7 +25,7 @@ export function SettingsPage() {
     return () => { cancelled = true; };
   }, []);
 
-  return <div className="page-stack"><div className="page-heading"><div><div className="eyebrow">RUNTIME CONFIGURATION</div><h1>系统设置</h1><p>配置在服务启动时加载，当前生效值由默认值、config.yaml、环境变量和命令行参数合并而成。</p></div></div><Card className="section-card settings-config-card"><div className="section-header"><div><h2>当前配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "未加载 config.yaml，当前使用默认值和运行时覆盖。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>{error ? <div className="settings-config-error">{error}</div> : metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}</Card></div>;
+  return <div className="page-stack"><PageHeader eyebrow="RUNTIME CONFIGURATION" title="系统设置" description="配置在服务启动时加载，当前生效值由默认值、config.yaml、环境变量和命令行参数合并而成。" /><Card className="section-card settings-config-card"><div className="section-header"><div><h2>当前配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "未加载 config.yaml，当前使用默认值和运行时覆盖。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>{error ? <div className="settings-config-error">{error}</div> : metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}</Card></div>;
 }
 
 function ConfigTable({ items }) {
