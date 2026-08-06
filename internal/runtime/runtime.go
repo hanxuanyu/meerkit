@@ -21,7 +21,10 @@ import (
 	"meerkit/internal/store"
 )
 
-var ErrMonitorRunning = errors.New("monitor is already running")
+var (
+	ErrMonitorRunning           = errors.New("monitor is already running")
+	ErrMonitorModuleUnavailable = errors.New("monitor module is unavailable")
+)
 
 type Runner struct {
 	store     *store.Store
@@ -63,6 +66,14 @@ func (r *Runner) TryRun(ctx context.Context, id string) (core.MonitorRecord, err
 	return r.runLocked(ctx, id)
 }
 
+func (r *Runner) ModuleAvailable(moduleType, moduleVersion string) bool {
+	module, ok := r.modules.Get(moduleType)
+	if !ok {
+		return false
+	}
+	return moduleVersion == "" || module.Descriptor().Version == moduleVersion
+}
+
 func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, error) {
 	monitor, err := r.store.GetMonitor(ctx, id)
 	if err != nil {
@@ -70,9 +81,12 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	}
 	module, ok := r.modules.Get(monitor.ModuleType)
 	if !ok {
-		return core.MonitorRecord{}, fmt.Errorf("unknown monitor module %q", monitor.ModuleType)
+		return core.MonitorRecord{}, fmt.Errorf("%w: %s", ErrMonitorModuleUnavailable, monitor.ModuleType)
 	}
 	descriptor := module.Descriptor()
+	if monitor.ModuleVersion != "" && descriptor.Version != monitor.ModuleVersion {
+		return core.MonitorRecord{}, fmt.Errorf("%w: %s version %s is required, version %s is active", ErrMonitorModuleUnavailable, monitor.ModuleType, monitor.ModuleVersion, descriptor.Version)
+	}
 	if r.logger != nil {
 		r.logger.Debug("monitor execution started", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", descriptor.Version)
 	}
@@ -291,10 +305,11 @@ type Scheduler struct {
 	tasksMu          sync.Mutex
 	tasks            map[string]*scheduleTask
 	invalidSchedules map[string]string
+	pausedMonitors   map[string]string
 }
 
 func NewScheduler(runner *Runner, store *store.Store, config app.Config, logger *slog.Logger) *Scheduler {
-	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string)}
+	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string), pausedMonitors: make(map[string]string)}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -334,7 +349,22 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 	defer s.tasksMu.Unlock()
 	for _, monitor := range monitors {
 		if !monitor.Enabled {
+			delete(s.pausedMonitors, monitor.ID)
 			continue
+		}
+		if !s.runner.ModuleAvailable(monitor.ModuleType, monitor.ModuleVersion) {
+			reason := monitor.ModuleType + "@" + monitor.ModuleVersion
+			if s.pausedMonitors[monitor.ID] != reason && s.logger != nil {
+				s.logger.Warn("scheduled monitor paused because module is unavailable", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", monitor.ModuleVersion)
+			}
+			s.pausedMonitors[monitor.ID] = reason
+			continue
+		}
+		if _, paused := s.pausedMonitors[monitor.ID]; paused {
+			delete(s.pausedMonitors, monitor.ID)
+			if s.logger != nil {
+				s.logger.Info("scheduled monitor resumed after module became available", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", monitor.ModuleVersion)
+			}
 		}
 		present[monitor.ID] = true
 		task := s.tasks[monitor.ID]
@@ -370,6 +400,23 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 			delete(s.invalidSchedules, id)
 		}
 	}
+	for id := range s.pausedMonitors {
+		if _, exists := present[id]; !exists {
+			if monitorExistsAndEnabled(monitors, id) {
+				continue
+			}
+			delete(s.pausedMonitors, id)
+		}
+	}
+}
+
+func monitorExistsAndEnabled(monitors []core.Monitor, id string) bool {
+	for _, monitor := range monitors {
+		if monitor.ID == id {
+			return monitor.Enabled
+		}
+	}
+	return false
 }
 
 func advanceScheduleTask(task *scheduleTask, timezone string, now time.Time) (bool, error) {
@@ -390,7 +437,11 @@ func (s *Scheduler) launch(ctx context.Context, monitorID string) {
 		go func() {
 			defer func() { <-s.semaphore }()
 			if _, err := s.runner.TryRun(ctx, monitorID); err != nil && !errors.Is(err, ErrMonitorRunning) && s.logger != nil {
-				s.logger.Error("scheduled monitor failed", "monitor_id", monitorID, "error", err)
+				if errors.Is(err, ErrMonitorModuleUnavailable) {
+					s.logger.Warn("scheduled monitor skipped because module became unavailable", "monitor_id", monitorID)
+				} else {
+					s.logger.Error("scheduled monitor failed", "monitor_id", monitorID, "error", err)
+				}
 			}
 		}()
 	default:

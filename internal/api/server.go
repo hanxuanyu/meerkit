@@ -504,17 +504,18 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 		switch r.Method {
 		case http.MethodGet:
 			monitors, err := a.store.ListMonitorsPage(r.Context(), store.MonitorListOptions{
-				Page:       queryInt(r, "page", 1),
-				PageSize:   queryInt(r, "page_size", 20),
-				Search:     r.URL.Query().Get("q"),
-				ModuleType: r.URL.Query().Get("module_type"),
-				Status:     r.URL.Query().Get("status"),
+				Page:                 queryInt(r, "page", 1),
+				PageSize:             queryInt(r, "page_size", 20),
+				Search:               r.URL.Query().Get("q"),
+				ModuleType:           r.URL.Query().Get("module_type"),
+				Status:               r.URL.Query().Get("status"),
+				AvailableModuleTypes: a.modules.Types(),
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, monitorListPage(monitors, a.config.Scheduler.Timezone))
+			writeJSON(w, http.StatusOK, monitorListPage(monitors, a.config.Scheduler.Timezone, a.modules))
 		case http.MethodPost:
 			a.createMonitor(w, r)
 		default:
@@ -533,6 +534,10 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 			record, err := a.runner.Run(r.Context(), id)
 			if errors.Is(err, runtimeapp.ErrMonitorRunning) {
 				writeError(w, http.StatusConflict, "monitor_running", err.Error())
+				return
+			}
+			if errors.Is(err, runtimeapp.ErrMonitorModuleUnavailable) {
+				writeError(w, http.StatusConflict, "module_unavailable", "对应插件当前不可用，监控调度已暂停")
 				return
 			}
 			if err != nil {
@@ -617,7 +622,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, monitor)
+		writeJSON(w, http.StatusOK, monitorListItemFor(monitor, a.config.Scheduler.Timezone, a.modules))
 	case http.MethodPatch, http.MethodPut:
 		a.updateMonitor(w, r, monitor)
 	case http.MethodDelete:
@@ -636,10 +641,12 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 
 type monitorListItem struct {
 	core.Monitor
-	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+	NextRunAt       *time.Time `json:"next_run_at,omitempty"`
+	ModuleAvailable bool       `json:"module_available"`
+	PauseReason     string     `json:"pause_reason,omitempty"`
 }
 
-func monitorListPage(page store.PageResult[core.Monitor], timezone string) store.PageResult[monitorListItem] {
+func monitorListPage(page store.PageResult[core.Monitor], timezone string, registry *monitor.Registry) store.PageResult[monitorListItem] {
 	result := store.PageResult[monitorListItem]{
 		Items:      make([]monitorListItem, 0, len(page.Items)),
 		Page:       page.Page,
@@ -647,16 +654,32 @@ func monitorListPage(page store.PageResult[core.Monitor], timezone string) store
 		Total:      page.Total,
 		TotalPages: page.TotalPages,
 	}
-	for _, monitor := range page.Items {
-		item := monitorListItem{Monitor: monitor}
-		if monitor.Enabled {
-			if next, err := runtimeapp.NextScheduleTimes(monitor.Schedules, timezone, 1); err == nil && len(next) > 0 {
-				item.NextRunAt = &next[0]
-			}
-		}
-		result.Items = append(result.Items, item)
+	for _, value := range page.Items {
+		result.Items = append(result.Items, monitorListItemFor(value, timezone, registry))
 	}
 	return result
+}
+
+func monitorListItemFor(value core.Monitor, timezone string, registry *monitor.Registry) monitorListItem {
+	available := monitorModuleAvailable(value, registry)
+	item := monitorListItem{Monitor: value, ModuleAvailable: available}
+	if value.Enabled && !available {
+		item.PauseReason = "module_unavailable"
+	}
+	if value.Enabled && available {
+		if next, err := runtimeapp.NextScheduleTimes(value.Schedules, timezone, 1); err == nil && len(next) > 0 {
+			item.NextRunAt = &next[0]
+		}
+	}
+	return item
+}
+
+func monitorModuleAvailable(value core.Monitor, registry *monitor.Registry) bool {
+	if registry == nil {
+		return false
+	}
+	module, ok := registry.Get(value.ModuleType)
+	return ok && (value.ModuleVersion == "" || module.Descriptor().Version == value.ModuleVersion)
 }
 
 func (a *APIServer) testMonitor(w http.ResponseWriter, r *http.Request) {
@@ -814,16 +837,16 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 			current.ModuleConfigVersion = "1"
 		}
 	}
+	if payload.Enabled != nil {
+		current.Enabled = *payload.Enabled
+	}
 	module, ok := a.modules.Get(current.ModuleType)
-	if !ok {
+	if !ok && (current.Enabled || len(payload.ModuleConfig) > 0) {
 		writeError(w, http.StatusBadRequest, "validation_error", "unknown module_type")
 		return
 	}
 	if payload.Schedules != nil {
 		current.Schedules = normalizeSchedules(payload.Schedules)
-	}
-	if payload.Enabled != nil {
-		current.Enabled = *payload.Enabled
 	}
 	if len(payload.ModuleConfig) > 0 {
 		current.ModuleConfig = payload.ModuleConfig
@@ -847,9 +870,11 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}
-	if err := module.ValidateConfig(current.ModuleConfig); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_module_config", err.Error())
-		return
+	if ok {
+		if err := module.ValidateConfig(current.ModuleConfig); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_module_config", err.Error())
+			return
+		}
 	}
 	if current.ConditionConfig == nil || len(current.ConditionConfig) == 0 {
 		current.ConditionConfig = json.RawMessage(`{"logic":"ALL","rules":[]}`)

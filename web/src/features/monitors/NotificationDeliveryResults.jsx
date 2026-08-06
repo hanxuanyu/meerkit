@@ -25,7 +25,7 @@ export function NotificationDeliveryResults({ result = {}, eventType = "none", c
       <span className="notification-delivery-icon"><ChannelIcon size={16} /></span>
       <div className="notification-delivery-main"><strong>{channelName}</strong><span>{channelType ? channelType.toUpperCase() : "未知渠道"} · {channelID}</span></div>
       <div className="notification-delivery-status"><Badge tone={status.tone}><StatusIcon size={11} />{status.label}</Badge>{delivery.attempts > 0 && <span>尝试 {delivery.attempts} 次</span>}</div>
-      {delivery.message && <CollapsibleText className="notification-delivery-message" value={deliveryMessage(delivery.message)} expanded={expandedTextKey === `delivery:${channelID}`} onToggle={() => onToggleText(`delivery:${channelID}`)} />}
+      {delivery.message && <CollapsibleText className="notification-delivery-message" label="投递信息" value={deliveryMessage(delivery.message)} expanded={expandedTextKey === `delivery:${channelID}`} onToggle={() => onToggleText(`delivery:${channelID}`)} />}
     </div>;
   })}</div>;
 }

@@ -8,7 +8,7 @@ export function ResultRenderer({ descriptor, result, expandedTextKey = "", onTog
   const sets = getResultSets(descriptor);
   if (!sets.length) {
     const textKey = "result:raw";
-    return <CollapsibleText value={JSON.stringify(result || {}, null, 2)} expanded={expandedTextKey === textKey} onToggle={() => onToggleText(textKey)} />;
+    return <CollapsibleText label="原始结果" value={JSON.stringify(result || {}, null, 2)} expanded={expandedTextKey === textKey} onToggle={() => onToggleText(textKey)} />;
   }
   return <div className="result-sets">{sets.map((set) => <ResultSet key={set.key} set={set} result={result || {}} descriptor={descriptor} expandedTextKey={expandedTextKey} onToggleText={onToggleText} />)}</div>;
 }
@@ -29,7 +29,7 @@ function ResultField({ field, value, descriptor, textKey, expandedTextKey, onTog
     const tone = type === "boolean" ? (value ? "success" : "muted") : "neutral";
     return <Badge variant="outline" tone={tone} className={`result-value-badge result-value-${type}`} title={`${field.label}：${visibleValue}`}><span>{field.label}</span><strong>{visibleValue}</strong></Badge>;
   }
-  return <div className={`result-field result-field-${type}`}><div className="result-field-label"><span>{field.label}</span>{field.unit && <small>{field.unit}</small>}</div>{field.format === "condition_list" ? <ConditionList value={value} descriptor={descriptor} textKeyPrefix={textKey} expandedTextKey={expandedTextKey} onToggleText={onToggleText} /> : <CollapsibleText value={display} expanded={expandedTextKey === textKey} onToggle={() => onToggleText(textKey)} />}</div>;
+  return <div className={`result-field result-field-${type}`}>{field.format === "condition_list" ? <><div className="result-field-label"><span>{field.label}</span>{field.unit && <small>{field.unit}</small>}</div><ConditionList value={value} descriptor={descriptor} textKeyPrefix={textKey} expandedTextKey={expandedTextKey} onToggleText={onToggleText} /></> : <CollapsibleText label={field.label} meta={field.unit} value={display} expanded={expandedTextKey === textKey} onToggle={() => onToggleText(textKey)} />}</div>;
 }
 
 function ConditionList({ value, descriptor, textKeyPrefix, expandedTextKey, onToggleText }) {
@@ -49,6 +49,6 @@ function ConditionList({ value, descriptor, textKeyPrefix, expandedTextKey, onTo
     const stateLabel = detail.state === "true" ? "满足" : detail.state === "unknown" ? "未知" : "不满足";
     const actualKey = `${textKeyPrefix}:${index}:actual`;
     const messageKey = `${textKeyPrefix}:${index}:message`;
-    return <div className="result-condition-item" key={`${detail.source || "current"}-${detail.field}-${detail.operator}-${index}`}><div className="result-condition-main"><strong title={description}>{description}</strong><CollapsibleText className="result-condition-text" value={`实际值：${actual}`} expanded={expandedTextKey === actualKey} onToggle={() => onToggleText(actualKey)} />{detail.message && <CollapsibleText className="result-condition-text is-message" value={detail.message} expanded={expandedTextKey === messageKey} onToggle={() => onToggleText(messageKey)} />}</div><Badge tone={tone}>{stateLabel}</Badge></div>;
+    return <div className="result-condition-item" key={`${detail.source || "current"}-${detail.field}-${detail.operator}-${index}`}><div className="result-condition-main"><strong title={description}>{description}</strong><CollapsibleText className="result-condition-text" label="实际值" value={actual} expanded={expandedTextKey === actualKey} onToggle={() => onToggleText(actualKey)} />{detail.message && <CollapsibleText className="result-condition-text is-message" label="说明" value={detail.message} expanded={expandedTextKey === messageKey} onToggle={() => onToggleText(messageKey)} />}</div><Badge tone={tone}>{stateLabel}</Badge></div>;
   })}</div>;
 }

@@ -107,7 +107,7 @@ export function App() {
 
   const monitorContext = useCallback((monitor) => ({ monitor, descriptor: modules.find((item) => item.type === monitor.module_type) }), [modules]);
   useEffect(() => {
-    if (!activePage.startsWith("monitor-details:") || !modules.length) return;
+    if (!activePage.startsWith("monitor-details:")) return;
     const monitorID = activePage.slice("monitor-details:".length);
     const known = monitors.find((item) => item.id === monitorID);
     if (known) {
@@ -213,7 +213,7 @@ export function App() {
     }
   }, [notify, refresh]);
   const toggleMonitorEnabled = useCallback(async (monitor) => {
-    if (togglingMonitorId) return;
+    if (togglingMonitorId || monitor.module_available === false) return;
     setTogglingMonitorId(monitor.id);
     try {
       await api(`/api/v1/monitors/${monitor.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !monitor.enabled }) });
@@ -236,7 +236,7 @@ export function App() {
   }, [notify]);
 
   const openCreateMonitor = () => { setSelectedMonitor(null); setShowMonitorDialog(true); };
-  const openEditMonitor = (monitor) => { setSelectedMonitor(monitor); setShowMonitorDialog(true); };
+  const openEditMonitor = (monitor) => { if (monitor.module_available === false) return; setSelectedMonitor(monitor); setShowMonitorDialog(true); };
   const openMonitorList = (monitor) => { if (monitor) setSelectedMonitor(monitor); navigate("monitors"); };
   const deleteMonitor = (monitor) => setDeleteTarget(monitor);
   const confirmDeleteMonitor = async (event) => {
@@ -278,7 +278,7 @@ export function App() {
         : activePage === "notifications"
           ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
           : activePage === "plugins"
-            ? <PluginsPage notify={notify} />
+            ? <PluginsPage notify={notify} onChanged={refresh} />
           : activePage.startsWith("monitor-details:")
             ? recordTabs[activePage] ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} channels={channels} initialRecordID={routeRecordID} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
             : <SettingsPage />;

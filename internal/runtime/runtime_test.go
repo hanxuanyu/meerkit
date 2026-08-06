@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"meerkit/internal/app"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/store"
@@ -77,6 +78,37 @@ func (summaryTestModule) ValidateConfig(json.RawMessage) error { return nil }
 
 func (summaryTestModule) Execute(context.Context, json.RawMessage) (core.Observation, error) {
 	return core.Observation{Success: true, SchemaVersion: "1", Result: map[string]any{"value": "ready"}, Summary: "模块结果：ready"}, nil
+}
+
+func TestSchedulerPausesMonitorWhileModuleIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Date(2026, time.August, 6, 23, 50, 0, 0, time.UTC)
+	value := core.Monitor{ID: "paused-monitor", Name: "Paused monitor", ModuleType: "summary-test", ModuleVersion: "1", Schedules: []string{"* * * * * *"}, Enabled: true, ModuleConfig: json.RawMessage(`{}`), ConditionConfig: json.RawMessage(`{}`), RuntimeState: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
+	if err := database.CreateMonitor(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+
+	modules := monitor.NewRegistry()
+	scheduler := NewScheduler(NewRunner(database, modules, nil, nil), database, app.DefaultConfig(), nil)
+	scheduler.syncAndRun(ctx, now)
+	if len(scheduler.tasks) != 0 || scheduler.pausedMonitors[value.ID] == "" {
+		t.Fatalf("unavailable monitor was not paused: tasks=%#v paused=%#v", scheduler.tasks, scheduler.pausedMonitors)
+	}
+
+	modules.Register(summaryTestModule{})
+	scheduler.syncAndRun(ctx, now.Add(time.Second))
+	if scheduler.tasks[value.ID] == nil {
+		t.Fatalf("available monitor did not resume: %#v", scheduler.tasks)
+	}
+	if _, paused := scheduler.pausedMonitors[value.ID]; paused {
+		t.Fatalf("resumed monitor is still marked paused: %#v", scheduler.pausedMonitors)
+	}
 }
 
 func TestValidateSchedules(t *testing.T) {

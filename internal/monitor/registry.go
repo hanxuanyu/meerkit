@@ -110,6 +110,16 @@ func (r *Registry) Owner(moduleType string) (string, bool) {
 	entry, ok := r.modules[moduleType]
 	return entry.owner, ok
 }
+func (r *Registry) Types() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]string, 0, len(r.modules))
+	for moduleType := range r.modules {
+		result = append(result, moduleType)
+	}
+	sort.Strings(result)
+	return result
+}
 func (r *Registry) Descriptors() []core.ModuleDescriptor {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

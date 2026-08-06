@@ -54,7 +54,7 @@ function ModuleCapability({ module, descriptor, defaultOpen, loading }) {
     </summary>
     {descriptor ? <div className="plugin-capability-columns">
       <CapabilityGroup title="输入参数" count={parameters.length}>{parameters.length ? <div className="plugin-capability-fields">{parameters.map((parameter) => <ParameterRow key={parameter.key} parameter={parameter} />)}</div> : <CapabilityEmpty>无需配置参数</CapabilityEmpty>}</CapabilityGroup>
-      <CapabilityGroup title="返回结果" count={resultCount}>{resultSets.length ? <div className="plugin-result-sets">{resultSets.map((set) => <div className="plugin-result-set" key={set.key}><div className="plugin-result-set-heading"><strong>{set.label || set.key}</strong><code>{set.key}</code>{set.description && <span>{set.description}</span>}</div><div className="plugin-capability-fields">{(set.fields || []).map((field) => <ResultFieldRow key={`${set.key}:${field.name}`} field={field} />)}</div></div>)}</div> : <CapabilityEmpty>未声明结构化返回字段</CapabilityEmpty>}</CapabilityGroup>
+      <CapabilityGroup title="返回结果" count={resultCount}>{resultSets.length ? <div className="plugin-result-sets">{resultSets.map((set) => <div className="plugin-result-set" key={set.key}><div className="plugin-result-set-heading"><div><strong>{set.label || set.key}</strong><code>{set.key}</code></div>{set.description && <span>{set.description}</span>}</div><div className="plugin-capability-fields">{(set.fields || []).map((field) => <ResultFieldRow key={`${set.key}:${field.name}`} field={field} />)}</div></div>)}</div> : <CapabilityEmpty>未声明结构化返回字段</CapabilityEmpty>}</CapabilityGroup>
     </div> : <CapabilityEmpty className="plugin-capability-unavailable">{loading ? "正在加载模块能力..." : "该模块尚无描述快照，成功启用插件后即可查看输入输出能力。"}</CapabilityEmpty>}
   </details>;
 }
@@ -65,12 +65,12 @@ function CapabilityGroup({ title, count, children }) {
 
 function ParameterRow({ parameter }) {
   const metadata = [];
-  if (parameter.required) metadata.push("必填");
   if (parameter.secret) metadata.push("敏感");
-  if (parameter.default !== undefined && parameter.default !== null && parameter.default !== "") metadata.push(`默认 ${compactValue(parameter.default)}`);
-  if (parameter.options?.length) metadata.push(`${parameter.options.length} 个选项`);
+  const hasDefault = parameter.default !== undefined && parameter.default !== null && parameter.default !== "";
+  const optionCount = parameterOptionCount(parameter);
+  if (optionCount) metadata.push(`${optionCount} 个选项`);
   if (parameter.unit) metadata.push(parameter.unit);
-  return <div className="plugin-capability-field" title={parameter.description || ""}><div><strong>{parameter.label || parameter.key}</strong><code>{parameter.key}</code></div><div className="plugin-capability-field-meta"><Badge variant="outline">{parameter.type || "string"}</Badge>{metadata.map((item) => <span key={item}>{item}</span>)}</div></div>;
+  return <div className="plugin-capability-field" title={parameter.description || ""}><div className="plugin-capability-field-heading"><div className="plugin-capability-field-identity"><strong>{parameter.label || parameter.key}{parameter.required && <span className="plugin-capability-required" title="必填" aria-label="必填">*</span>}</strong><code>{parameter.key}</code></div><Badge variant="outline" className="plugin-capability-type">{parameter.type || "string"}</Badge></div>{(hasDefault || metadata.length > 0) && <div className="plugin-capability-field-meta">{hasDefault && <span className="plugin-capability-default" title={`默认值：${compactValue(parameter.default)}`}><small>默认</small><strong>{compactValue(parameter.default)}</strong></span>}{metadata.map((item) => <span key={item}>{item}</span>)}</div>}</div>;
 }
 
 function ResultFieldRow({ field }) {
@@ -78,7 +78,7 @@ function ResultFieldRow({ field }) {
   if (field.unit) metadata.push(field.unit);
   if (field.path) metadata.push("支持路径");
   if (field.operators?.length) metadata.push(`${field.operators.length} 种比较`);
-  return <div className="plugin-capability-field" title={field.description || ""}><div><strong>{field.label || field.name}</strong><code>{field.name}</code></div><div className="plugin-capability-field-meta"><Badge variant="outline">{field.type || "unknown"}</Badge>{field.format && <span>{field.format}</span>}{metadata.map((item) => <span key={item}>{item}</span>)}</div></div>;
+  return <div className="plugin-capability-field" title={field.description || ""}><div className="plugin-capability-field-heading"><div className="plugin-capability-field-identity"><strong>{field.label || field.name}</strong><code>{field.name}</code></div><Badge variant="outline" className="plugin-capability-type">{field.type || "unknown"}</Badge></div>{(field.format || metadata.length > 0) && <div className="plugin-capability-field-meta">{field.format && <span>{field.format}</span>}{metadata.map((item) => <span key={item}>{item}</span>)}</div>}</div>;
 }
 
 function CapabilityEmpty({ className = "", children }) {
@@ -90,6 +90,11 @@ function compactValue(value) {
   if (typeof value === "object") return "已配置";
   const text = String(value);
   return text.length > 18 ? `${text.slice(0, 18)}...` : text;
+}
+
+function parameterOptionCount(parameter) {
+  const values = [...(parameter.options || []), ...(parameter.options_when || []).flatMap((set) => set.options || [])].map((option) => option.value);
+  return new Set(values).size;
 }
 
 function TrustNotice({ plugin, trusting, onTrust }) {

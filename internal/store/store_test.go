@@ -39,12 +39,20 @@ func TestListMonitorsPageFiltersAndPaginates(t *testing.T) {
 		t.Fatalf("unexpected page metadata: %+v", page)
 	}
 
-	triggered, err := database.ListMonitorsPage(ctx, MonitorListOptions{PageSize: 20, Status: "triggered"})
+	triggered, err := database.ListMonitorsPage(ctx, MonitorListOptions{PageSize: 20, Status: "triggered", AvailableModuleTypes: []string{"http"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if triggered.Total != 1 || triggered.Items[0].ID != "monitor-1" {
 		t.Fatalf("unexpected triggered monitors: %+v", triggered)
+	}
+
+	unavailable, err := database.ListMonitorsPage(ctx, MonitorListOptions{PageSize: 20, Status: "unavailable", AvailableModuleTypes: []string{"tcp"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unavailable.Total != 2 {
+		t.Fatalf("unexpected unavailable monitors: %+v", unavailable)
 	}
 
 	search, err := database.ListMonitorsPage(ctx, MonitorListOptions{PageSize: 20, Search: "staging"})

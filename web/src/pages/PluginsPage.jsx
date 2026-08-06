@@ -18,7 +18,7 @@ const PluginDetailDialog = lazy(() => import("../features/plugins/PluginDetailDi
 
 const initialPage = { page: 1, page_size: 20, total: 0, total_pages: 0 };
 
-export function PluginsPage({ notify }) {
+export function PluginsPage({ notify, onChanged }) {
   const [plugins, setPlugins] = useState([]);
   const [pageInfo, setPageInfo] = useState(initialPage);
   const [searchInput, setSearchInput] = useState("");
@@ -97,6 +97,7 @@ export function PluginsPage({ notify }) {
       const value = await action();
       notify(success);
       await load(true);
+      await onChanged?.();
       return { ok: true, value };
     } catch (actionError) {
       notify(actionError.message, "error");

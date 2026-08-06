@@ -27,11 +27,12 @@ type PageResult[T any] struct {
 }
 
 type MonitorListOptions struct {
-	Page       int
-	PageSize   int
-	Search     string
-	ModuleType string
-	Status     string
+	Page                 int
+	PageSize             int
+	Search               string
+	ModuleType           string
+	Status               string
+	AvailableModuleTypes []string
 }
 
 type RecordListOptions struct {
@@ -270,11 +271,17 @@ func (s *Store) ListMonitorsPage(ctx context.Context, options MonitorListOptions
 	case "disabled":
 		where = append(where, "enabled=0")
 	case "triggered":
-		where = append(where, "json_extract(runtime_state_json, '$.condition_active')=1")
+		where = append(where, "enabled=1", "json_extract(runtime_state_json, '$.condition_active')=1")
+		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
 	case "healthy":
-		where = append(where, "json_extract(runtime_state_json, '$.last_success')=1 AND COALESCE(json_extract(runtime_state_json, '$.condition_active'), 0)=0")
+		where = append(where, "enabled=1", "json_extract(runtime_state_json, '$.last_success')=1 AND COALESCE(json_extract(runtime_state_json, '$.condition_active'), 0)=0")
+		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
 	case "waiting":
 		where = append(where, "enabled=1 AND COALESCE(json_extract(runtime_state_json, '$.last_success'), 0)=0")
+		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
+	case "unavailable":
+		where = append(where, "enabled=1")
+		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, false)
 	}
 
 	clause := strings.Join(where, " AND ")
@@ -300,6 +307,25 @@ func (s *Store) ListMonitorsPage(ctx context.Context, options MonitorListOptions
 		return PageResult[core.Monitor]{}, err
 	}
 	return result, nil
+}
+
+func appendModuleAvailabilityFilter(where []string, args []any, available []string, wantAvailable bool) ([]string, []any) {
+	if len(available) == 0 {
+		if wantAvailable {
+			where = append(where, "1=0")
+		}
+		return where, args
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(available)), ",")
+	operator := "IN"
+	if !wantAvailable {
+		operator = "NOT IN"
+	}
+	where = append(where, "module_type "+operator+" ("+placeholders+")")
+	for _, moduleType := range available {
+		args = append(args, moduleType)
+	}
+	return where, args
 }
 
 func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) {
