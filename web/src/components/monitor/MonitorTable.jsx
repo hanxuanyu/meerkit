@@ -1,5 +1,5 @@
 import React from "react";
-import { Edit3, Eye, Globe2, Play, Server, Trash2 } from "lucide-react";
+import { Edit3, Eye, Play, Radio, Trash2 } from "lucide-react";
 import { formatDate } from "../../lib/formatters";
 import { Badge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
@@ -13,18 +13,19 @@ export function MonitorTable({ monitors, modules = [], onRun, onEdit, onDelete, 
     <TableBody>{monitors.map((monitor) => {
       const descriptor = modules.find((item) => item.type === monitor.module_type);
       const summary = formatListSummary(monitor.module_config, descriptor);
+      const moduleName = descriptor?.name || monitor.module_type?.toUpperCase() || "未知模块";
       return <TableRow key={monitor.id}>
         <TableCell className="monitor-primary-cell">
           <div className="monitor-name">
-            <div className={`module-mark module-${monitor.module_type}`}>{monitor.module_type === "http" ? <Globe2 size={15} /> : <Server size={15} />}</div>
+            <div className="module-mark" title={moduleName}><Radio size={15} /></div>
             <div className="monitor-title-copy">
               <strong title={monitor.name}>{monitor.name}</strong>
               {summary && <span title={summary}>{summary}</span>}
             </div>
-            <span className="monitor-mobile-badges"><Badge variant="outline">{monitor.module_type.toUpperCase()}</Badge><StatusBadge monitor={monitor} /></span>
+            <span className="monitor-mobile-badges"><Badge variant="outline">{moduleName}</Badge><StatusBadge monitor={monitor} /></span>
           </div>
         </TableCell>
-        <TableCell className="monitor-module-cell" data-label="模块"><Badge variant="outline">{monitor.module_type.toUpperCase()}</Badge></TableCell>
+        <TableCell className="monitor-module-cell" data-label="模块"><Badge variant="outline">{moduleName}</Badge></TableCell>
         <TableCell className="monitor-schedule-cell" data-label="调度"><div className="schedule-summary">{(monitor.schedules || []).map((schedule) => <code title={schedule} key={schedule}>{schedule}</code>)}</div></TableCell>
         <TableCell className="monitor-next-run-cell" data-label="下次执行"><span className="last-run">{formatDate(monitor.next_run_at, monitor.enabled ? "暂无计划" : "已停用")}</span></TableCell>
         <TableCell className="monitor-status-cell" data-label="状态"><StatusBadge monitor={monitor} /></TableCell>

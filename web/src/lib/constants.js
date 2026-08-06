@@ -18,11 +18,6 @@ export const operators = {
   changed: "发生变化"
 };
 
-export const defaultModuleConfig = {
-  http: { method: "GET", body_mode: "none", response_mode: "auto", normalize: "trim", verify_tls: true, follow_redirects: true, max_redirects: 10, timeout_seconds: 30, max_body_bytes: 262144 },
-  tcp: { timeout_seconds: 10, read_response: false, read_timeout_seconds: 3 }
-};
-
 export const cronPresets = [
   { value: "*/1 * * * *", label: "每分钟" },
   { value: "*/5 * * * *", label: "每 5 分钟" },

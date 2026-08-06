@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Bell, Check, Clock3, LoaderCircle, PlayCircle, Plus, Radio, Trash2 } from "lucide-react";
-import { cronPresets, defaultModuleConfig } from "../../lib/constants";
+import { cronPresets } from "../../lib/constants";
 import { getDefaultValues, getParameters, sanitizeValues } from "../../lib/parameterSchema";
 import { api } from "../../lib/api";
 import { Button } from "../../components/ui/Button";
@@ -15,8 +15,8 @@ import { getResultFields, findUnsupportedPlaceholders } from "../../lib/resultSc
 import { previewSchedule, schedulePreviewLabel, schedulePreviewTitle } from "../../lib/schedules";
 
 export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, onError, onTest }) {
-  const [moduleType, setModuleType] = useState(monitor?.module_type || modules[0]?.type || "http");
-  const descriptor = modules.find((item) => item.type === moduleType) || modules[0];
+  const [moduleType, setModuleType] = useState(monitor?.module_type || modules[0]?.type || "");
+  const descriptor = modules.find((item) => item.type === moduleType);
   const parameters = getParameters(descriptor);
   const [name, setName] = useState(monitor?.name || "");
   const [schedules, setSchedules] = useState(() => monitor?.schedules || ["*/5 * * * *"]);
@@ -27,10 +27,21 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
-    if (!monitor && descriptor) setConfig(getDefaultValues(descriptor, defaultModuleConfig[moduleType] || {}));
+    if (!monitor && !descriptor) setModuleType(modules[0]?.type || "");
+  }, [monitor, modules, descriptor]);
+
+  useEffect(() => {
+    if (!monitor && descriptor) setConfig(getDefaultValues(descriptor));
   }, [moduleType, monitor, descriptor]);
 
-  if (!descriptor) return null;
+  if (!descriptor) return <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <DialogContent>
+      <DialogHeader>
+        <div><span className="eyebrow">MONITOR MODULE</span><DialogTitle>采集模块不可用</DialogTitle><DialogDescription>{monitor ? `当前未注册类型为 ${monitor.module_type} 的采集模块，暂时无法编辑此监控项。` : "当前没有可用于创建监控项的采集模块。"}</DialogDescription></div>
+      </DialogHeader>
+      <DialogFooter><Button type="button" onClick={onClose}>关闭</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
 
   const updateConfig = (key, value) => setConfig((current) => ({ ...current, [key]: value }));
   const updateSchedule = (index, value) => setSchedules((current) => current.map((schedule, itemIndex) => itemIndex === index ? value : schedule));
@@ -67,7 +78,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
   return <Dialog open onOpenChange={(open) => !open && onClose()}>
     <DialogContent className="modal-wide">
       <DialogHeader>
-        <div><span className="eyebrow">{monitor ? "EDIT MONITOR" : "NEW MONITOR"}</span><DialogTitle>{monitor ? "编辑监控项" : "创建监控项"}</DialogTitle><DialogDescription>使用独立采集模块观察响应内容和连接状态。</DialogDescription></div>
+        <div><span className="eyebrow">{monitor ? "EDIT MONITOR" : "NEW MONITOR"}</span><DialogTitle>{monitor ? "编辑监控项" : "创建监控项"}</DialogTitle><DialogDescription>使用采集模块定期获取结果并评估触发条件。</DialogDescription></div>
       </DialogHeader>
       <form onSubmit={submit}>
         <div className="modal-body">

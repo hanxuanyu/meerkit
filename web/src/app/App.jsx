@@ -395,7 +395,7 @@ export function App() {
   }, [notify, refresh, togglingChannelId]);
 
   const page = activePage === "overview"
-    ? <OverviewPage monitors={monitors} loading={loading} onCreate={openCreateMonitor} onOpen={openMonitorList} onRun={runMonitor} onViewRecords={openRecords} />
+    ? <OverviewPage monitors={monitors} modules={modules} loading={loading} onCreate={openCreateMonitor} onOpen={openMonitorList} onRun={runMonitor} onViewRecords={openRecords} />
     : activePage === "monitors"
       ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
       : activePage === "inbox"
