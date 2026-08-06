@@ -1,10 +1,83 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"meerkit/internal/core"
+	"meerkit/internal/monitor"
+	"meerkit/internal/store"
 )
+
+func TestRunPersistsComposedExecutionSummary(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now().UTC()
+	monitorConfig := core.Monitor{
+		ID: "summary-monitor", Name: "Summary monitor", ModuleType: "summary-test", ModuleVersion: "1",
+		Schedules: []string{"@hourly"}, Enabled: true, ModuleConfig: json.RawMessage(`{}`),
+		ConditionConfig: json.RawMessage(`{"logic":"ALL","rules":[{"field":"value","operator":"equals","value":"ready"}]}`),
+		RuntimeState:    json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := database.CreateMonitor(ctx, monitorConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	modules := monitor.NewRegistry()
+	modules.Register(summaryTestModule{})
+	record, err := NewRunner(database, modules, nil, nil).Run(ctx, monitorConfig.ID)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if record.EventType != "triggered" {
+		t.Fatalf("event type = %q, want triggered", record.EventType)
+	}
+	summarySet, ok := record.Result["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary result set has unexpected type: %#v", record.Result["summary"])
+	}
+	summary, ok := summarySet["summary"].(string)
+	if !ok {
+		t.Fatalf("summary field has unexpected type: %#v", summarySet["summary"])
+	}
+	for _, expected := range []string{"模块结果：ready", "事件类型：已触发", "条件状态：满足（ALL 逻辑，满足 1/1 条）", "条件详情：", "value", "实际值：ready"} {
+		if !strings.Contains(summary, expected) {
+			t.Fatalf("persisted summary does not contain %q:\n%s", expected, summary)
+		}
+	}
+
+	storedMonitor, err := database.GetMonitor(ctx, monitorConfig.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state core.RuntimeState
+	if err := json.Unmarshal(storedMonitor.RuntimeState, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.LastSummary != summary {
+		t.Fatalf("last summary does not match persisted record: %q != %q", state.LastSummary, summary)
+	}
+}
+
+type summaryTestModule struct{}
+
+func (summaryTestModule) Descriptor() core.ModuleDescriptor {
+	return core.ModuleDescriptor{Type: "summary-test", Version: "1", Name: "Summary test", ResultSchema: map[string]any{"type": "object"}}
+}
+
+func (summaryTestModule) ValidateConfig(json.RawMessage) error { return nil }
+
+func (summaryTestModule) Execute(context.Context, json.RawMessage) (core.Observation, error) {
+	return core.Observation{Success: true, SchemaVersion: "1", Result: map[string]any{"value": "ready"}, Summary: "模块结果：ready"}, nil
+}
 
 func TestValidateSchedules(t *testing.T) {
 	if err := ValidateSchedules([]string{"*/5 * * * *", "@hourly"}, "Asia/Shanghai"); err != nil {

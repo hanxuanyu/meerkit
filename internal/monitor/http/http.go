@@ -224,14 +224,14 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	response, err := client.Do(request)
 	if err != nil {
 		result := map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}
-		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}}, err
+		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
 	}
 	defer response.Body.Close()
 	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if readErr != nil {
-		result := map[string]any{"success": false, "status_code": response.StatusCode}
-		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}}, readErr
+		result := map[string]any{"success": false, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds()}
+		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
 	}
 	truncated := int64(len(data)) > maxBytes
 	if truncated {
@@ -246,7 +246,7 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 			result["body_json"] = parsed
 		}
 	}
-	return core.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+	return core.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
 }
 
 func copyMap(source map[string]any) map[string]any {
@@ -395,7 +395,52 @@ func contains(values []string, value string) bool {
 }
 
 func failedObservation() core.Observation {
-	return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false}}
+	return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false}, Summary: "HTTP 请求未执行"}
+}
+
+func responseSummary(request *http.Request, response *http.Response, result map[string]any) string {
+	status := response.Status
+	if status == "" {
+		status = fmt.Sprintf("%d", response.StatusCode)
+		if text := http.StatusText(response.StatusCode); text != "" {
+			status += " " + text
+		}
+	}
+	lines := []string{
+		fmt.Sprintf("HTTP 请求：%s %s", request.Method, request.URL.String()),
+		fmt.Sprintf("响应状态：%s", status),
+		fmt.Sprintf("响应耗时：%v ms", result["duration_ms"]),
+	}
+	contentType := response.Header.Get("Content-Type")
+	bodyInfo := fmt.Sprintf("%v 字节", result["body_size"])
+	if contentType != "" {
+		bodyInfo = contentType + "，" + bodyInfo
+	}
+	if bodyJSON, ok := result["body_json"]; ok && bodyJSON != nil {
+		bodyInfo = "JSON，" + bodyInfo
+	}
+	if truncated, ok := result["truncated"].(bool); ok && truncated {
+		bodyInfo += "，已截断"
+	} else {
+		bodyInfo += "，未截断"
+	}
+	lines = append(lines, "响应体："+bodyInfo)
+	if bodyHash, ok := result["body_hash"].(string); ok && bodyHash != "" {
+		lines = append(lines, "内容哈希："+bodyHash)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func requestFailureSummary(request *http.Request, duration any) string {
+	return fmt.Sprintf("HTTP 请求：%s %s\n响应状态：未获取\n请求耗时：%v ms", request.Method, request.URL.String(), duration)
+}
+
+func responseFailureSummary(request *http.Request, response *http.Response, result map[string]any) string {
+	status := fmt.Sprintf("%d", response.StatusCode)
+	if response.Status != "" {
+		status = response.Status
+	}
+	return fmt.Sprintf("HTTP 请求：%s %s\n响应状态：%s\n响应耗时：%v ms\n响应体：读取失败", request.Method, request.URL.String(), status, result["duration_ms"])
 }
 
 func valueString(config map[string]any, key, fallback string) string {

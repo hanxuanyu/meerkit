@@ -152,6 +152,9 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 			eventType = "recovered"
 		}
 	}
+	executionSummary := composeExecutionSummary(observation.Summary, observation.Success && executeErr == nil, duration.Milliseconds(), observation.ErrorCode, observation.ErrorMessage, eventType, evaluation, logic, matchedCount)
+	observation.Summary = executionSummary
+	executionResult["summary"] = executionSummary
 	executionResult["triggered"] = evaluation.State == "true"
 	executionResult["condition_state"] = evaluation.State
 	executionResult["event_type"] = eventType
@@ -181,15 +184,15 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	state.LastRecordID = record.ID
 	state.LastRunAt = finished
 	state.LastSuccess = record.Success
-	state.LastSummary = observation.Summary
+	state.LastSummary = executionSummary
 	if err := r.store.UpdateRuntimeState(ctx, monitor.ID, state); err != nil {
 		return record, err
 	}
 	if r.logger != nil {
-		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", observation.Summary, "error_code", record.ErrorCode)
+		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", executionSummary, "error_code", record.ErrorCode)
 	}
 	if eventType != "none" {
-		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, RecordID: record.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: observation.Summary, CurrentResult: current, ConditionDetail: evaluation.Details}
+		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, RecordID: record.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: executionSummary, CurrentResult: current, ConditionDetail: evaluation.Details}
 		if previousErr == nil {
 			event.PreviousResult = previous.Result
 		}

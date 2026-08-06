@@ -34,6 +34,52 @@ func TestExecuteCapturesJSONResponse(t *testing.T) {
 	}
 }
 
+func TestExecuteSummaryIncludesHTTPResultDetails(t *testing.T) {
+	module := &Module{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusCreated, Status: "201 Created", Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Request-ID": []string{"request-123"},
+		}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: request}, nil
+	})}}
+	config, _ := json.Marshal(map[string]any{"url": "http://test.local/health", "method": "POST", "response_mode": "json", "normalize": "json"})
+
+	observation, err := module.Execute(context.Background(), config)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	for _, expected := range []string{
+		"HTTP 请求：POST http://test.local/health",
+		"响应状态：201 Created",
+		"响应体：JSON，application/json，11 字节，未截断",
+		"内容哈希：",
+	} {
+		if !strings.Contains(observation.Summary, expected) {
+			t.Fatalf("summary does not contain %q:\n%s", expected, observation.Summary)
+		}
+	}
+	if strings.Contains(observation.Summary, "响应正文") || strings.Contains(observation.Summary, "响应头") || strings.Contains(observation.Summary, `{"ok":true}`) {
+		t.Fatalf("summary should omit long response fields:\n%s", observation.Summary)
+	}
+}
+
+func TestResponseSummaryOmitsResponseBodyAndHeaders(t *testing.T) {
+	request, err := http.NewRequest(http.MethodGet, "http://test.local/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := responseSummary(request, &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-ID": []string{"request-123"}}}, map[string]any{
+		"duration_ms": 1, "body_size": 2048, "body_text": "long response body", "body_hash": "hash", "truncated": true,
+	})
+	if strings.Contains(summary, "long response body") || strings.Contains(summary, "响应头") || strings.Contains(summary, "request-123") {
+		t.Fatalf("summary should omit response body and headers:\n%s", summary)
+	}
+	for _, expected := range []string{"响应体：2048 字节，已截断", "内容哈希：hash"} {
+		if !strings.Contains(summary, expected) {
+			t.Fatalf("summary does not contain %q:\n%s", expected, summary)
+		}
+	}
+}
+
 func TestExecuteSupportsHTTPMethods(t *testing.T) {
 	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"} {
 		t.Run(method, func(t *testing.T) {
