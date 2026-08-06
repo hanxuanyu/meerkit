@@ -1,7 +1,13 @@
+let csrfToken = "";
+
+export function setCSRFToken(value) { csrfToken = value || ""; }
+
 export async function api(path, options = {}) {
+	const isForm = options.body instanceof FormData;
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options
+	...options,
+	credentials: "same-origin",
+    headers: { ...(!isForm ? { "Content-Type": "application/json" } : {}), ...(csrfToken && !["GET", "HEAD"].includes(options.method || "GET") ? { "X-CSRF-Token": csrfToken } : {}), ...(options.headers || {}) },
   });
   const raw = response.status === 204 ? "" : await response.text();
   let body = null;
@@ -12,6 +18,7 @@ export async function api(path, options = {}) {
       body = { message: raw };
     }
   }
+	if (response.status === 401) window.dispatchEvent(new CustomEvent("meerkit:unauthorized"));
   if (!response.ok) throw new Error(body?.message || "请求失败");
   return body;
 }

@@ -171,6 +171,7 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	finished := time.Now().UTC()
 	record := core.MonitorRecord{
 		ID: core.NewID(), MonitorID: monitor.ID, StartedAt: started, FinishedAt: finished,
+		ModuleType: monitor.ModuleType, ModuleVersion: descriptor.Version,
 		Success: observation.Success && executeErr == nil, DurationMS: duration.Milliseconds(), ResultSchemaVersion: observation.SchemaVersion,
 		Result: current, ResultHash: resultHash, ConditionState: evaluation.State, EventType: eventType,
 		NotificationResult: map[string]any{}, ErrorCode: observation.ErrorCode, ErrorMessage: observation.ErrorMessage,

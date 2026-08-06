@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"meerkit/internal/core"
+	"github.com/hanxuanyu/meerkit/sdk"
 )
 
 func TestExecuteCapturesJSONResponse(t *testing.T) {
@@ -245,7 +245,7 @@ func TestDescriptorDeclaresMethodDependentBodyParameters(t *testing.T) {
 	if descriptor.ListSummary == nil || len(descriptor.ListSummary.Fields) != 1 || descriptor.ListSummary.Fields[0] != "url" {
 		t.Fatalf("HTTP list summary should use url: %#v", descriptor.ListSummary)
 	}
-	var bodyMode *core.ParameterDescriptor
+	var bodyMode *sdk.ParameterDescriptor
 	for index := range descriptor.Parameters {
 		if descriptor.Parameters[index].Key == "body_mode" {
 			bodyMode = &descriptor.Parameters[index]

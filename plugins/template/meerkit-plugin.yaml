@@ -1,0 +1,11 @@
+schema_version: 1
+id: example.monitor
+name: Example Monitor
+version: 0.1.0
+vendor: Example
+desp: 演示如何使用 Meerkit SDK 实现一个独立监控插件。
+url: https://github.com/hanxuanyu/meerkit
+protocol: {min: 1, max: 1}
+modules:
+  - {type: example, name: Example, version: "1", config_version: "1", result_schema_version: "1"}
+artifacts: []

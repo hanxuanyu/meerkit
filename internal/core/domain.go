@@ -101,16 +101,18 @@ type ModuleListSummaryDescriptor struct {
 }
 
 type ModuleDescriptor struct {
-	Type         string                       `json:"type"`
-	Version      string                       `json:"version"`
-	Name         string                       `json:"name"`
-	Description  string                       `json:"description"`
-	ListSummary  *ModuleListSummaryDescriptor `json:"list_summary,omitempty"`
-	ConfigSchema map[string]any               `json:"config_schema"`
-	Parameters   []ParameterDescriptor        `json:"parameters"`
-	ResultSchema map[string]any               `json:"result_schema"`
-	Fields       []FieldDescriptor            `json:"fields"`
-	ResultSets   []ResultSetDescriptor        `json:"result_sets,omitempty"`
+	Type                string                       `json:"type"`
+	Version             string                       `json:"version"`
+	ConfigVersion       string                       `json:"config_version,omitempty"`
+	ResultSchemaVersion string                       `json:"result_schema_version,omitempty"`
+	Name                string                       `json:"name"`
+	Description         string                       `json:"description"`
+	ListSummary         *ModuleListSummaryDescriptor `json:"list_summary,omitempty"`
+	ConfigSchema        map[string]any               `json:"config_schema"`
+	Parameters          []ParameterDescriptor        `json:"parameters"`
+	ResultSchema        map[string]any               `json:"result_schema"`
+	Fields              []FieldDescriptor            `json:"fields"`
+	ResultSets          []ResultSetDescriptor        `json:"result_sets,omitempty"`
 }
 
 type Observation struct {
@@ -177,6 +179,7 @@ type Monitor struct {
 	Name                   string          `json:"name"`
 	ModuleType             string          `json:"module_type"`
 	ModuleVersion          string          `json:"module_version"`
+	ModuleConfigVersion    string          `json:"module_config_version"`
 	Schedules              []string        `json:"schedules"`
 	Enabled                bool            `json:"enabled"`
 	ModuleConfig           json.RawMessage `json:"module_config"`
@@ -190,6 +193,8 @@ type Monitor struct {
 type MonitorRecord struct {
 	ID                  string         `json:"id"`
 	MonitorID           string         `json:"monitor_id"`
+	ModuleType          string         `json:"module_type"`
+	ModuleVersion       string         `json:"module_version"`
 	StartedAt           time.Time      `json:"started_at"`
 	FinishedAt          time.Time      `json:"finished_at"`
 	Success             bool           `json:"success"`

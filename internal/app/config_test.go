@@ -107,3 +107,29 @@ func TestLoadConfigCreatesDefaultFileWhenMissing(t *testing.T) {
 		t.Fatal("generated config file was not reported in metadata")
 	}
 }
+
+func TestTrustedPluginKeysAreIncludedInConfigMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := "plugins:\n  trusted_keys:\n    release-2026: dGVzdA==\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path})
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	for _, item := range config.Metadata.Items {
+		if item.Path != "plugins.trusted_keys" {
+			continue
+		}
+		keys, ok := item.Value.(map[string]string)
+		if !ok || keys["release-2026"] != "dGVzdA==" {
+			t.Fatalf("trusted key metadata value = %#v", item.Value)
+		}
+		if item.Source != "config_file" {
+			t.Fatalf("trusted key metadata source = %q, want config_file", item.Source)
+		}
+		return
+	}
+	t.Fatal("plugins.trusted_keys is missing from config metadata")
+}

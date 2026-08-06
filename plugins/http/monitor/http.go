@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"meerkit/internal/core"
+	"github.com/hanxuanyu/meerkit/sdk"
 )
 
 const (
@@ -37,10 +37,10 @@ type Module struct {
 
 func New() *Module { return &Module{} }
 
-func (m *Module) Descriptor() core.ModuleDescriptor {
-	return core.ModuleDescriptor{
+func (m *Module) Descriptor() sdk.ModuleDescriptor {
+	return sdk.ModuleDescriptor{
 		Type: "http", Version: "2", Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应内容变化。",
-		ListSummary: &core.ModuleListSummaryDescriptor{Fields: []string{"url"}},
+		ListSummary: &sdk.ModuleListSummaryDescriptor{Fields: []string{"url"}},
 		ConfigSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"url"},
@@ -63,29 +63,29 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 				"max_body_bytes":   map[string]any{"type": "integer", "default": defaultMaxBodyBytes, "minimum": 1024, "maximum": 1048576},
 			},
 		},
-		Parameters: []core.ParameterDescriptor{
-			{Key: "url", Label: "请求 URL", Type: core.ParameterURL, Required: true, Placeholder: "https://example.com/api", Order: 10},
-			{Key: "method", Label: "请求方法", Type: core.ParameterList, Default: "GET", Order: 20, Options: methodOptions()},
-			{Key: "timeout_seconds", Label: "请求超时", Type: core.ParameterDuration, Default: defaultTimeoutSeconds, Minimum: core.Float64(1), Maximum: core.Float64(300), Unit: "秒", Order: 30},
-			{Key: "proxy_url", Label: "HTTP 代理", Type: core.ParameterURL, Order: 40, Placeholder: "http://127.0.0.1:7890", Description: "可选，仅支持 HTTP/HTTPS 代理。"},
-			{Key: "response_mode", Label: "响应解析", Type: core.ParameterList, Default: "auto", Order: 50, Options: []core.ParameterOption{{Value: "auto", Label: "自动"}, {Value: "text", Label: "仅文本"}, {Value: "json", Label: "JSON"}}},
-			{Key: "normalize", Label: "内容规范化", Type: core.ParameterList, Default: "trim", Order: 60, Options: []core.ParameterOption{{Value: "raw", Label: "保留原文"}, {Value: "trim", Label: "去除首尾空白"}, {Value: "json", Label: "规范化 JSON"}}},
-			{Key: "max_body_bytes", Label: "最大响应体大小", Type: core.ParameterInteger, Default: defaultMaxBodyBytes, Minimum: core.Float64(1024), Maximum: core.Float64(1048576), Unit: "字节", Order: 70},
-			{Key: "query", Label: "查询参数", Type: core.ParameterMap, FullWidth: true, Order: 100, Description: "每行一个参数；同名参数可使用逗号分隔值。"},
-			{Key: "headers", Label: "请求头", Type: core.ParameterMap, FullWidth: true, Order: 110, Description: "每行定义一个请求头，键和值都会按原样发送。"},
-			{Key: "body_mode", Label: "请求体类型", Type: core.ParameterList, Default: "none", Order: 200, Options: []core.ParameterOption{{Value: "none", Label: "无请求体"}}, OptionsWhen: []core.ParameterOptionSet{{When: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"), Options: bodyModeOptions()}}, VisibleWhen: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")},
-			{Key: "form_fields", Label: "表单字段", Type: core.ParameterMap, FullWidth: true, Order: 210, Description: "表单模式下每行定义一个字段。", VisibleWhen: bodyModeConditions("form_urlencoded", "multipart_form")},
-			{Key: "json_body", Label: "JSON 请求体", Type: core.ParameterText, FullWidth: true, Format: "json", Rows: 8, Order: 220, Placeholder: "{\n  \"key\": \"value\"\n}", Description: "支持对象、数组和其他合法 JSON 值。", VisibleWhen: bodyModeConditions("raw_json")},
-			{Key: "raw_body", Label: "原始请求体", Type: core.ParameterText, FullWidth: true, Rows: 8, Order: 230, Placeholder: "输入要发送的原始文本内容", VisibleWhen: bodyModeConditions("raw_text")},
-			{Key: "follow_redirects", Label: "跟随重定向", Type: core.ParameterBoolean, Default: true, Order: 300, Description: "自动跟随 3xx 重定向响应。"},
-			{Key: "verify_tls", Label: "校验 TLS 证书", Type: core.ParameterBoolean, Default: true, Order: 310, Description: "校验 HTTPS 服务端证书；关闭后允许不受信任的证书。"},
-			{Key: "max_redirects", Label: "最大重定向次数", Type: core.ParameterInteger, Default: defaultMaxRedirects, Minimum: core.Float64(1), Maximum: core.Float64(50), Order: 320, VisibleWhen: equalsCondition("follow_redirects", true)},
+		Parameters: []sdk.ParameterDescriptor{
+			{Key: "url", Label: "请求 URL", Type: sdk.ParameterURL, Required: true, Placeholder: "https://example.com/api", Order: 10},
+			{Key: "method", Label: "请求方法", Type: sdk.ParameterList, Default: "GET", Order: 20, Options: methodOptions()},
+			{Key: "timeout_seconds", Label: "请求超时", Type: sdk.ParameterDuration, Default: defaultTimeoutSeconds, Minimum: sdk.Float64(1), Maximum: sdk.Float64(300), Unit: "秒", Order: 30},
+			{Key: "proxy_url", Label: "HTTP 代理", Type: sdk.ParameterURL, Order: 40, Placeholder: "http://127.0.0.1:7890", Description: "可选，仅支持 HTTP/HTTPS 代理。"},
+			{Key: "response_mode", Label: "响应解析", Type: sdk.ParameterList, Default: "auto", Order: 50, Options: []sdk.ParameterOption{{Value: "auto", Label: "自动"}, {Value: "text", Label: "仅文本"}, {Value: "json", Label: "JSON"}}},
+			{Key: "normalize", Label: "内容规范化", Type: sdk.ParameterList, Default: "trim", Order: 60, Options: []sdk.ParameterOption{{Value: "raw", Label: "保留原文"}, {Value: "trim", Label: "去除首尾空白"}, {Value: "json", Label: "规范化 JSON"}}},
+			{Key: "max_body_bytes", Label: "最大响应体大小", Type: sdk.ParameterInteger, Default: defaultMaxBodyBytes, Minimum: sdk.Float64(1024), Maximum: sdk.Float64(1048576), Unit: "字节", Order: 70},
+			{Key: "query", Label: "查询参数", Type: sdk.ParameterMap, FullWidth: true, Order: 100, Description: "每行一个参数；同名参数可使用逗号分隔值。"},
+			{Key: "headers", Label: "请求头", Type: sdk.ParameterMap, FullWidth: true, Order: 110, Description: "每行定义一个请求头，键和值都会按原样发送。"},
+			{Key: "body_mode", Label: "请求体类型", Type: sdk.ParameterList, Default: "none", Order: 200, Options: []sdk.ParameterOption{{Value: "none", Label: "无请求体"}}, OptionsWhen: []sdk.ParameterOptionSet{{When: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"), Options: bodyModeOptions()}}, VisibleWhen: inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")},
+			{Key: "form_fields", Label: "表单字段", Type: sdk.ParameterMap, FullWidth: true, Order: 210, Description: "表单模式下每行定义一个字段。", VisibleWhen: bodyModeConditions("form_urlencoded", "multipart_form")},
+			{Key: "json_body", Label: "JSON 请求体", Type: sdk.ParameterText, FullWidth: true, Format: "json", Rows: 8, Order: 220, Placeholder: "{\n  \"key\": \"value\"\n}", Description: "支持对象、数组和其他合法 JSON 值。", VisibleWhen: bodyModeConditions("raw_json")},
+			{Key: "raw_body", Label: "原始请求体", Type: sdk.ParameterText, FullWidth: true, Rows: 8, Order: 230, Placeholder: "输入要发送的原始文本内容", VisibleWhen: bodyModeConditions("raw_text")},
+			{Key: "follow_redirects", Label: "跟随重定向", Type: sdk.ParameterBoolean, Default: true, Order: 300, Description: "自动跟随 3xx 重定向响应。"},
+			{Key: "verify_tls", Label: "校验 TLS 证书", Type: sdk.ParameterBoolean, Default: true, Order: 310, Description: "校验 HTTPS 服务端证书；关闭后允许不受信任的证书。"},
+			{Key: "max_redirects", Label: "最大重定向次数", Type: sdk.ParameterInteger, Default: defaultMaxRedirects, Minimum: sdk.Float64(1), Maximum: sdk.Float64(50), Order: 320, VisibleWhen: equalsCondition("follow_redirects", true)},
 		},
 		ResultSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"success": map[string]any{"type": "boolean"}, "status_code": map[string]any{"type": "integer"}, "duration_ms": map[string]any{"type": "number"}, "response_headers": map[string]any{"type": "object"},
 			"body_text": map[string]any{"type": "string"}, "body_json": map[string]any{}, "body_hash": map[string]any{"type": "string"}, "body_size": map[string]any{"type": "integer"}, "truncated": map[string]any{"type": "boolean"},
 		}},
-		Fields: []core.FieldDescriptor{
+		Fields: []sdk.FieldDescriptor{
 			{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false"}},
 			{Name: "status_code", Label: "状态码", Type: "number", Operators: []string{"equals", "not_equals", "gt", "gte", "lt", "lte", "changed"}},
 			{Name: "duration_ms", Label: "响应耗时(ms)", Type: "number", Operators: []string{"gt", "gte", "lt", "lte", "changed"}},
@@ -93,8 +93,8 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 			{Name: "body_json", Label: "响应 JSON", Type: "json", Path: true, Operators: []string{"equals", "not_equals", "contains", "gt", "gte", "lt", "lte", "changed"}},
 			{Name: "body_hash", Label: "内容哈希", Type: "string", Operators: []string{"equals", "not_equals", "changed"}},
 		},
-		ResultSets: []core.ResultSetDescriptor{{
-			Key: "response", Label: "HTTP 响应", Description: "本次 HTTP 请求得到的响应与解析结果。", Fields: []core.ResultFieldDescriptor{
+		ResultSets: []sdk.ResultSetDescriptor{{
+			Key: "response", Label: "HTTP 响应", Description: "本次 HTTP 请求得到的响应与解析结果。", Fields: []sdk.ResultFieldDescriptor{
 				{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
 				{Name: "status_code", Label: "状态码", Type: "number", Operators: []string{"equals", "not_equals", "gt", "gte", "lt", "lte", "changed"}},
 				{Name: "duration_ms", Label: "响应耗时", Description: "请求完成所需的毫秒数。", Type: "number", Unit: "ms", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
@@ -109,29 +109,29 @@ func (m *Module) Descriptor() core.ModuleDescriptor {
 	}
 }
 
-func methodOptions() []core.ParameterOption {
-	return []core.ParameterOption{{Value: "GET", Label: "GET"}, {Value: "HEAD", Label: "HEAD"}, {Value: "POST", Label: "POST"}, {Value: "PUT", Label: "PUT"}, {Value: "PATCH", Label: "PATCH"}, {Value: "DELETE", Label: "DELETE"}, {Value: "OPTIONS", Label: "OPTIONS"}, {Value: "TRACE", Label: "TRACE"}, {Value: "CONNECT", Label: "CONNECT"}}
+func methodOptions() []sdk.ParameterOption {
+	return []sdk.ParameterOption{{Value: "GET", Label: "GET"}, {Value: "HEAD", Label: "HEAD"}, {Value: "POST", Label: "POST"}, {Value: "PUT", Label: "PUT"}, {Value: "PATCH", Label: "PATCH"}, {Value: "DELETE", Label: "DELETE"}, {Value: "OPTIONS", Label: "OPTIONS"}, {Value: "TRACE", Label: "TRACE"}, {Value: "CONNECT", Label: "CONNECT"}}
 }
 
-func bodyModeOptions() []core.ParameterOption {
-	return []core.ParameterOption{{Value: "none", Label: "无请求体"}, {Value: "form_urlencoded", Label: "表单（URL 编码）"}, {Value: "multipart_form", Label: "表单（Multipart）"}, {Value: "raw_json", Label: "Raw JSON"}, {Value: "raw_text", Label: "Raw 文本"}}
+func bodyModeOptions() []sdk.ParameterOption {
+	return []sdk.ParameterOption{{Value: "none", Label: "无请求体"}, {Value: "form_urlencoded", Label: "表单（URL 编码）"}, {Value: "multipart_form", Label: "表单（Multipart）"}, {Value: "raw_json", Label: "Raw JSON"}, {Value: "raw_text", Label: "Raw 文本"}}
 }
 
-func equalsCondition(field string, value any) []core.ParameterCondition {
-	return []core.ParameterCondition{{Field: field, Operator: "equals", Value: value}}
+func equalsCondition(field string, value any) []sdk.ParameterCondition {
+	return []sdk.ParameterCondition{{Field: field, Operator: "equals", Value: value}}
 }
 
-func inCondition(field string, values ...any) []core.ParameterCondition {
-	return []core.ParameterCondition{{Field: field, Operator: "in", Value: values}}
+func inCondition(field string, values ...any) []sdk.ParameterCondition {
+	return []sdk.ParameterCondition{{Field: field, Operator: "in", Value: values}}
 }
 
-func bodyModeConditions(modes ...string) []core.ParameterCondition {
+func bodyModeConditions(modes ...string) []sdk.ParameterCondition {
 	conditions := inCondition("method", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 	values := make([]any, 0, len(modes))
 	for _, mode := range modes {
 		values = append(values, mode)
 	}
-	return append(conditions, core.ParameterCondition{Field: "body_mode", Operator: "in", Value: values})
+	return append(conditions, sdk.ParameterCondition{Field: "body_mode", Operator: "in", Value: values})
 }
 
 func (m *Module) ValidateConfig(raw json.RawMessage) error {
@@ -194,7 +194,7 @@ func (m *Module) ValidateConfig(raw json.RawMessage) error {
 	return nil
 }
 
-func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observation, error) {
+func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observation, error) {
 	var config map[string]any
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return failedObservation(), err
@@ -224,14 +224,14 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 	response, err := client.Do(request)
 	if err != nil {
 		result := map[string]any{"success": false, "status_code": 0, "duration_ms": time.Since(started).Milliseconds()}
-		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
+		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
 	}
 	defer response.Body.Close()
 	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if readErr != nil {
 		result := map[string]any{"success": false, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds()}
-		return core.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
+		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
 	}
 	truncated := int64(len(data)) > maxBytes
 	if truncated {
@@ -246,7 +246,7 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (core.Observa
 			result["body_json"] = parsed
 		}
 	}
-	return core.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
+	return sdk.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
 }
 
 func copyMap(source map[string]any) map[string]any {
@@ -394,8 +394,8 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-func failedObservation() core.Observation {
-	return core.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false}, Summary: "HTTP 请求未执行"}
+func failedObservation() sdk.Observation {
+	return sdk.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false}, Summary: "HTTP 请求未执行"}
 }
 
 func responseSummary(request *http.Request, response *http.Response, result map[string]any) string {

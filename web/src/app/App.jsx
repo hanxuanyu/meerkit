@@ -13,6 +13,7 @@ import { MonitorsPage } from "../pages/MonitorsPage";
 import { NotificationsPage } from "../pages/NotificationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { PluginsPage } from "../pages/PluginsPage";
 import { AppOverlays } from "./AppOverlays";
 import { pathForRoute, routeFromPath } from "./routes";
 import { useMobileShell } from "./useMobileShell";
@@ -48,6 +49,15 @@ export function App() {
     if (tone === "error") toast.error(message);
     else toast.success(message);
   }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await api("/api/v1/auth/logout", { method: "POST" });
+      window.dispatchEvent(new CustomEvent("meerkit:unauthorized"));
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }, [notify]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -267,6 +277,8 @@ export function App() {
         ? <NotificationCenterPage refreshVersion={inboxVersion} initialNotificationID={routeNotificationID} onNotificationRouteChange={changeNotificationRoute} onOpenExecution={openExecution} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onNotificationsDeleted={handleNotificationsDeleted} unreadCount={unreadCount} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />
         : activePage === "notifications"
           ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
+          : activePage === "plugins"
+            ? <PluginsPage notify={notify} />
           : activePage.startsWith("monitor-details:")
             ? recordTabs[activePage] ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} channels={channels} initialRecordID={routeRecordID} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
             : <SettingsPage />;
@@ -279,5 +291,5 @@ export function App() {
     deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
   />;
 
-  return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={closeMobileSidebar} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
+  return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={closeMobileSidebar} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onLogout={() => { void logout(); }} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
 }

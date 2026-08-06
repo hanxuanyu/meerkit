@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -29,7 +28,7 @@ type configDefinition struct {
 	defaultVal  func(Config) any
 }
 
-func buildConfigMetadata(v *viper.Viper, flags *pflag.FlagSet, config Config) ConfigMetadata {
+func buildConfigMetadata(v *viper.Viper, changedFlags map[string]bool, config Config) ConfigMetadata {
 	defaults := DefaultConfig()
 	items := make([]ConfigItem, 0, len(configDefinitions()))
 	for _, definition := range configDefinitions() {
@@ -40,7 +39,7 @@ func buildConfigMetadata(v *viper.Viper, flags *pflag.FlagSet, config Config) Co
 			Default:     definition.defaultVal(defaults),
 			Source:      "default",
 		}
-		if definition.flag != "" && flags.Changed(definition.flag) {
+		if definition.flag != "" && changedFlags[definition.flag] {
 			item.Source = "command_line"
 		} else if definition.environment != "" {
 			if _, ok := os.LookupEnv(definition.environment); ok {
@@ -85,5 +84,6 @@ func configDefinitions() []configDefinition {
 		value("logging.file.access.filename", "MEERKIT_LOGGING__FILE__ACCESS__FILENAME", "access-log-filename", "HTTP access 日志文件名。", func(c Config) any { return c.Logging.File.Access.Filename }, func(c Config) any { return c.Logging.File.Access.Filename }),
 		value("security.session_ttl", "MEERKIT_SECURITY__SESSION_TTL", "", "管理会话的有效期。", func(c Config) any { return c.Security.SessionTTL }, func(c Config) any { return c.Security.SessionTTL }),
 		value("security.master_key_file", "MEERKIT_SECURITY__MASTER_KEY_FILE", "", "主密钥文件路径。", func(c Config) any { return c.Security.MasterKeyFile }, func(c Config) any { return c.Security.MasterKeyFile }),
+		value("plugins.trusted_keys", "", "", "可信插件签名公钥。键为签名 key ID，值为 Base64 编码的 Ed25519 公钥；修改后需重启服务。", func(c Config) any { return c.Plugins.TrustedKeys }, func(c Config) any { return c.Plugins.TrustedKeys }),
 	}
 }

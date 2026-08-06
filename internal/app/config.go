@@ -21,6 +21,7 @@ type Config struct {
 	Scheduler SchedulerConfig `yaml:"scheduler" mapstructure:"scheduler"`
 	Logging   LoggingConfig   `yaml:"logging" mapstructure:"logging"`
 	Security  SecurityConfig  `yaml:"security" mapstructure:"security"`
+	Plugins   PluginConfig    `yaml:"plugins" mapstructure:"plugins"`
 	Metadata  ConfigMetadata  `yaml:"-" mapstructure:"-"`
 }
 
@@ -76,6 +77,18 @@ type SecurityConfig struct {
 	MasterKeyFile string `yaml:"master_key_file" mapstructure:"master_key_file"`
 }
 
+type PluginConfig struct {
+	TrustedKeys map[string]string `yaml:"trusted_keys" mapstructure:"trusted_keys"`
+}
+
+type ConfigOptions struct {
+	ConfigFile    string
+	CreateDefault bool
+	Listen        string
+	Overrides     map[string]any
+	ChangedFlags  map[string]bool
+}
+
 func DefaultConfig() Config {
 	return Config{
 		Server:    ServerConfig{Address: "0.0.0.0", Port: 8080},
@@ -90,27 +103,24 @@ func DefaultConfig() Config {
 				Access: AccessFileConfig{Enabled: true, Filename: "meerkit-access.log"},
 			},
 		},
-		Security: SecurityConfig{SessionTTL: "24h", MasterKeyFile: "./data/master.key"},
+		Security: SecurityConfig{SessionTTL: "720h", MasterKeyFile: "./data/master.key"},
+		Plugins:  PluginConfig{TrustedKeys: map[string]string{}},
 	}
 }
 
+// LoadConfig is kept as a compatibility wrapper for package callers. New commands
+// parse flags with Cobra and call LoadConfigWithOptions directly.
 func LoadConfig(args []string) (Config, error) {
-	v := viper.New()
-	setDefaults(v)
-	if err := bindEnvironment(v); err != nil {
-		return Config{}, err
-	}
-
 	flags := pflag.NewFlagSet("meerkit", pflag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", "", "path to config.yaml")
-	listen := flags.String("listen", "", "listen address, for example 0.0.0.0:8080")
+	listen := flags.String("listen", "", "listen address")
 	flags.String("data-dir", "", "SQLite data directory")
-	flags.String("retention", "", "record retention, for example 30d")
+	flags.String("retention", "", "record retention")
 	flags.String("timezone", "", "scheduler timezone")
 	flags.Int("max-concurrency", 0, "maximum concurrent checks")
 	flags.String("log-level", "", "log level")
-	flags.String("log-format", "", "log format: text or json")
+	flags.String("log-format", "", "log format")
 	flags.String("log-dir", "", "log file directory")
 	flags.String("log-filename", "", "log file name")
 	flags.Bool("log-console", false, "enable business logging on console")
@@ -121,8 +131,36 @@ func LoadConfig(args []string) (Config, error) {
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
+	options := ConfigOptions{ConfigFile: *configPath, CreateDefault: true, Listen: *listen, Overrides: map[string]any{}, ChangedFlags: map[string]bool{}}
+	bindings := map[string]string{"storage.data_dir": "data-dir", "storage.retention": "retention", "scheduler.timezone": "timezone", "scheduler.max_concurrency": "max-concurrency", "logging.level": "log-level", "logging.format": "log-format", "logging.file.directory": "log-dir", "logging.file.filename": "log-filename", "logging.console.enabled": "log-console", "logging.console.access": "log-console-access", "logging.file.enabled": "log-file-enabled", "logging.file.access.filename": "access-log-filename", "logging.file.access.enabled": "access-log-file-enabled"}
+	for key, name := range bindings {
+		if flags.Changed(name) {
+			options.ChangedFlags[name] = true
+			value, _ := flags.GetString(name)
+			if flag := flags.Lookup(name); flag != nil && flag.Value.Type() == "bool" {
+				boolValue, _ := flags.GetBool(name)
+				options.Overrides[key] = boolValue
+			} else if flag != nil && flag.Value.Type() == "int" {
+				intValue, _ := flags.GetInt(name)
+				options.Overrides[key] = intValue
+			} else {
+				options.Overrides[key] = value
+			}
+		}
+	}
+	if flags.Changed("listen") {
+		options.ChangedFlags["listen"] = true
+	}
+	return LoadConfigWithOptions(options)
+}
 
-	path := *configPath
+func LoadConfigWithOptions(options ConfigOptions) (Config, error) {
+	v := viper.New()
+	setDefaults(v)
+	if err := bindEnvironment(v); err != nil {
+		return Config{}, err
+	}
+	path := options.ConfigFile
 	if path == "" {
 		path = os.Getenv("MEERKIT_CONFIG_FILE")
 	}
@@ -137,21 +175,24 @@ func LoadConfig(args []string) (Config, error) {
 		if !missing || explicitConfig {
 			return Config{}, fmt.Errorf("read config %s: %w", pathOrDefault(path), err)
 		}
-		if err := writeDefaultConfig(path); err != nil {
-			return Config{}, fmt.Errorf("create default config %s: %w", path, err)
-		}
-		if err := v.ReadInConfig(); err != nil {
-			return Config{}, fmt.Errorf("read generated config %s: %w", path, err)
+		if options.CreateDefault {
+			if err := writeDefaultConfig(path); err != nil {
+				return Config{}, fmt.Errorf("create default config %s: %w", path, err)
+			}
+			if err := v.ReadInConfig(); err != nil {
+				return Config{}, fmt.Errorf("read generated config %s: %w", path, err)
+			}
 		}
 	}
-
-	bindFlags(v, flags)
+	for key, value := range options.Overrides {
+		v.Set(key, value)
+	}
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
-	if *listen != "" {
-		host, port, err := splitListen(*listen)
+	if options.Listen != "" {
+		host, port, err := splitListen(options.Listen)
 		if err != nil {
 			return Config{}, err
 		}
@@ -161,7 +202,7 @@ func LoadConfig(args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	normalized.Metadata = buildConfigMetadata(v, flags, normalized)
+	normalized.Metadata = buildConfigMetadata(v, options.ChangedFlags, normalized)
 	return normalized, nil
 }
 
@@ -192,6 +233,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file.access.filename", defaults.Logging.File.Access.Filename)
 	v.SetDefault("security.session_ttl", defaults.Security.SessionTTL)
 	v.SetDefault("security.master_key_file", defaults.Security.MasterKeyFile)
+	v.SetDefault("plugins.trusted_keys", defaults.Plugins.TrustedKeys)
 }
 
 func bindEnvironment(v *viper.Viper) error {

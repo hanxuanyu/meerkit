@@ -1,0 +1,9 @@
+go 1.26
+
+use (
+	.
+	./plugins/http
+	./plugins/tcp
+	./plugins/template
+	./sdk
+)

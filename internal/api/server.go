@@ -16,10 +16,12 @@ import (
 	"github.com/gorilla/websocket"
 
 	"meerkit/internal/app"
+	"meerkit/internal/auth"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
 	"meerkit/internal/notification/inapp"
+	pluginruntime "meerkit/internal/plugin"
 	runtimeapp "meerkit/internal/runtime"
 	"meerkit/internal/store"
 )
@@ -33,10 +35,13 @@ type APIServer struct {
 	config       app.Config
 	logger       *slog.Logger
 	accessLogger *slog.Logger
+	plugins      *pluginruntime.Manager
+	auth         *auth.Service
+	loginLimiter *loginLimiter
 }
 
-func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
-	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, inAppHub: inAppHub, config: config, logger: logger, accessLogger: accessLogger}
+func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
+	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, inAppHub: inAppHub, plugins: plugins, auth: authService, loginLimiter: newLoginLimiter(), config: config, logger: logger, accessLogger: accessLogger}
 }
 
 func (a *APIServer) Router() http.Handler {
@@ -57,6 +62,22 @@ func (a *APIServer) Router() http.Handler {
 	})
 
 	api := router.Group("/api/v1")
+	api.GET("/auth/status", a.authStatus)
+	api.POST("/auth/setup", a.authSetup)
+	api.POST("/auth/login", a.authLogin)
+	api.Use(a.requireAuth())
+	api.POST("/auth/logout", a.authLogout)
+	api.GET("/auth/session", a.authSession)
+	api.GET("/plugins", a.listPlugins)
+	api.POST("/plugins/import", a.importPlugin)
+	api.POST("/plugins/scan", a.scanPlugins)
+	api.GET("/plugins/:id/:version", a.pluginDetails)
+	api.POST("/plugins/:id/:version/trust", a.trustPluginPublisher)
+	api.POST("/plugins/:id/:version/enable", a.enablePlugin)
+	api.POST("/plugins/:id/:version/disable", a.disablePlugin)
+	api.DELETE("/plugins/:id/:version", a.uninstallPlugin)
+	api.GET("/plugins/:id/:version/export", a.exportPlugin)
+	api.GET("/plugins/:id/:version/logs", a.pluginLogs)
 	api.GET("/modules", legacyParts(a.handleModules))
 	api.GET("/modules/:type", func(c *gin.Context) { a.handleModules(c.Writer, c.Request, []string{c.Param("type")}) })
 	api.GET("/notifiers", legacy(a.handleNotifiers))
@@ -545,7 +566,14 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 					writeError(w, http.StatusNotFound, "record_not_found", "monitor record not found")
 					return
 				}
-				writeJSON(w, http.StatusOK, record)
+				descriptor, descriptorErr := a.store.GetDescriptorSnapshot(r.Context(), record.ModuleType, record.ModuleVersion)
+				if descriptorErr != nil {
+					descriptor, _ = a.modules.Descriptor(record.ModuleType)
+				}
+				writeJSON(w, http.StatusOK, struct {
+					core.MonitorRecord
+					Descriptor core.ModuleDescriptor `json:"descriptor"`
+				}{MonitorRecord: record, Descriptor: descriptor})
 				return
 			}
 			records, err := a.store.ListRecordsPage(r.Context(), id, store.RecordListOptions{
@@ -747,7 +775,12 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		enabled = *payload.Enabled
 	}
 	now := time.Now().UTC()
-	monitor := core.Monitor{ID: core.NewID(), Name: payload.Name, ModuleType: payload.ModuleType, ModuleVersion: module.Descriptor().Version, Schedules: payload.Schedules, Enabled: enabled, ModuleConfig: moduleConfig, ConditionConfig: conditionConfig, NotificationChannelIDs: payload.NotificationChannelIDs, RuntimeState: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
+	descriptor := module.Descriptor()
+	configVersion := descriptor.ConfigVersion
+	if configVersion == "" {
+		configVersion = "1"
+	}
+	monitor := core.Monitor{ID: core.NewID(), Name: payload.Name, ModuleType: payload.ModuleType, ModuleVersion: descriptor.Version, ModuleConfigVersion: configVersion, Schedules: payload.Schedules, Enabled: enabled, ModuleConfig: moduleConfig, ConditionConfig: conditionConfig, NotificationChannelIDs: payload.NotificationChannelIDs, RuntimeState: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
 	if err := a.store.CreateMonitor(r.Context(), monitor); err != nil {
 		writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
@@ -775,6 +808,10 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 			return
 		}
 		current.ModuleVersion = module.Descriptor().Version
+		current.ModuleConfigVersion = module.Descriptor().ConfigVersion
+		if current.ModuleConfigVersion == "" {
+			current.ModuleConfigVersion = "1"
+		}
 	}
 	module, ok := a.modules.Get(current.ModuleType)
 	if !ok {

@@ -29,5 +29,7 @@ logging:
             enabled: true
             filename: meerkit-access.log
 security:
-    session_ttl: 24h
+    session_ttl: 720h
     master_key_file: ./data/master.key
+plugins:
+    trusted_keys: {}

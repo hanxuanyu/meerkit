@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS monitors (
   name TEXT NOT NULL,
   module_type TEXT NOT NULL,
   module_version TEXT NOT NULL,
+  module_config_version TEXT NOT NULL DEFAULT '1',
   schedules_json TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   module_config_json TEXT NOT NULL,
@@ -88,6 +89,8 @@ CREATE TABLE IF NOT EXISTS monitors (
 CREATE TABLE IF NOT EXISTS monitor_records (
   id TEXT PRIMARY KEY,
   monitor_id TEXT NOT NULL,
+  module_type TEXT NOT NULL DEFAULT '',
+  module_version TEXT NOT NULL DEFAULT '',
   started_at TEXT NOT NULL,
   finished_at TEXT NOT NULL,
   success INTEGER NOT NULL,
@@ -127,6 +130,64 @@ CREATE TABLE IF NOT EXISTS in_app_notifications (
 CREATE INDEX IF NOT EXISTS idx_in_app_notifications_created ON in_app_notifications(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_in_app_notifications_unread ON in_app_notifications(is_read, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_channels_builtin_inapp ON notification_channels(notifier_type) WHERE notifier_type='inapp';
+CREATE TABLE IF NOT EXISTS plugins (
+  id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  name TEXT NOT NULL,
+  vendor TEXT NOT NULL,
+  desp TEXT NOT NULL,
+  url TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  verified INTEGER NOT NULL DEFAULT 0,
+  official INTEGER NOT NULL DEFAULT 0,
+  trust_state TEXT NOT NULL DEFAULT 'unsigned',
+  signer_key_id TEXT NOT NULL DEFAULT '',
+  signer_fingerprint TEXT NOT NULL DEFAULT '',
+  signer_public_key TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'installed',
+  error TEXT NOT NULL DEFAULT '',
+  package_path TEXT NOT NULL,
+  binary_path TEXT NOT NULL,
+  package_name TEXT NOT NULL,
+  package_sha256 TEXT NOT NULL,
+  readme TEXT NOT NULL DEFAULT '',
+  manifest_json TEXT NOT NULL,
+  modules_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_plugins_signer_fingerprint ON plugins(signer_fingerprint);
+CREATE TABLE IF NOT EXISTS plugin_trusted_signers (
+  fingerprint TEXT PRIMARY KEY,
+  key_id TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  vendor TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS module_descriptor_snapshots (
+  module_type TEXT NOT NULL,
+  module_version TEXT NOT NULL,
+  descriptor_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(module_type, module_version)
+);
+CREATE TABLE IF NOT EXISTS admin_credentials (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  key_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  csrf_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at);
 INSERT OR IGNORE INTO notification_channels(id,name,notifier_type,enabled,config_json,created_at,updated_at)
 VALUES('builtin-inapp','站内通知','inapp',1,'{"title_template":"{{monitor.name}} · {{event.type}}","body_template":"{{event.summary}}"}',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'));`)
 	return err
@@ -137,14 +198,20 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *Store) CreateMonitor(ctx context.Context, monitor core.Monitor) error {
+	if monitor.ModuleConfigVersion == "" {
+		monitor.ModuleConfigVersion = "1"
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO monitors
-(id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, monitor.ID, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.CreatedAt.UTC().Format(time.RFC3339Nano), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano))
+(id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, monitor.ID, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.ModuleConfigVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.CreatedAt.UTC().Format(time.RFC3339Nano), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) UpdateMonitor(ctx context.Context, monitor core.Monitor) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE monitors SET name=?,module_type=?,module_version=?,schedules_json=?,enabled=?,module_config_json=?,condition_config_json=?,notification_channel_ids_json=?,runtime_state_json=?,updated_at=? WHERE id=?`, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano), monitor.ID)
+	if monitor.ModuleConfigVersion == "" {
+		monitor.ModuleConfigVersion = "1"
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE monitors SET name=?,module_type=?,module_version=?,module_config_version=?,schedules_json=?,enabled=?,module_config_json=?,condition_config_json=?,notification_channel_ids_json=?,runtime_state_json=?,updated_at=? WHERE id=?`, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.ModuleConfigVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano), monitor.ID)
 	return err
 }
 
@@ -163,12 +230,12 @@ func (s *Store) DeleteMonitor(ctx context.Context, id string) error {
 }
 
 func (s *Store) GetMonitor(ctx context.Context, id string) (core.Monitor, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE id=?`, id)
 	return scanMonitor(row)
 }
 
 func (s *Store) ListMonitors(ctx context.Context) ([]core.Monitor, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +284,7 @@ func (s *Store) ListMonitorsPage(ctx context.Context, options MonitorListOptions
 	}
 	result := PageResult[core.Monitor]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.Monitor{}}
 	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return PageResult[core.Monitor]{}, err
 	}
@@ -240,7 +307,7 @@ func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) 
 	var enabled int
 	var schedules, moduleConfig, conditionConfig, channelIDs, runtimeState string
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&monitor.ID, &monitor.Name, &monitor.ModuleType, &monitor.ModuleVersion, &schedules, &enabled, &moduleConfig, &conditionConfig, &channelIDs, &runtimeState, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&monitor.ID, &monitor.Name, &monitor.ModuleType, &monitor.ModuleVersion, &monitor.ModuleConfigVersion, &schedules, &enabled, &moduleConfig, &conditionConfig, &channelIDs, &runtimeState, &createdAt, &updatedAt); err != nil {
 		return monitor, err
 	}
 	monitor.Enabled = enabled == 1
@@ -256,8 +323,8 @@ func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) 
 
 func (s *Store) AddRecord(ctx context.Context, record core.MonitorRecord) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_records
-(id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.MonitorID, record.StartedAt.UTC().Format(time.RFC3339Nano), record.FinishedAt.UTC().Format(time.RFC3339Nano), boolInt(record.Success), record.DurationMS, record.ResultSchemaVersion, jsonString(record.Result), record.ResultHash, record.ConditionState, record.EventType, jsonString(record.NotificationResult), record.ErrorCode, record.ErrorMessage)
+(id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.MonitorID, record.ModuleType, record.ModuleVersion, record.StartedAt.UTC().Format(time.RFC3339Nano), record.FinishedAt.UTC().Format(time.RFC3339Nano), boolInt(record.Success), record.DurationMS, record.ResultSchemaVersion, jsonString(record.Result), record.ResultHash, record.ConditionState, record.EventType, jsonString(record.NotificationResult), record.ErrorCode, record.ErrorMessage)
 	return err
 }
 
@@ -272,7 +339,7 @@ func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([
 }
 
 func (s *Store) GetRecord(ctx context.Context, monitorID, recordID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
+	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
 	return scanRecord(row)
 }
 
@@ -303,7 +370,7 @@ func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options R
 	}
 	result := PageResult[core.MonitorRecord]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.MonitorRecord{}}
 	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return PageResult[core.MonitorRecord]{}, err
 	}
@@ -319,7 +386,7 @@ func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options R
 }
 
 func (s *Store) LatestSuccessfulRecord(ctx context.Context, monitorID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND success=1 ORDER BY started_at DESC LIMIT 1`, monitorID)
+	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND success=1 ORDER BY started_at DESC LIMIT 1`, monitorID)
 	return scanRecord(row)
 }
 
@@ -328,7 +395,7 @@ func scanRecord(scanner interface{ Scan(...any) error }) (core.MonitorRecord, er
 	var success int
 	var resultJSON, notificationJSON string
 	var startedAt, finishedAt string
-	if err := scanner.Scan(&record.ID, &record.MonitorID, &startedAt, &finishedAt, &success, &record.DurationMS, &record.ResultSchemaVersion, &resultJSON, &record.ResultHash, &record.ConditionState, &record.EventType, &notificationJSON, &record.ErrorCode, &record.ErrorMessage); err != nil {
+	if err := scanner.Scan(&record.ID, &record.MonitorID, &record.ModuleType, &record.ModuleVersion, &startedAt, &finishedAt, &success, &record.DurationMS, &record.ResultSchemaVersion, &resultJSON, &record.ResultHash, &record.ConditionState, &record.EventType, &notificationJSON, &record.ErrorCode, &record.ErrorMessage); err != nil {
 		return record, err
 	}
 	record.Success = success == 1
