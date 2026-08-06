@@ -37,11 +37,14 @@ type ImportOptions struct {
 }
 
 const (
-	trustStateOfficial  = "official"
-	trustStateTrusted   = "trusted"
-	trustStateUntrusted = "untrusted"
-	trustStateUnsigned  = "unsigned"
+	trustStateOfficial    = "official"
+	trustStateTrusted     = "trusted"
+	trustStateUntrusted   = "untrusted"
+	trustStateUnsigned    = "unsigned"
+	trustStateDevelopment = "development"
 )
+
+var ErrNoDevelopmentPlugins = errors.New("no development plugins found")
 
 type signatureInfo struct {
 	Signed      bool
@@ -63,19 +66,24 @@ type process struct {
 	logFile *os.File
 }
 type Manager struct {
-	store       *store.Store
-	registry    *monitor.Registry
-	root        string
-	logger      *slog.Logger
-	mu          sync.Mutex
-	processes   map[string]*process
-	watcher     *fsnotify.Watcher
-	watchCancel context.CancelFunc
+	store              *store.Store
+	registry           *monitor.Registry
+	root               string
+	logger             *slog.Logger
+	mu                 sync.Mutex
+	processes          map[string]*process
+	watcher            *fsnotify.Watcher
+	watchCancel        context.CancelFunc
+	developmentBuilder func(context.Context, string, string) error
 }
 
 func NewManager(database *store.Store, registry *monitor.Registry, options ManagerOptions) (*Manager, error) {
-	manager := &Manager{store: database, registry: registry, root: filepath.Join(options.DataDir, "plugins"), logger: options.Logger, processes: make(map[string]*process)}
-	for _, directory := range []string{"inbox", "staging", "packages", "installed", "rejected", "logs"} {
+	dataDir, err := filepath.Abs(options.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve plugin data directory: %w", err)
+	}
+	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
+	for _, directory := range []string{"inbox", "staging", "packages", "installed", "development", "rejected", "logs"} {
 		if err := os.MkdirAll(filepath.Join(manager.root, directory), 0o750); err != nil {
 			return nil, err
 		}
@@ -436,6 +444,9 @@ func (m *Manager) Export(ctx context.Context, id, version string) (string, error
 	if err != nil {
 		return "", err
 	}
+	if value.TrustState == trustStateDevelopment || strings.TrimSpace(value.PackagePath) == "" {
+		return "", errors.New("development source plugins do not have an exportable package")
+	}
 	return value.PackagePath, nil
 }
 func (m *Manager) Logs(id, version string, maximum int64) ([]byte, error) {
@@ -600,10 +611,6 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) SeedOfficial(ctx context.Context, directory string) error {
-	count, err := m.store.CountPlugins(ctx)
-	if err != nil || count > 0 {
-		return err
-	}
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -611,13 +618,173 @@ func (m *Manager) SeedOfficial(ctx context.Context, directory string) error {
 	if err != nil {
 		return err
 	}
+	installed, err := m.store.ListPlugins(ctx)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]struct{}, len(installed))
+	for _, value := range installed {
+		known[value.ID+"@"+value.Version] = struct{}{}
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !isArchive(entry.Name()) {
 			continue
 		}
-		if _, err := m.Import(ctx, filepath.Join(directory, entry.Name()), ImportOptions{Enable: true, Official: true, AllowUnverified: true}); err != nil {
+		archivePath := filepath.Join(directory, entry.Name())
+		value, err := m.Import(ctx, archivePath, ImportOptions{Official: true, AllowUnverified: true})
+		if err != nil {
 			return err
 		}
+		if _, exists := known[value.ID+"@"+value.Version]; !exists {
+			if err := m.Enable(ctx, value.ID, value.Version, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ClearDevelopment removes source-mode records before a packaged host starts.
+// This prevents a data directory used by go run from retaining a development binary.
+func (m *Manager) ClearDevelopment(ctx context.Context) error {
+	if err := m.store.DeleteDevelopmentPlugins(ctx); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(m.root, "development"))
+}
+
+// SyncDevelopment builds publishable source plugins and registers them as official
+// development installations. It intentionally runs at startup so a changed source
+// tree is picked up by the next `go run .` without creating an archive first.
+func (m *Manager) SyncDevelopment(ctx context.Context, directory string) ([]core.PluginInstallation, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return nil, errors.New("development plugin source directory cannot be empty")
+	}
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNoDevelopmentPlugins
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read development plugin directory: %w", err)
+	}
+	result := make([]core.PluginInstallation, 0)
+	active := make(map[string]struct{})
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "template" || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		sourceDir := filepath.Join(directory, entry.Name())
+		manifestPath := filepath.Join(sourceDir, "meerkit-plugin.yaml")
+		manifestBytes, readErr := os.ReadFile(manifestPath)
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		var manifest Manifest
+		if err := yaml.Unmarshal(manifestBytes, &manifest); err != nil {
+			return nil, fmt.Errorf("decode development plugin %s: %w", entry.Name(), err)
+		}
+		if err := manifest.Validate(sdk.ProtocolVersion); err != nil {
+			return nil, fmt.Errorf("development plugin %s: %w", entry.Name(), err)
+		}
+		if _, err := os.Stat(filepath.Join(sourceDir, "go.mod")); err != nil {
+			return nil, fmt.Errorf("development plugin %s has no go.mod: %w", entry.Name(), err)
+		}
+		binaryName := "plugin"
+		if runtime.GOOS == "windows" {
+			binaryName += ".exe"
+		}
+		binaryPath := filepath.Join(m.root, "development", manifest.ID, manifest.Version, runtime.GOOS+"-"+runtime.GOARCH, binaryName)
+		if err := os.MkdirAll(filepath.Dir(binaryPath), 0o750); err != nil {
+			return nil, err
+		}
+		stage, err := os.MkdirTemp(filepath.Join(m.root, "staging"), "development-")
+		if err != nil {
+			return nil, err
+		}
+		temporaryBinary := filepath.Join(stage, binaryName)
+		buildErr := m.developmentBuilder(ctx, sourceDir, temporaryBinary)
+		if buildErr != nil {
+			_ = os.RemoveAll(stage)
+			return nil, fmt.Errorf("build development plugin %s: %w", manifest.ID, buildErr)
+		}
+		copyErr := atomicCopy(temporaryBinary, binaryPath, 0o700)
+		_ = os.RemoveAll(stage)
+		if copyErr != nil {
+			return nil, fmt.Errorf("install development plugin %s: %w", manifest.ID, copyErr)
+		}
+		binaryHash, _, err := hashFile(binaryPath)
+		if err != nil {
+			return nil, err
+		}
+		readme, err := readPackageReadme(sourceDir)
+		if err != nil {
+			return nil, err
+		}
+		existing, getErr := m.store.GetPlugin(ctx, manifest.ID, manifest.Version)
+		if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+			return nil, getErr
+		}
+		now := time.Now().UTC()
+		createdAt := now
+		enabled := true
+		if getErr == nil {
+			createdAt = existing.CreatedAt
+			if !existing.Enabled && existing.Status == "disabled" {
+				enabled = false
+			}
+		}
+		manifestJSON, _ := json.Marshal(manifest)
+		installation := core.PluginInstallation{ID: manifest.ID, Name: manifest.Name, Version: manifest.Version, Vendor: manifest.Vendor, Description: manifest.Description, URL: manifest.URL, Enabled: enabled, Verified: true, Official: true, TrustState: trustStateDevelopment, Status: "installed", BinaryPath: binaryPath, PackageName: "本地源码", PackageSHA256: binaryHash, Readme: readme, Manifest: manifestJSON, Modules: manifest.Modules, CreatedAt: createdAt, UpdatedAt: now}
+		if !enabled {
+			installation.Status = "disabled"
+		}
+		if err := m.store.UpsertPlugin(ctx, installation); err != nil {
+			return nil, err
+		}
+		if enabled {
+			if err := m.store.DisableOtherPluginVersions(ctx, manifest.ID, manifest.Version); err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, installation)
+		active[installation.ID+"@"+installation.Version] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil, ErrNoDevelopmentPlugins
+	}
+	installed, err := m.store.ListPlugins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, value := range installed {
+		if value.TrustState != trustStateDevelopment {
+			continue
+		}
+		if _, exists := active[value.ID+"@"+value.Version]; exists {
+			continue
+		}
+		if err := m.store.DeletePlugin(ctx, value.ID, value.Version); err != nil {
+			return nil, err
+		}
+		_ = os.RemoveAll(filepath.Join(m.root, "development", value.ID, value.Version))
+	}
+	return result, nil
+}
+
+func buildDevelopmentPlugin(ctx context.Context, sourceDir, outputPath string) error {
+	command := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", outputPath, ".")
+	command.Dir = sourceDir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message != "" {
+			return fmt.Errorf("%w: %s", err, message)
+		}
+		return err
 	}
 	return nil
 }

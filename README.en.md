@@ -73,6 +73,19 @@ scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/ar
 
 Inside each generated release archive, official plugins are stored in the `plugins/` directory next to the host executable. On the first start with an empty data directory, the host scans that directory, verifies and enables the packages, and records their signing fingerprint as an official publisher. Later versions or plugins signed by the same key are verified automatically when imported manually. Official status is established by this first-run release bootstrap; the public key does not also need to be added to `plugins.trusted_keys`. A plugin manifest cannot declare itself official, so importing a separately generated signed package into an installation that has not bootstrapped official trust still requires the user to verify and confirm its public-key fingerprint like any third-party signed package.
 
+### Run plugin sources in development
+
+The host version defaults to `dev` when no version is injected through `-ldflags "-X main.version=..."`. Running `go run .` from the repository root therefore uses `plugins.mode: auto` to discover `plugins/*/meerkit-plugin.yaml` (excluding `plugins/template`) and rebuild each source plugin on every startup. Changes to the built-in HTTP and TCP plugins only require another `go run .`; no package, import, upgrade, or manifest version bump is needed.
+
+```yaml
+plugins:
+  mode: auto
+  source_dir: ./plugins
+  trusted_keys: {}
+```
+
+Set `mode` to `source` to force source loading, or to `package` to test packaged-plugin loading with a development host. `MEERKIT_PLUGINS__MODE` and `MEERKIT_PLUGINS__SOURCE_DIR` provide equivalent environment overrides. Development staging files and binaries are written only under `${storage.data_dir}/plugins` (the repository-root `data/plugins` directory by default), never under a plugin source directory. Source plugins are marked as development sources in the management page and have no exportable signed archive. When package mode or a versioned release host starts, development installation records are removed before packaged plugins are restored from the directory next to the executable.
+
 Use the equivalent PowerShell scripts on Windows:
 
 ```powershell

@@ -1,0 +1,64 @@
+package plugin
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/hanxuanyu/meerkit/sdk"
+	"go.yaml.in/yaml/v3"
+	"meerkit/internal/core"
+)
+
+func TestSourcePluginManifestsMatchRuntimeContract(t *testing.T) {
+	for _, name := range []string{"http", "tcp", "template"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "plugins", name, "meerkit-plugin.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest Manifest
+		if err := yaml.Unmarshal(data, &manifest); err != nil {
+			t.Fatalf("decode %s manifest: %v", name, err)
+		}
+		if err := manifest.Validate(sdk.ProtocolVersion); err != nil {
+			t.Fatalf("validate %s source manifest: %v", name, err)
+		}
+		if len(manifest.Artifacts) != 0 {
+			t.Fatalf("source manifest %s contains packaged artifacts", name)
+		}
+	}
+}
+
+func TestManifestSchemaAllowsEmptySourceArtifactsAndDefinesEntries(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "plugins", "manifest.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("decode manifest schema: %v", err)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("manifest schema properties are missing")
+	}
+	artifacts, ok := properties["artifacts"].(map[string]any)
+	if !ok || artifacts["items"] == nil {
+		t.Fatal("manifest schema does not define artifact entries")
+	}
+	if minimum, exists := artifacts["minItems"]; exists && minimum.(float64) > 0 {
+		t.Fatalf("source manifests cannot satisfy artifacts.minItems = %v", minimum)
+	}
+	definitions, ok := schema["$defs"].(map[string]any)
+	if !ok || definitions["protocolRange"] == nil || definitions["module"] == nil || definitions["artifact"] == nil {
+		t.Fatal("manifest schema protocol, module, or artifact definitions are missing")
+	}
+}
+
+func TestManifestRejectsInvalidPackagedArtifact(t *testing.T) {
+	manifest := Manifest{SchemaVersion: 1, ID: "example.monitor", Name: "Example", Version: "1.0.0", Vendor: "Example", Description: "Example plugin", URL: "https://example.com/plugin", Protocol: ProtocolRange{Min: 1, Max: 1}, Modules: []core.PluginModule{{Type: "example", Name: "Example", Version: "1", ConfigVersion: "1", ResultSchemaVersion: "1"}}, Artifacts: []Artifact{{GOOS: "linux", GOARCH: "amd64", Path: "../plugin", Size: 1, SHA256: "invalid"}}}
+	if err := manifest.Validate(sdk.ProtocolVersion); err == nil {
+		t.Fatal("invalid packaged artifact was accepted")
+	}
+}

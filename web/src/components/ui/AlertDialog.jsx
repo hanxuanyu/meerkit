@@ -26,8 +26,8 @@ export function AlertDialogDescription({ className, ...props }) {
   return <AlertDialogPrimitive.Description className={cn("alert-dialog-description", className)} {...props} />;
 }
 
-export function AlertDialogAction({ className, ...props }) {
-  return <Button asChild variant="destructive" className={className}><AlertDialogPrimitive.Action {...props} /></Button>;
+export function AlertDialogAction({ className, variant = "destructive", ...props }) {
+  return <Button asChild variant={variant} className={className}><AlertDialogPrimitive.Action {...props} /></Button>;
 }
 
 export function AlertDialogCancel({ className, ...props }) {

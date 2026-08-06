@@ -4,7 +4,7 @@
 
 ## 插件开发流程
 
-1. 从 `plugins/template` 创建独立 Go 模块，实现 SDK `Module` 接口及契约测试。
+1. 从 `plugins/template` 创建独立 Go 模块，实现 SDK `Module` 接口及契约测试。仓库内开发时可直接执行 `go run .`，宿主会构建并运行 `plugins` 下除 `template` 外的源码插件。
 2. 在 `meerkit-plugin.yaml` 中填写唯一 ID、语义化版本、开发者、`desp` 功能描述、`url` 源码或发布地址、协议范围及模块版本。
 3. 使用 `scripts/package-plugins.sh --plugin` 构建压缩包。工具会交叉编译制品，并自动写入平台、大小和 SHA-256。
 4. 正式发布时使用长期保管的 Ed25519 私钥签名；开发期可以生成独立测试密钥。
@@ -46,5 +46,7 @@ scripts/package-plugins.sh \
 ```
 
 插件包可复制到 `${data_dir}/plugins/inbox`，也可以从管理页面导入。签名覆盖清单、清单中的制品哈希以及 README/许可证文档；未知公钥显示为“待信任”，已确认、预配置或由官方包引导的公钥显示为“已验证”。相同插件 ID 和版本如果已有不同内容，需要先卸载旧版本或提升清单版本。
+
+源码开发模式不受最后一项限制：默认的 `plugins.mode: auto` 在 `dev` 宿主中会在每次启动时覆盖同 ID、同版本的开发二进制。需要验证真实导入和签名行为时，将 `plugins.mode` 临时改为 `package`。
 
 官方完整发布包应在执行 `scripts/package.sh` 时设置 `MEERKIT_PLUGIN_SIGN_KEY` 和 `MEERKIT_PLUGIN_KEY_ID`，确保所有内置插件使用同一发布密钥。私钥丢失或更换后，现有用户需要重新确认新指纹，因此应备份私钥并制定密钥轮换发布计划。插件进程与 Meerkit 具有相同 OS 用户权限，不属于安全沙箱。

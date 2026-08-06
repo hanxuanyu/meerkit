@@ -78,6 +78,7 @@ func (a *APIServer) Router() http.Handler {
 	api.DELETE("/plugins/:id/:version", a.uninstallPlugin)
 	api.GET("/plugins/:id/:version/export", a.exportPlugin)
 	api.GET("/plugins/:id/:version/logs", a.pluginLogs)
+	api.GET("/plugins/:id/:version/logs/stream", a.streamPluginLogs)
 	api.GET("/modules", legacyParts(a.handleModules))
 	api.GET("/modules/:type", func(c *gin.Context) { a.handleModules(c.Writer, c.Request, []string{c.Param("type")}) })
 	api.GET("/notifiers", legacy(a.handleNotifiers))

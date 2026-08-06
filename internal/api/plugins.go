@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"meerkit/internal/core"
 	pluginruntime "meerkit/internal/plugin"
+	"meerkit/internal/store"
 )
 
 func (a *APIServer) listPlugins(c *gin.Context) {
@@ -18,7 +21,89 @@ func (a *APIServer) listPlugins(c *gin.Context) {
 		writeError(c.Writer, http.StatusInternalServerError, "storage_error", err.Error())
 		return
 	}
-	writeJSON(c.Writer, http.StatusOK, map[string]any{"items": values})
+	result := paginatePlugins(values, pluginListOptions{
+		Page:       queryInt(c.Request, "page", 1),
+		PageSize:   queryInt(c.Request, "page_size", 20),
+		Search:     c.Query("q"),
+		Status:     c.Query("status"),
+		TrustState: c.Query("trust_state"),
+	})
+	writeJSON(c.Writer, http.StatusOK, result)
+}
+
+type pluginListOptions struct {
+	Page       int
+	PageSize   int
+	Search     string
+	Status     string
+	TrustState string
+}
+
+func paginatePlugins(values []core.PluginInstallation, options pluginListOptions) store.PageResult[core.PluginInstallation] {
+	search := strings.ToLower(strings.TrimSpace(options.Search))
+	status := strings.ToLower(strings.TrimSpace(options.Status))
+	trustState := strings.ToLower(strings.TrimSpace(options.TrustState))
+	filtered := make([]core.PluginInstallation, 0, len(values))
+	for _, value := range values {
+		if search != "" && !pluginMatchesSearch(value, search) {
+			continue
+		}
+		if status != "" && status != "all" && !pluginMatchesStatus(value, status) {
+			continue
+		}
+		if trustState != "" && trustState != "all" && strings.ToLower(value.TrustState) != trustState {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+
+	pageSize := options.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	total := len(filtered)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	page := options.Page
+	if page < 1 {
+		page = 1
+	}
+	if totalPages > 0 && page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return store.PageResult[core.PluginInstallation]{Items: filtered[start:end], Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages}
+}
+
+func pluginMatchesSearch(value core.PluginInstallation, search string) bool {
+	parts := []string{value.ID, value.Name, value.Version, value.Vendor, value.Description, value.URL}
+	for _, module := range value.Modules {
+		parts = append(parts, module.Type, module.Name, module.Version)
+	}
+	return strings.Contains(strings.ToLower(strings.Join(parts, "\n")), search)
+}
+
+func pluginMatchesStatus(value core.PluginInstallation, status string) bool {
+	switch status {
+	case "enabled":
+		return value.Enabled
+	case "disabled":
+		return !value.Enabled
+	default:
+		return strings.EqualFold(value.Status, status)
+	}
 }
 func (a *APIServer) pluginDetails(c *gin.Context) {
 	value, err := a.plugins.Details(c.Request.Context(), c.Param("id"), c.Param("version"))
@@ -139,4 +224,49 @@ func (a *APIServer) pluginLogs(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", data)
+}
+
+func (a *APIServer) streamPluginLogs(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	first := true
+	hasSnapshot := false
+	lastSnapshot := ""
+	lastError := ""
+	lastHeartbeat := time.Now()
+	c.Stream(func(_ io.Writer) bool {
+		if first {
+			first = false
+		} else {
+			select {
+			case <-c.Request.Context().Done():
+				return false
+			case <-ticker.C:
+			}
+		}
+		if time.Since(lastHeartbeat) >= 15*time.Second {
+			c.SSEvent("heartbeat", map[string]int64{"timestamp": time.Now().Unix()})
+			lastHeartbeat = time.Now()
+		}
+		data, err := a.plugins.Logs(c.Param("id"), c.Param("version"), 128<<10)
+		if err != nil {
+			if message := err.Error(); message != lastError {
+				c.SSEvent("log-error", map[string]string{"message": message})
+				lastError = message
+			}
+			return true
+		}
+		lastError = ""
+		snapshot := string(data)
+		if !hasSnapshot || snapshot != lastSnapshot {
+			c.SSEvent("snapshot", snapshot)
+			lastSnapshot = snapshot
+			hasSnapshot = true
+		}
+		return true
+	})
 }

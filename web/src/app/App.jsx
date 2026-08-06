@@ -286,7 +286,7 @@ export function App() {
   const notificationBell = <NotificationBell items={recentNotifications} unreadCount={unreadCount} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onOpenCenter={() => navigate("inbox")} onOpenNotification={openNotification} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />;
   const overlays = <AppOverlays
     monitorDialog={{ open: showMonitorDialog, monitor: selectedMonitor, modules, channels, onClose: () => setShowMonitorDialog(false), onSaved: () => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testMonitor }}
-    recordsDialog={{ context: recordsMonitor, onClose: () => setRecordsMonitor(null), onOpenTab: openRecordsTab, onRecordsDeleted: handleRecordsDeleted }}
+    recordsDialog={{ context: recordsMonitor, channels, onClose: () => setRecordsMonitor(null), onOpenTab: openRecordsTab, onRecordsDeleted: handleRecordsDeleted }}
     channelDialog={{ open: showChannelDialog, channel: selectedChannel, notifiers, monitors, modules, onClose: () => setShowChannelDialog(false), onSaved: () => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testNotification }}
     deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
   />;

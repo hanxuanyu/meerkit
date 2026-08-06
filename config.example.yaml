@@ -32,4 +32,6 @@ security:
     session_ttl: 720h
     master_key_file: ./data/master.key
 plugins:
+    mode: auto
+    source_dir: ./plugins
     trusted_keys: {}

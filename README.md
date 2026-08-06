@@ -73,6 +73,19 @@ scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/ar
 
 生成的发布压缩包中，官方插件位于宿主可执行文件同级的 `plugins/` 目录。使用空数据目录首次启动时，宿主会扫描该目录、验证签名、启用插件，并将其公钥指纹登记为官方发布者；之后手工导入由同一密钥签名的新版本或其他插件时会自动验证。官方状态来自这次随发行包进行的首次引导，不需要把公钥另外写入 `plugins.trusted_keys`。插件清单中不存在可自行声明的“官方”字段，因此将单独生成的签名包导入尚未建立官方信任的环境时，仍需要像第三方签名包一样核对并确认公钥指纹。
 
+### 开发模式直接运行插件源码
+
+宿主未通过 `-ldflags "-X main.version=..."` 指定版本时默认为 `dev`，因此在仓库根目录执行 `go run .` 会使用 `plugins.mode: auto` 自动发现 `plugins/*/meerkit-plugin.yaml`（跳过 `plugins/template`），在每次启动时重新构建并运行源码插件。修改 HTTP、TCP 等内置插件后只需重新执行 `go run .`，无需先生成插件包、导入或升级；即使清单版本未变化，开发二进制也会被当前源码覆盖。
+
+```yaml
+plugins:
+  mode: auto
+  source_dir: ./plugins
+  trusted_keys: {}
+```
+
+`mode` 可设为 `source` 以强制使用源码，或设为 `package` 以便在开发版本中验证发行包加载流程，也可分别使用 `MEERKIT_PLUGINS__MODE` 和 `MEERKIT_PLUGINS__SOURCE_DIR` 覆盖。开发构建的暂存文件和最终二进制只写入 `${storage.data_dir}/plugins`（默认即仓库根目录的 `data/plugins`），不会在插件源码目录中生成 `data` 或制品目录。源码插件在管理页标记为“开发源码”，没有可导出的签名包；切换到 `package` 或使用带正式版本号的发行程序后，宿主会清理开发安装记录并恢复使用可执行文件同级的插件包。
+
 Windows PowerShell 使用等效脚本：
 
 ```powershell

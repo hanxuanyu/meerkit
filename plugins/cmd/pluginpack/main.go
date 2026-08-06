@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/hanxuanyu/meerkit/sdk"
 	"go.yaml.in/yaml/v3"
 	pluginpkg "meerkit/internal/plugin"
 )
@@ -55,6 +56,9 @@ func main() {
 	}
 	var manifest pluginpkg.Manifest
 	if err := yaml.Unmarshal(manifestBytes, &manifest); err != nil {
+		fail(err.Error())
+	}
+	if err := manifest.Validate(sdk.ProtocolVersion); err != nil {
 		fail(err.Error())
 	}
 	if err := os.MkdirAll(*outputDir, 0o750); err != nil {
@@ -133,6 +137,9 @@ func parseTargets(value string) ([]target, error) {
 }
 func writePackage(output, pluginDir, buildDir string, manifest pluginpkg.Manifest, artifacts []pluginpkg.Artifact, keyPath, keyID string) error {
 	manifest.Artifacts = artifacts
+	if err := manifest.Validate(sdk.ProtocolVersion); err != nil {
+		return err
+	}
 	manifestBytes, err := yaml.Marshal(manifest)
 	if err != nil {
 		return err

@@ -22,3 +22,15 @@ export async function api(path, options = {}) {
   if (!response.ok) throw new Error(body?.message || "请求失败");
   return body;
 }
+
+export async function apiText(path, options = {}) {
+	const response = await fetch(path, { ...options, credentials: "same-origin" });
+	const raw = response.status === 204 ? "" : await response.text();
+	if (response.status === 401) window.dispatchEvent(new CustomEvent("meerkit:unauthorized"));
+	if (!response.ok) {
+		let message = raw || "请求失败";
+		try { message = JSON.parse(raw)?.message || message; } catch { /* Keep the text response. */ }
+		throw new Error(message);
+	}
+	return raw;
+}

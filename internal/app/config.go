@@ -78,6 +78,8 @@ type SecurityConfig struct {
 }
 
 type PluginConfig struct {
+	Mode        string            `yaml:"mode" mapstructure:"mode"`
+	SourceDir   string            `yaml:"source_dir" mapstructure:"source_dir"`
 	TrustedKeys map[string]string `yaml:"trusted_keys" mapstructure:"trusted_keys"`
 }
 
@@ -104,7 +106,7 @@ func DefaultConfig() Config {
 			},
 		},
 		Security: SecurityConfig{SessionTTL: "720h", MasterKeyFile: "./data/master.key"},
-		Plugins:  PluginConfig{TrustedKeys: map[string]string{}},
+		Plugins:  PluginConfig{Mode: "auto", SourceDir: "./plugins", TrustedKeys: map[string]string{}},
 	}
 }
 
@@ -233,6 +235,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file.access.filename", defaults.Logging.File.Access.Filename)
 	v.SetDefault("security.session_ttl", defaults.Security.SessionTTL)
 	v.SetDefault("security.master_key_file", defaults.Security.MasterKeyFile)
+	v.SetDefault("plugins.mode", defaults.Plugins.Mode)
+	v.SetDefault("plugins.source_dir", defaults.Plugins.SourceDir)
 	v.SetDefault("plugins.trusted_keys", defaults.Plugins.TrustedKeys)
 }
 
@@ -266,6 +270,8 @@ func bindEnvironment(v *viper.Viper) error {
 		"logging.file.access.filename":   "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
 		"security.session_ttl":           "MEERKIT_SECURITY__SESSION_TTL",
 		"security.master_key_file":       "MEERKIT_SECURITY__MASTER_KEY_FILE",
+		"plugins.mode":                   "MEERKIT_PLUGINS__MODE",
+		"plugins.source_dir":             "MEERKIT_PLUGINS__SOURCE_DIR",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -363,6 +369,13 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if _, err := time.LoadLocation(cfg.Scheduler.Timezone); err != nil && cfg.Scheduler.Timezone != "Local" {
 		return cfg, fmt.Errorf("scheduler.timezone: %w", err)
+	}
+	cfg.Plugins.Mode = strings.ToLower(strings.TrimSpace(cfg.Plugins.Mode))
+	if cfg.Plugins.Mode != "auto" && cfg.Plugins.Mode != "source" && cfg.Plugins.Mode != "package" {
+		return cfg, errors.New("plugins.mode must be auto, source, or package")
+	}
+	if strings.TrimSpace(cfg.Plugins.SourceDir) == "" {
+		return cfg, errors.New("plugins.source_dir cannot be empty")
 	}
 	return cfg, nil
 }

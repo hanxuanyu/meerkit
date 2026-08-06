@@ -14,6 +14,7 @@ import (
 	"meerkit/internal/api"
 	"meerkit/internal/app"
 	"meerkit/internal/auth"
+	"meerkit/internal/core"
 	"meerkit/internal/logging"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
@@ -23,7 +24,11 @@ import (
 	"meerkit/internal/store"
 )
 
-func RunServer(ctx context.Context, config app.Config, frontend fs.FS) error {
+type ServerOptions struct {
+	Version string
+}
+
+func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOptions ...ServerOptions) error {
 	logger, accessLogger, closeLogger, err := logging.New(config.Logging)
 	if err != nil {
 		return err
@@ -49,9 +54,30 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS) error {
 		return err
 	}
 	defer pluginManager.Close()
-	if executable, executableErr := os.Executable(); executableErr == nil {
-		if err := pluginManager.SeedOfficial(ctx, filepath.Join(filepath.Dir(executable), "plugins")); err != nil {
+	options := ServerOptions{}
+	if len(serverOptions) > 0 {
+		options = serverOptions[0]
+	}
+	useSource := config.Plugins.Mode == "source" || (config.Plugins.Mode == "auto" && options.Version == "dev")
+	if useSource {
+		var developmentPlugins []core.PluginInstallation
+		developmentPlugins, err = pluginManager.SyncDevelopment(ctx, config.Plugins.SourceDir)
+		if err != nil && !(config.Plugins.Mode == "auto" && errors.Is(err, pluginruntime.ErrNoDevelopmentPlugins)) {
 			return err
+		}
+		useSource = err == nil
+		if useSource {
+			logger.Info("development plugin source mode enabled", "source_dir", config.Plugins.SourceDir, "plugins", len(developmentPlugins))
+		}
+	}
+	if !useSource {
+		if err := pluginManager.ClearDevelopment(ctx); err != nil {
+			return err
+		}
+		if executable, executableErr := os.Executable(); executableErr == nil {
+			if err := pluginManager.SeedOfficial(ctx, filepath.Join(filepath.Dir(executable), "plugins")); err != nil {
+				return err
+			}
 		}
 	}
 	if err := pluginManager.Start(ctx); err != nil {

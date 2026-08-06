@@ -112,6 +112,11 @@ func (s *Store) CountPlugins(ctx context.Context) (int, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM plugins`).Scan(&count)
 	return count, err
 }
+
+func (s *Store) DeleteDevelopmentPlugins(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM plugins WHERE trust_state='development'`)
+	return err
+}
 func (s *Store) CountMonitorReferences(ctx context.Context, moduleTypes []string) (int, error) {
 	if len(moduleTypes) == 0 {
 		return 0, nil

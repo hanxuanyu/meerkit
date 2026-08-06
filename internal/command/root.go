@@ -55,10 +55,10 @@ func NewRoot(dependencies Dependencies) *cobra.Command {
 		if len(args) != 0 {
 			return &usageError{fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))}
 		}
-		return servecommand.Run(command, dependencies.Frontend, load)
+		return servecommand.Run(command, dependencies.Frontend, load, dependencies.Version)
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
-	root.AddCommand(servecommand.New(dependencies.Frontend, load), plugincommand.New(load), admincommand.New(load), &cobra.Command{Use: "version", Short: "Print version", Args: noArgs, Run: func(command *cobra.Command, _ []string) { fmt.Fprintln(command.OutOrStdout(), dependencies.Version) }})
+	root.AddCommand(servecommand.New(dependencies.Frontend, load, dependencies.Version), plugincommand.New(load), admincommand.New(load), &cobra.Command{Use: "version", Short: "Print version", Args: noArgs, Run: func(command *cobra.Command, _ []string) { fmt.Fprintln(command.OutOrStdout(), dependencies.Version) }})
 	return root
 }
 

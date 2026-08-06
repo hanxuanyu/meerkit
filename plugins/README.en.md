@@ -4,7 +4,7 @@ Each plugin is an independent Go module and communicates with Meerkit through th
 
 ## Plugin development workflow
 
-1. Create an independent Go module from `plugins/template`, implement the SDK `Module` interface, and add contract tests.
+1. Create an independent Go module from `plugins/template`, implement the SDK `Module` interface, and add contract tests. During repository development, `go run .` builds and runs every source plugin under `plugins` except `template`.
 2. Fill in a unique ID, semantic version, vendor, `desp`, source or release `url`, protocol range, and module versions in `meerkit-plugin.yaml`.
 3. Build an archive with `scripts/package-plugins.sh --plugin`. The tool cross-compiles artifacts and writes their platform, size, and SHA-256 automatically.
 4. Sign production releases with a long-lived Ed25519 private key. Use a separate test key during development.
@@ -46,5 +46,7 @@ scripts/package-plugins.sh \
 ```
 
 Copy packages to `${data_dir}/plugins/inbox` or import them from the management page. Signatures cover the manifest, artifact hashes declared by the manifest, and README/license documents. Unknown keys are marked as pending trust; confirmed, preconfigured, or officially bootstrapped keys are verified automatically. Different content with an existing plugin ID and version is rejected until the old version is uninstalled or the manifest version is incremented.
+
+Source development mode is exempt from that last package rule: the default `plugins.mode: auto` replaces same-ID, same-version development binaries on every `dev` host startup. Temporarily set `plugins.mode` to `package` when validating the real import and signature workflow.
 
 Set `MEERKIT_PLUGIN_SIGN_KEY` and `MEERKIT_PLUGIN_KEY_ID` when running `scripts/package.sh` for an official full release so every bundled plugin uses the same release key. Losing or replacing the key requires existing users to confirm a new fingerprint, so back up the private key and plan key rotations deliberately. Plugin processes have the same OS permissions as Meerkit and are not a security sandbox.

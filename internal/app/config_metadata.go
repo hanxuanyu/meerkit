@@ -84,6 +84,8 @@ func configDefinitions() []configDefinition {
 		value("logging.file.access.filename", "MEERKIT_LOGGING__FILE__ACCESS__FILENAME", "access-log-filename", "HTTP access 日志文件名。", func(c Config) any { return c.Logging.File.Access.Filename }, func(c Config) any { return c.Logging.File.Access.Filename }),
 		value("security.session_ttl", "MEERKIT_SECURITY__SESSION_TTL", "", "管理会话的有效期。", func(c Config) any { return c.Security.SessionTTL }, func(c Config) any { return c.Security.SessionTTL }),
 		value("security.master_key_file", "MEERKIT_SECURITY__MASTER_KEY_FILE", "", "主密钥文件路径。", func(c Config) any { return c.Security.MasterKeyFile }, func(c Config) any { return c.Security.MasterKeyFile }),
+		value("plugins.mode", "MEERKIT_PLUGINS__MODE", "", "插件运行模式。auto 在 dev 版本且存在源码插件时直接构建源码，正式版本使用发行包；source 强制使用源码；package 强制使用发行包。", func(c Config) any { return c.Plugins.Mode }, func(c Config) any { return c.Plugins.Mode }),
+		value("plugins.source_dir", "MEERKIT_PLUGINS__SOURCE_DIR", "", "源码插件根目录，相对路径基于 Meerkit 启动时的工作目录解析；仅 source 模式或 auto 开发模式使用。", func(c Config) any { return c.Plugins.SourceDir }, func(c Config) any { return c.Plugins.SourceDir }),
 		value("plugins.trusted_keys", "", "", "可信插件签名公钥。键为签名 key ID，值为 Base64 编码的 Ed25519 公钥；修改后需重启服务。", func(c Config) any { return c.Plugins.TrustedKeys }, func(c Config) any { return c.Plugins.TrustedKeys }),
 	}
 }
