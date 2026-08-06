@@ -72,8 +72,9 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 	if !ok {
 		return core.MonitorRecord{}, fmt.Errorf("unknown monitor module %q", monitor.ModuleType)
 	}
+	descriptor := module.Descriptor()
 	if r.logger != nil {
-		r.logger.Debug("monitor execution started", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", module.Descriptor().Version)
+		r.logger.Debug("monitor execution started", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "module_version", descriptor.Version)
 	}
 	started := time.Now().UTC()
 	previous, previousErr := r.store.LatestSuccessfulRecord(ctx, id)
@@ -152,7 +153,7 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 			eventType = "recovered"
 		}
 	}
-	executionSummary := composeExecutionSummary(observation.Summary, observation.Success && executeErr == nil, duration.Milliseconds(), observation.ErrorCode, observation.ErrorMessage, eventType, evaluation, logic, matchedCount)
+	executionSummary := composeExecutionSummary(descriptor, observation.Summary, observation.Success && executeErr == nil, duration.Milliseconds(), observation.ErrorCode, observation.ErrorMessage, eventType, evaluation, logic, matchedCount)
 	observation.Summary = executionSummary
 	executionResult["summary"] = executionSummary
 	executionResult["triggered"] = evaluation.State == "true"
@@ -175,7 +176,7 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 		NotificationResult: map[string]any{}, ErrorCode: observation.ErrorCode, ErrorMessage: observation.ErrorMessage,
 	}
 	if record.ResultSchemaVersion == "" {
-		record.ResultSchemaVersion = module.Descriptor().Version
+		record.ResultSchemaVersion = descriptor.Version
 	}
 	if err := r.store.AddRecord(ctx, record); err != nil {
 		return record, err

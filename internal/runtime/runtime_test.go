@@ -48,7 +48,7 @@ func TestRunPersistsComposedExecutionSummary(t *testing.T) {
 	if !ok {
 		t.Fatalf("summary field has unexpected type: %#v", summarySet["summary"])
 	}
-	for _, expected := range []string{"模块结果：ready", "事件类型：已触发", "条件状态：满足（ALL 逻辑，满足 1/1 条）", "条件详情：", "value", "实际值：ready"} {
+	for _, expected := range []string{"模块结果：ready", "事件类型：已触发", "条件状态：满足（ALL 逻辑，满足 1/1 条）", "条件详情：", "状态值（value）", "实际值：ready"} {
 		if !strings.Contains(summary, expected) {
 			t.Fatalf("persisted summary does not contain %q:\n%s", expected, summary)
 		}
@@ -70,7 +70,7 @@ func TestRunPersistsComposedExecutionSummary(t *testing.T) {
 type summaryTestModule struct{}
 
 func (summaryTestModule) Descriptor() core.ModuleDescriptor {
-	return core.ModuleDescriptor{Type: "summary-test", Version: "1", Name: "Summary test", ResultSchema: map[string]any{"type": "object"}}
+	return core.ModuleDescriptor{Type: "summary-test", Version: "1", Name: "Summary test", ResultSchema: map[string]any{"type": "object"}, Fields: []core.FieldDescriptor{{Name: "value", Label: "状态值"}}}
 }
 
 func (summaryTestModule) ValidateConfig(json.RawMessage) error { return nil }

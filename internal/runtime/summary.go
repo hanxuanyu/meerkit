@@ -10,7 +10,7 @@ import (
 
 const maxSummaryValueLength = 600
 
-func composeExecutionSummary(moduleSummary string, success bool, durationMS int64, errorCode, errorMessage, eventType string, evaluation core.Evaluation, logic string, matchedCount int) string {
+func composeExecutionSummary(descriptor core.ModuleDescriptor, moduleSummary string, success bool, durationMS int64, errorCode, errorMessage, eventType string, evaluation core.Evaluation, logic string, matchedCount int) string {
 	sections := make([]string, 0, 2)
 	if moduleSummary = strings.TrimSpace(moduleSummary); moduleSummary != "" {
 		sections = append(sections, moduleSummary)
@@ -28,13 +28,13 @@ func composeExecutionSummary(moduleSummary string, success bool, durationMS int6
 	}
 	common = append(common,
 		fmt.Sprintf("事件类型：%s", eventTypeLabel(eventType)),
-		conditionSummary(evaluation, logic, matchedCount),
+		conditionSummary(descriptor, evaluation, logic, matchedCount),
 	)
 	sections = append(sections, strings.Join(common, "\n"))
 	return strings.Join(sections, "\n\n")
 }
 
-func conditionSummary(evaluation core.Evaluation, logic string, matchedCount int) string {
+func conditionSummary(descriptor core.ModuleDescriptor, evaluation core.Evaluation, logic string, matchedCount int) string {
 	if len(evaluation.Details) == 0 {
 		return "条件状态：未配置"
 	}
@@ -42,10 +42,7 @@ func conditionSummary(evaluation core.Evaluation, logic string, matchedCount int
 	detailLines := make([]string, 0, len(evaluation.Details)+1)
 	detailLines = append(detailLines, conditionLine, "条件详情：")
 	for index, detail := range evaluation.Details {
-		field := detail.Field
-		if detail.Path != "" {
-			field += "." + strings.TrimPrefix(detail.Path, ".")
-		}
+		field := conditionFieldDisplay(descriptor, detail.Field, detail.Path)
 		line := fmt.Sprintf("%d. [%s] %s · %s %s", index+1, ruleStateLabel(detail.State), sourceLabel(detail.Source), field, operatorLabel(detail.Operator))
 		if detail.Expected != nil {
 			expectedSource := detail.ValueSource
@@ -69,6 +66,34 @@ func conditionSummary(evaluation core.Evaluation, logic string, matchedCount int
 		detailLines = append(detailLines, line)
 	}
 	return strings.Join(detailLines, "\n")
+}
+
+func conditionFieldDisplay(descriptor core.ModuleDescriptor, field, path string) string {
+	key := field
+	if path != "" {
+		key += "." + strings.TrimPrefix(path, ".")
+	}
+	if label := resultFieldLabel(descriptor, field); label != "" {
+		return fmt.Sprintf("%s（%s）", label, key)
+	}
+	return key
+}
+
+func resultFieldLabel(descriptor core.ModuleDescriptor, field string) string {
+	descriptor = core.WithCommonResultSets(descriptor)
+	for _, set := range descriptor.ResultSets {
+		for _, resultField := range set.Fields {
+			if field == set.Key+"."+resultField.Name {
+				return resultField.Label
+			}
+		}
+	}
+	for _, legacyField := range descriptor.Fields {
+		if field == legacyField.Name {
+			return legacyField.Label
+		}
+	}
+	return ""
 }
 
 func summaryValue(value any) string {

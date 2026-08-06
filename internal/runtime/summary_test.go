@@ -9,15 +9,19 @@ import (
 
 func TestComposeExecutionSummaryIncludesExecutionAndConditionDetails(t *testing.T) {
 	summary := composeExecutionSummary(
+		core.ModuleDescriptor{ResultSets: []core.ResultSetDescriptor{{Key: "response", Fields: []core.ResultFieldDescriptor{{Name: "status_code", Label: "状态码"}}}}},
 		"HTTP 请求：GET https://example.test/health\n响应状态：503 Service Unavailable",
 		true,
 		42,
 		"",
 		"",
 		"triggered",
-		core.Evaluation{State: "true", Details: []core.RuleResult{{Field: "response.status_code", Operator: "equals", State: "true", Expected: float64(503), Actual: float64(503)}}},
+		core.Evaluation{State: "true", Details: []core.RuleResult{
+			{Field: "summary.duration_ms", Operator: "gt", State: "true", Expected: float64(10), Actual: float64(42)},
+			{Field: "response.status_code", Operator: "equals", State: "true", Expected: float64(503), Actual: float64(503)},
+		}},
 		"ALL",
-		1,
+		2,
 	)
 
 	for _, expected := range []string{
@@ -25,9 +29,10 @@ func TestComposeExecutionSummaryIncludesExecutionAndConditionDetails(t *testing.
 		"执行结果：成功",
 		"执行耗时：42 ms",
 		"事件类型：已触发",
-		"条件状态：满足（ALL 逻辑，满足 1/1 条）",
+		"条件状态：满足（ALL 逻辑，满足 2/2 条）",
 		"条件详情：",
-		"response.status_code",
+		"执行耗时（summary.duration_ms）",
+		"状态码（response.status_code）",
 		"期望：503",
 		"实际值：503",
 	} {
