@@ -25,7 +25,64 @@ MEERKIT_SERVER__PORT=9090 MEERKIT_STORAGE__DATA_DIR=/var/lib/meerkit go run .
 
 Plugin archives can be uploaded from the management page, imported with `meerkit plugin import`, or copied to `${data_dir}/plugins/inbox`. Only `.zip` and `.tar.gz` packages are accepted; raw executables are never discovered or executed.
 
-Use `scripts/package-plugins.sh` to package every publishable plugin, or `scripts/package.sh` to create a platform release containing the host and all official plugins. Windows equivalents are in the same directory. See [`plugins/README.en.md`](plugins/README.en.md) for details.
+### Generate the official signing key
+
+Official plugins are signed with an Ed25519 key. Run the following command from the repository root; its argument is the output path prefix:
+
+```bash
+scripts/package-plugins.sh --generate-key ./keys/meerkit-official
+```
+
+The command creates two Base64-encoded files and refuses to overwrite existing keys:
+
+- `keys/meerkit-official.private.key`: the signing private key, which must remain in the release environment or CI secret storage.
+- `keys/meerkit-official.public.key`: the public key, suitable for backup, fingerprint publication, or optional preconfigured trust.
+
+Never commit the private key, copy it into `dist/`, or include it in a release archive. The package signature file, `meerkit-plugin.sig`, automatically embeds the public key derived from the private key, so the public key file is not passed to the packaging command. The key ID is a stable, human-readable release identifier such as `meerkit-official-2026`; the SHA-256 public-key fingerprint is the actual trust identity.
+
+### Package official plugins
+
+Set the private-key path and key ID, then run the batch script without `--plugin`. It packages every publishable manifest under `plugins/`, currently HTTP and TCP, while automatically excluding the `plugins/template` source scaffold:
+
+```bash
+MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
+MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
+scripts/package-plugins.sh dist/plugins linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+```
+
+The script creates one plugin package per platform: `.zip` for Windows and `.tar.gz` for other platforms. The signature covers the manifest and its artifact hashes, plus packaged README and LICENSE files. To package only one official plugin, pass the signing arguments directly:
+
+```bash
+scripts/package-plugins.sh \
+  --plugin ./plugins/http \
+  --targets linux/amd64 \
+  --sign-key ./keys/meerkit-official.private.key \
+  --key-id meerkit-official-2026
+```
+
+### Build a complete official release
+
+`scripts/package.sh` builds the frontend, host executable, and every official plugin for each target. It forwards the signing environment variables to the internal plugin packaging step, so all official plugins in a release use the same key:
+
+```bash
+MEERKIT_VERSION=v0.1.0 \
+MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
+MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
+scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+```
+
+Inside each generated release archive, official plugins are stored in the `plugins/` directory next to the host executable. On the first start with an empty data directory, the host scans that directory, verifies and enables the packages, and records their signing fingerprint as an official publisher. Later versions or plugins signed by the same key are verified automatically when imported manually. Official status is established by this first-run release bootstrap; the public key does not also need to be added to `plugins.trusted_keys`. A plugin manifest cannot declare itself official, so importing a separately generated signed package into an installation that has not bootstrapped official trust still requires the user to verify and confirm its public-key fingerprint like any third-party signed package.
+
+Use the equivalent PowerShell scripts on Windows:
+
+```powershell
+.\scripts\package-plugins.ps1 -GenerateKey .\keys\meerkit-official
+$env:MEERKIT_PLUGIN_SIGN_KEY = ".\keys\meerkit-official.private.key"
+$env:MEERKIT_PLUGIN_KEY_ID = "meerkit-official-2026"
+.\scripts\package.ps1 -Output dist/releases -Targets "windows/amd64" -Version "v0.1.0"
+```
+
+Back up and retain the private key for the lifetime of the release line. Replacing it creates a new public-key fingerprint that existing installations do not recognize as the same publisher, so key rotation requires a planned release and a new trust decision. See [`plugins/README.en.md`](plugins/README.en.md) for plugin development, third-party signing, and the trust model, and [`scripts/README.en.md`](scripts/README.en.md) for script details.
 
 ## Layout
 
