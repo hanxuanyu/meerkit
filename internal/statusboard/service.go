@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,6 +158,9 @@ func (s *Service) NormalizeAndValidate(ctx context.Context, item *core.StatusBoa
 		}
 	} else {
 		item.Thresholds = []core.StatusThreshold{}
+	}
+	if err := normalizeAndValidateValueMappings(&item.Source); err != nil {
+		return err
 	}
 	seenRules := map[string]bool{}
 	for index := range item.TrendRules {
@@ -365,10 +370,15 @@ func validateThresholds(values []core.StatusThreshold) error {
 	var previous *float64
 	for index, value := range values {
 		if value.Level != core.StatusLevelSuccess && value.Level != core.StatusLevelWarning && value.Level != core.StatusLevelFailure {
-			return errors.New("数值区间颜色必须为 success、warning 或 failure")
+			return errors.New("数值区间状态必须为 success、warning 或 failure")
 		}
 		if strings.TrimSpace(value.Label) == "" {
 			return errors.New("数值区间标签不能为空")
+		}
+		if value.Color == "" {
+			values[index].Color = defaultStatusColor(value.Level)
+		} else if !validStatusColor(value.Color) {
+			return errors.New("数值区间颜色预设无效")
 		}
 		if value.Maximum == nil {
 			if index != len(values)-1 {
@@ -386,6 +396,97 @@ func validateThresholds(values []core.StatusThreshold) error {
 		previous = &maximum
 	}
 	return nil
+}
+
+func normalizeAndValidateValueMappings(source *core.StatusItemSource) error {
+	if source.ValueType == core.StatusValueBoolean {
+		source.ValueMappings = nil
+		source.DefaultLevel = ""
+		source.DefaultLabel = ""
+		source.DefaultColor = ""
+		return nil
+	}
+	if source.DefaultLevel == "" {
+		source.DefaultLevel = core.StatusLevelSuccess
+	}
+	if !validStatusLevel(source.DefaultLevel) {
+		return errors.New("默认状态必须为 success、warning 或 failure")
+	}
+	if strings.TrimSpace(source.DefaultLabel) == "" {
+		source.DefaultLabel = statusLevelLabel(source.DefaultLevel)
+	}
+	if source.DefaultColor == "" {
+		source.DefaultColor = defaultStatusColor(source.DefaultLevel)
+	} else if !validStatusColor(source.DefaultColor) {
+		return errors.New("默认颜色预设无效")
+	}
+	if source.ValueType == core.StatusValueText && source.ValueMappings == nil {
+		source.ValueMappings = []core.StatusValueMapping{{Value: "", Level: core.StatusLevelFailure, Label: "无值", Color: "red"}}
+	}
+	if len(source.ValueMappings) > 100 {
+		return errors.New("精确值颜色规则不能超过 100 条")
+	}
+	seen := map[string]bool{}
+	for index := range source.ValueMappings {
+		mapping := &source.ValueMappings[index]
+		if !validStatusLevel(mapping.Level) {
+			return fmt.Errorf("第 %d 条精确值规则状态无效", index+1)
+		}
+		if strings.TrimSpace(mapping.Label) == "" {
+			mapping.Label = statusLevelLabel(mapping.Level)
+		}
+		if mapping.Color == "" {
+			mapping.Color = defaultStatusColor(mapping.Level)
+		} else if !validStatusColor(mapping.Color) {
+			return fmt.Errorf("第 %d 条精确值规则颜色预设无效", index+1)
+		}
+		key := "text:" + mapping.Value
+		if source.ValueType == core.StatusValueNumber {
+			value, err := strconv.ParseFloat(strings.TrimSpace(mapping.Value), 64)
+			if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("第 %d 条精确值规则不是有效数值", index+1)
+			}
+			key = "number:" + strconv.FormatFloat(value, 'g', -1, 64)
+		}
+		if seen[key] {
+			return fmt.Errorf("第 %d 条精确值规则与已有规则重复", index+1)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+func validStatusLevel(level string) bool {
+	return level == core.StatusLevelSuccess || level == core.StatusLevelWarning || level == core.StatusLevelFailure
+}
+
+func statusLevelLabel(level string) string {
+	if level == core.StatusLevelWarning {
+		return "警告"
+	}
+	if level == core.StatusLevelFailure {
+		return "失败"
+	}
+	return "正常"
+}
+
+func defaultStatusColor(level string) string {
+	if level == core.StatusLevelWarning {
+		return "amber"
+	}
+	if level == core.StatusLevelFailure {
+		return "red"
+	}
+	return "green"
+}
+
+func validStatusColor(color string) bool {
+	switch color {
+	case "green", "lime", "yellow", "amber", "orange", "red":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateTrendRule(rule core.TrendRule, valueType string) error {

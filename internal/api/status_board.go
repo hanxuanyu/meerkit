@@ -110,14 +110,14 @@ func (a *APIServer) updateStatusBoardItem(c *gin.Context) {
 		writeError(c.Writer, http.StatusNotFound, "status_item_not_found", "status board item not found")
 		return
 	}
-	previousSource, previousThresholds, previousRules := item.Source, item.Thresholds, item.TrendRules
+	previousEvaluation, previousRules := statusBoardEvaluationConfig(item), item.TrendRules
 	var payload statusBoardItemPayload
 	if err := decodeBody(c.Writer, c.Request, &payload); err != nil {
 		writeError(c.Writer, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
 	applyStatusBoardItemPayload(&item, payload)
-	reset := !reflect.DeepEqual(previousSource, item.Source) || !reflect.DeepEqual(previousThresholds, item.Thresholds) || !reflect.DeepEqual(previousRules, item.TrendRules)
+	reset := !reflect.DeepEqual(previousEvaluation, statusBoardEvaluationConfig(item)) || !reflect.DeepEqual(previousRules, item.TrendRules)
 	item.UpdatedAt = time.Now().UTC()
 	if err := service.NormalizeAndValidate(c.Request.Context(), &item, reset); err != nil {
 		writeError(c.Writer, http.StatusBadRequest, "validation_error", err.Error())
@@ -129,6 +129,28 @@ func (a *APIServer) updateStatusBoardItem(c *gin.Context) {
 	}
 	service.Publish(statusboard.StreamEvent{Type: "item_updated", MonitorID: item.MonitorID, ItemID: item.ID})
 	writeJSON(c.Writer, http.StatusOK, item)
+}
+
+func statusBoardEvaluationConfig(item core.StatusBoardItem) struct {
+	Source     core.StatusItemSource
+	Thresholds []core.StatusThreshold
+} {
+	source := item.Source
+	source.DefaultColor, source.DefaultLabel = "", ""
+	source.ValueMappings = append([]core.StatusValueMapping(nil), source.ValueMappings...)
+	for index := range source.ValueMappings {
+		source.ValueMappings[index].Color = ""
+		source.ValueMappings[index].Label = ""
+	}
+	thresholds := append([]core.StatusThreshold(nil), item.Thresholds...)
+	for index := range thresholds {
+		thresholds[index].Color = ""
+		thresholds[index].Label = ""
+	}
+	return struct {
+		Source     core.StatusItemSource
+		Thresholds []core.StatusThreshold
+	}{Source: source, Thresholds: thresholds}
 }
 
 func (a *APIServer) deleteStatusBoardItem(c *gin.Context) {

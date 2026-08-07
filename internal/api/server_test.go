@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,27 @@ func TestUpdateMonitorCanDisableUnavailableModule(t *testing.T) {
 	}
 	if stored.Enabled {
 		t.Fatal("unavailable monitor was not disabled")
+	}
+}
+
+func TestStatusBoardEvaluationConfigIgnoresDisplayColors(t *testing.T) {
+	maximum := 100.0
+	item := core.StatusBoardItem{
+		Source:     core.StatusItemSource{ValueType: core.StatusValueText, DefaultLevel: core.StatusLevelSuccess, DefaultLabel: "正常", DefaultColor: "green", ValueMappings: []core.StatusValueMapping{{Value: "down", Level: core.StatusLevelFailure, Label: "异常", Color: "red"}}},
+		Thresholds: []core.StatusThreshold{{Maximum: &maximum, Level: core.StatusLevelSuccess, Label: "正常", Color: "green"}},
+	}
+	changed := item
+	changed.Source.ValueMappings = append([]core.StatusValueMapping(nil), item.Source.ValueMappings...)
+	changed.Thresholds = append([]core.StatusThreshold(nil), item.Thresholds...)
+	changed.Source.DefaultColor, changed.Source.DefaultLabel = "red", "自定义"
+	changed.Source.ValueMappings[0].Color, changed.Source.ValueMappings[0].Label = "green", "自定义"
+	changed.Thresholds[0].Color, changed.Thresholds[0].Label = "orange", "自定义"
+	if !reflect.DeepEqual(statusBoardEvaluationConfig(item), statusBoardEvaluationConfig(changed)) {
+		t.Fatal("display-only color and label changes should not reset trend state")
+	}
+	changed.Source.ValueMappings[0].Level = core.StatusLevelSuccess
+	if reflect.DeepEqual(statusBoardEvaluationConfig(item), statusBoardEvaluationConfig(changed)) {
+		t.Fatal("semantic level changes must reset trend state")
 	}
 }
 

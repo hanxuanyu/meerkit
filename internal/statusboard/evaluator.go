@@ -48,15 +48,14 @@ func buildSample(item core.StatusBoardItem, record core.MonitorRecord) core.Stat
 		}
 		sample.Numeric = core.Float64(number)
 		sample.Display = strconv.FormatFloat(number, 'f', -1, 64)
-		threshold := matchThreshold(item.Thresholds, number)
-		if threshold == nil {
-			return sample
-		}
-		sample.Level, sample.Label = threshold.Level, threshold.Label
-		if threshold.Level == core.StatusLevelSuccess {
-			sample.State = core.StatusLevelSuccess
+		if mapping := matchNumericValueMapping(item.Source.ValueMappings, number); mapping != nil {
+			applySampleLevel(&sample, mapping.Level, mapping.Label, mapping.Color)
 		} else {
-			sample.State = core.StatusLevelFailure
+			threshold := matchThreshold(item.Thresholds, number)
+			if threshold == nil {
+				return sample
+			}
+			applySampleLevel(&sample, threshold.Level, threshold.Label, threshold.Color)
 		}
 	case core.StatusValueText:
 		text, valid := value.(string)
@@ -65,13 +64,50 @@ func buildSample(item core.StatusBoardItem, record core.MonitorRecord) core.Stat
 		}
 		sample.RawValue, sample.Display, sample.Height = text, text, 100
 		if strings.TrimSpace(text) == "" {
-			sample.State, sample.Level, sample.Label = core.StatusLevelFailure, core.StatusLevelFailure, "无值"
 			sample.Display = "空"
+		}
+		if mapping := matchTextValueMapping(item.Source.ValueMappings, text); mapping != nil {
+			applySampleLevel(&sample, mapping.Level, mapping.Label, mapping.Color)
 		} else {
-			sample.State, sample.Level, sample.Label = core.StatusLevelSuccess, core.StatusLevelSuccess, "有值"
+			level, label := item.Source.DefaultLevel, item.Source.DefaultLabel
+			if level == "" {
+				level = core.StatusLevelSuccess
+			}
+			if label == "" {
+				label = "正常"
+			}
+			applySampleLevel(&sample, level, label, item.Source.DefaultColor)
 		}
 	}
 	return sample
+}
+
+func matchNumericValueMapping(mappings []core.StatusValueMapping, value float64) *core.StatusValueMapping {
+	for index := range mappings {
+		mapped, err := strconv.ParseFloat(strings.TrimSpace(mappings[index].Value), 64)
+		if err == nil && mapped == value {
+			return &mappings[index]
+		}
+	}
+	return nil
+}
+
+func matchTextValueMapping(mappings []core.StatusValueMapping, value string) *core.StatusValueMapping {
+	for index := range mappings {
+		if mappings[index].Value == value {
+			return &mappings[index]
+		}
+	}
+	return nil
+}
+
+func applySampleLevel(sample *core.StatusSample, level, label, color string) {
+	sample.Level, sample.Label, sample.Color = level, label, color
+	if level == core.StatusLevelSuccess {
+		sample.State = core.StatusLevelSuccess
+	} else {
+		sample.State = core.StatusLevelFailure
+	}
 }
 
 func extractValue(source core.StatusItemSource, record core.MonitorRecord) (any, bool) {

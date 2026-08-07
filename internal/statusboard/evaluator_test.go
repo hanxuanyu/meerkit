@@ -31,6 +31,39 @@ func TestBuildSamplesSupportsConditionRuleAndNumericScaling(t *testing.T) {
 	}
 }
 
+func TestBuildSamplesSupportsExactValueColorsAndTextDefault(t *testing.T) {
+	now := time.Now().UTC()
+	maximum := 100.0
+	numericItem := core.StatusBoardItem{
+		Source:     core.StatusItemSource{Kind: core.StatusSourceResultField, ResultSet: "response", Field: "code", ValueType: core.StatusValueNumber, ValueMappings: []core.StatusValueMapping{{Value: "0", Level: core.StatusLevelFailure, Label: "零值异常", Color: "green"}}},
+		Thresholds: []core.StatusThreshold{{Maximum: &maximum, Level: core.StatusLevelSuccess, Label: "正常"}, {Level: core.StatusLevelWarning, Label: "偏高"}},
+	}
+	records := []core.MonitorRecord{{ID: "zero", StartedAt: now, Result: map[string]any{"response": map[string]any{"code": 0}}}, {ID: "other", StartedAt: now, Result: map[string]any{"response": map[string]any{"code": 20}}}}
+	samples := BuildSamples(numericItem, records)
+	if samples[0].Level != core.StatusLevelFailure || samples[0].Color != "green" || samples[0].Label != "零值异常" || samples[1].Level != core.StatusLevelSuccess {
+		t.Fatalf("unexpected numeric exact-value samples: %#v", samples)
+	}
+
+	textItem := core.StatusBoardItem{Source: core.StatusItemSource{Kind: core.StatusSourceResultField, ResultSet: "response", Field: "state", ValueType: core.StatusValueText, DefaultLevel: core.StatusLevelSuccess, DefaultLabel: "其他状态", ValueMappings: []core.StatusValueMapping{{Value: "DOWN", Level: core.StatusLevelFailure, Label: "离线"}, {Value: "", Level: core.StatusLevelWarning, Label: "无状态"}}}}
+	records = []core.MonitorRecord{{ID: "down", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": "DOWN"}}}, {ID: "empty", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": ""}}}, {ID: "other", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": "UP"}}}}
+	samples = BuildSamples(textItem, records)
+	if samples[0].Level != core.StatusLevelFailure || samples[1].Level != core.StatusLevelWarning || samples[1].Display != "空" || samples[2].Level != core.StatusLevelSuccess || samples[2].Label != "其他状态" {
+		t.Fatalf("unexpected text exact-value samples: %#v", samples)
+	}
+}
+
+func TestStatusColorPresetsAreIndependentFromSemanticLevel(t *testing.T) {
+	maximum := 10.0
+	thresholds := []core.StatusThreshold{{Maximum: &maximum, Level: core.StatusLevelFailure, Label: "异常", Color: "green"}, {Level: core.StatusLevelSuccess, Label: "正常", Color: "red"}}
+	if err := validateThresholds(thresholds); err != nil {
+		t.Fatalf("independent threshold colors should be valid: %v", err)
+	}
+	source := core.StatusItemSource{ValueType: core.StatusValueText, DefaultLevel: core.StatusLevelFailure, DefaultLabel: "异常", DefaultColor: "green", ValueMappings: []core.StatusValueMapping{{Value: "ready", Level: core.StatusLevelSuccess, Label: "正常", Color: "red"}}}
+	if err := normalizeAndValidateValueMappings(&source); err != nil {
+		t.Fatalf("independent exact-value colors should be valid: %v", err)
+	}
+}
+
 func TestEvaluateTrendRuleTypesAndUnknown(t *testing.T) {
 	numeric := func(values ...float64) []core.StatusSample {
 		result := make([]core.StatusSample, len(values))

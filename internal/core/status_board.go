@@ -18,18 +18,30 @@ const (
 )
 
 type StatusItemSource struct {
-	Kind      string `json:"kind"`
-	RuleID    string `json:"rule_id,omitempty"`
-	ResultSet string `json:"result_set,omitempty"`
-	Field     string `json:"field,omitempty"`
-	Path      string `json:"path,omitempty"`
-	ValueType string `json:"value_type"`
+	Kind          string               `json:"kind"`
+	RuleID        string               `json:"rule_id,omitempty"`
+	ResultSet     string               `json:"result_set,omitempty"`
+	Field         string               `json:"field,omitempty"`
+	Path          string               `json:"path,omitempty"`
+	ValueType     string               `json:"value_type"`
+	ValueMappings []StatusValueMapping `json:"value_mappings,omitempty"`
+	DefaultLevel  string               `json:"default_level,omitempty"`
+	DefaultLabel  string               `json:"default_label,omitempty"`
+	DefaultColor  string               `json:"default_color,omitempty"`
+}
+
+type StatusValueMapping struct {
+	Value string `json:"value"`
+	Level string `json:"level"`
+	Label string `json:"label"`
+	Color string `json:"color,omitempty"`
 }
 
 type StatusThreshold struct {
 	Maximum *float64 `json:"maximum,omitempty"`
 	Level   string   `json:"level"`
 	Label   string   `json:"label"`
+	Color   string   `json:"color,omitempty"`
 }
 
 const (
@@ -84,6 +96,7 @@ type StatusSample struct {
 	Display   string    `json:"display"`
 	State     string    `json:"state"`
 	Level     string    `json:"level"`
+	Color     string    `json:"color,omitempty"`
 	Label     string    `json:"label,omitempty"`
 	Height    float64   `json:"height"`
 	Numeric   *float64  `json:"numeric,omitempty"`
