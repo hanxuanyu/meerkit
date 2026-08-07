@@ -3,8 +3,16 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 )
+
+const systemAuthConfigType = "auth"
+
+type systemAuthConfig struct {
+	SessionTTL   string `json:"session_ttl,omitempty"`
+	AdminKeyHash string `json:"admin_key_hash,omitempty"`
+}
 
 type AdminSession struct {
 	TokenHash  string
@@ -15,18 +23,52 @@ type AdminSession struct {
 }
 
 func (s *Store) AdminKeyHash(ctx context.Context) (string, error) {
-	var value string
-	err := s.db.QueryRowContext(ctx, `SELECT key_hash FROM admin_credentials WHERE id=1`).Scan(&value)
-	return value, err
+	value, err := s.GetSystemConfig(ctx, systemAuthConfigType)
+	if err != nil {
+		return "", err
+	}
+	var config systemAuthConfig
+	if err := json.Unmarshal(value.Data, &config); err != nil {
+		return "", err
+	}
+	if config.AdminKeyHash == "" {
+		return "", sql.ErrNoRows
+	}
+	return config.AdminKeyHash, nil
 }
 func (s *Store) SetAdminKeyHash(ctx context.Context, value string, resetSessions bool) error {
+	s.systemConfigMu.Lock()
+	defer s.systemConfigMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO admin_credentials(id,key_hash,created_at,updated_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET key_hash=excluded.key_hash,updated_at=excluded.updated_at`, value, now, now); err != nil {
+	var existingJSON string
+	config := systemAuthConfig{}
+	err = tx.QueryRowContext(ctx, `SELECT data_json FROM system_configs WHERE config_type=?`, systemAuthConfigType).Scan(&existingJSON)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	exists := err == nil
+	if exists && existingJSON != "" {
+		if err := json.Unmarshal([]byte(existingJSON), &config); err != nil {
+			return err
+		}
+	}
+	config.AdminKeyHash = value
+	data, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	if exists {
+		// The key is managed outside the runtime-config editor, so rotating it
+		// must not invalidate an in-flight auth.session_ttl version.
+		if _, err := tx.ExecContext(ctx, `UPDATE system_configs SET data_json=?,updated_at=? WHERE config_type=?`, string(data), now, systemAuthConfigType); err != nil {
+			return err
+		}
+	} else if _, err := tx.ExecContext(ctx, `INSERT INTO system_configs(config_type,data_json,version,created_at,updated_at) VALUES(?,?,1,?,?)`, systemAuthConfigType, string(data), now, now); err != nil {
 		return err
 	}
 	if resetSessions {

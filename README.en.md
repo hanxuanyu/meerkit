@@ -15,11 +15,13 @@ The default UI is available at `http://127.0.0.1:8080`. On first access, set an 
 meerkit --data-dir ./data admin reset-key --key 'a-new-access-key'
 ```
 
-Configuration precedence is built-in defaults, `config.yaml`, `MEERKIT_*` environment variables, then command-line flags. Nested environment variables use double underscores:
+`config.yaml`, `MEERKIT_*` environment variables, and command-line flags only define startup configuration: listen address and port, data directory, log file directory/name/rotation settings, master key file, plugin source directory, and trusted signing keys. Precedence is built-in defaults, config file, environment variables, then command-line flags. Nested environment variables use double underscores:
 
 ```bash
 MEERKIT_SERVER__PORT=9090 MEERKIT_STORAGE__DATA_DIR=/var/lib/meerkit go run .
 ```
+
+Retention and cleanup periods, scheduler settings, session TTL, host and plugin log levels/formats, and log output switches are runtime configuration. They are stored as JSON rows in the SQLite `system_configs` table and can only be changed from the Settings page or runtime configuration API (`GET /api/v1/system/config`, `PATCH /api/v1/system/config/runtime/:type`). Container restarts do not overwrite database values with environment variables; stored values remain effective after restart. Settings can reset one type or all types to code defaults. The administrator key is also stored in the `auth` row, but is managed only by setup and `admin reset-key --key`; it is never shown or reset as a default.
 
 ## Plugins
 
@@ -80,14 +82,12 @@ The host version defaults to `dev` when no version is injected through `-ldflags
 ```yaml
 plugins:
   source_dir: ./plugins
-  log_level: info
-  log_format: simple
   trusted_keys: {}
 ```
 
 Plugin loading is now derived from the host version and no longer requires `plugins.mode`: a `dev` host prefers source plugins and falls back to packages when none are present, while a versioned release host loads packages only. `MEERKIT_PLUGINS__SOURCE_DIR` can override the source directory. Development staging files and binaries are written only under `${storage.data_dir}/plugins` (the repository-root `data/plugins` directory by default), never under a plugin source directory. Source plugins are marked as development sources in the management page and have no exportable signed archive. A release host removes development installation records before restoring packaged plugins next to the executable.
 
-Host `logging.format` accepts `text`, `simple`, and `json`, defaulting to `simple`. Plugin logging is configured independently with `plugins.log_level` and `plugins.log_format` (or `MEERKIT_PLUGINS__LOG_LEVEL` and `MEERKIT_PLUGINS__LOG_FORMAT`) and also defaults to `simple`, producing compact lines such as `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http` for quick scanning.
+Host and plugin log levels, formats, and output switches are edited in runtime settings. Formats are `text`, `simple`, and `json`, with `simple` as the default. Plugin logging produces compact lines such as `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http`; changes apply to subsequently started plugins and may restart an active plugin process.
 
 Use the equivalent PowerShell scripts on Windows:
 
@@ -105,6 +105,7 @@ Back up and retain the private key for the lifetime of the release line. Replaci
 ```text
 main.go
 internal/         host application packages
+internal/runtimeconfig/ runtime configuration defaults, validation, and hot application
 plugins/          plugin protocol definitions, official plugins, and examples
 cmd/pluginpack/   plugin packaging and signing tool
 sdk/              public monitor plugin SDK and gRPC protocol

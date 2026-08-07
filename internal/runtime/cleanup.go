@@ -11,27 +11,33 @@ import (
 
 type CleanupWorker struct {
 	store                 *store.Store
-	interval              time.Duration
-	recordRetention       time.Duration
-	notificationRetention time.Duration
+	config                func() app.RuntimeConfig
 	logger                *slog.Logger
 	onNotificationsPruned func(int)
+	changes               <-chan struct{}
 }
 
-func NewCleanupWorker(database *store.Store, config app.Config, logger *slog.Logger, onNotificationsPruned func(int)) *CleanupWorker {
-	return &CleanupWorker{
-		store: database, interval: config.CleanupIntervalDuration(), recordRetention: config.RetentionDuration(),
-		notificationRetention: config.NotificationRetentionDuration(), logger: logger, onNotificationsPruned: onNotificationsPruned,
+func NewCleanupWorker(database *store.Store, config func() app.RuntimeConfig, logger *slog.Logger, onNotificationsPruned func(int), changes ...<-chan struct{}) *CleanupWorker {
+	var changeChannel <-chan struct{}
+	if len(changes) > 0 {
+		changeChannel = changes[0]
 	}
+	return &CleanupWorker{store: database, config: config, logger: logger, onNotificationsPruned: onNotificationsPruned, changes: changeChannel}
 }
 
 func (w *CleanupWorker) Start(ctx context.Context) {
+	current := w.config()
 	if w.logger != nil {
-		w.logger.Info("storage cleanup started", "interval", w.interval.String(), "record_retention", w.recordRetention.String(), "notification_retention", w.notificationRetention.String())
+		retention, notificationRetention, interval := current.StorageDurations()
+		w.logger.Info("storage cleanup started", "interval", interval.String(), "record_retention", retention.String(), "notification_retention", notificationRetention.String())
 	}
 	w.run(ctx, time.Now())
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
+	_, _, interval := current.StorageDurations()
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	defer func() {
 		if w.logger != nil {
 			w.logger.Info("storage cleanup stopped")
@@ -41,14 +47,32 @@ func (w *CleanupWorker) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case <-w.changes:
+			_, _, interval := w.config().StorageDurations()
+			if interval <= 0 {
+				interval = time.Hour
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(interval)
+		case now := <-timer.C:
 			w.run(ctx, now)
+			_, _, interval := w.config().StorageDurations()
+			if interval <= 0 {
+				interval = time.Hour
+			}
+			timer.Reset(interval)
 		}
 	}
 }
 
 func (w *CleanupWorker) run(ctx context.Context, now time.Time) {
-	recordBefore := now.Add(-w.recordRetention)
+	retention, notificationRetention, _ := w.config().StorageDurations()
+	recordBefore := now.Add(-retention)
 	recordsDeleted, recordErr := w.store.PruneRecords(ctx, recordBefore)
 	if recordErr != nil {
 		if w.logger != nil {
@@ -58,7 +82,7 @@ func (w *CleanupWorker) run(ctx context.Context, now time.Time) {
 		w.logger.Info("monitor records pruned", "deleted", recordsDeleted, "before", recordBefore)
 	}
 
-	notificationBefore := now.Add(-w.notificationRetention)
+	notificationBefore := now.Add(-notificationRetention)
 	notificationsDeleted, notificationErr := w.store.PruneInAppNotifications(ctx, notificationBefore)
 	if notificationErr != nil {
 		if w.logger != nil {

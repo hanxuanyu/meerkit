@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"meerkit/internal/core"
@@ -15,7 +16,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db             *sql.DB
+	systemConfigMu sync.Mutex
 }
 
 type PageResult[T any] struct {
@@ -175,9 +177,10 @@ CREATE TABLE IF NOT EXISTS module_descriptor_snapshots (
   created_at TEXT NOT NULL,
   PRIMARY KEY(module_type, module_version)
 );
-CREATE TABLE IF NOT EXISTS admin_credentials (
-  id INTEGER PRIMARY KEY CHECK(id=1),
-  key_hash TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS system_configs (
+  config_type TEXT PRIMARY KEY,
+  data_json TEXT NOT NULL CHECK(json_valid(data_json)),
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

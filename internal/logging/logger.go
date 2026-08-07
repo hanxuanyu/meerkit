@@ -1,7 +1,6 @@
 package logging
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,36 +16,11 @@ import (
 // New creates separate business and HTTP access loggers. The access logger is
 // nil when access logging is disabled.
 func New(config app.LoggingConfig) (*slog.Logger, *slog.Logger, func() error, error) {
-	level, err := ParseLevel(config.Level)
+	businessLogger, accessLogger, controller, err := NewDynamic(config, app.DefaultRuntimeConfig().Logging)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	businessOutput, closeBusiness, err := createOutput("logging.business", config.Console.Enabled, config.File)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	businessLogger := newLogger(businessOutput, config.Format, level, config.AddSource, "business")
-
-	var accessLogger *slog.Logger
-	closeAccess := func() error { return nil }
-	if config.Console.Access || (config.File.Enabled && config.File.Access.Enabled) {
-		accessFile := config.File
-		accessFile.Enabled = config.File.Enabled && config.File.Access.Enabled
-		accessFile.Filename = config.File.Access.Filename
-		accessOutput, closeAccessWriter, accessErr := createOutput("logging.access", config.Console.Access, accessFile)
-		if accessErr != nil {
-			_ = closeBusiness()
-			return nil, nil, nil, accessErr
-		}
-		accessLogger = newLogger(accessOutput, config.Format, level, false, "access")
-		closeAccess = closeAccessWriter
-	}
-
-	closeLogger := func() error {
-		return errors.Join(closeAccess(), closeBusiness())
-	}
-	return businessLogger, accessLogger, closeLogger, nil
+	return businessLogger, accessLogger, controller.Close, nil
 }
 
 func newLogger(output io.Writer, format string, level slog.Level, addSource bool, channel string) *slog.Logger {
@@ -57,13 +31,13 @@ func newLogger(output io.Writer, format string, level slog.Level, addSource bool
 	return logger.With("service", "meerkit", "channel", channel)
 }
 
-func createOutput(prefix string, console bool, file app.LogFileConfig) (io.Writer, func() error, error) {
+func createOutput(prefix string, console, fileEnabled bool, file app.LogFileConfig) (io.Writer, func() error, error) {
 	writers := make([]io.Writer, 0, 2)
 	if console {
 		writers = append(writers, os.Stdout)
 	}
 	var rotatingFile *lumberjack.Logger
-	if file.Enabled {
+	if fileEnabled {
 		if filepath.Base(file.Filename) != file.Filename || file.Filename == "." || file.Filename == ".." {
 			return nil, nil, fmt.Errorf("%s.filename must be a file name, got %q", prefix, file.Filename)
 		}
@@ -80,7 +54,7 @@ func createOutput(prefix string, console bool, file app.LogFileConfig) (io.Write
 		writers = append(writers, rotatingFile)
 	}
 	if len(writers) == 0 {
-		return nil, nil, fmt.Errorf("%s: no log output is enabled", prefix)
+		return nil, nil, errNoLogOutput
 	}
 
 	var output io.Writer = writers[0]

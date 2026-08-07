@@ -23,6 +23,7 @@ import (
 	"meerkit/internal/notification/inapp"
 	pluginruntime "meerkit/internal/plugin"
 	runtimeapp "meerkit/internal/runtime"
+	"meerkit/internal/runtimeconfig"
 	"meerkit/internal/store"
 )
 
@@ -37,11 +38,16 @@ type APIServer struct {
 	accessLogger *slog.Logger
 	plugins      *pluginruntime.Manager
 	auth         *auth.Service
+	runtime      *runtimeconfig.Manager
 	loginLimiter *loginLimiter
 }
 
-func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger) *APIServer {
-	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, inAppHub: inAppHub, plugins: plugins, auth: authService, loginLimiter: newLoginLimiter(), config: config, logger: logger, accessLogger: accessLogger}
+func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
+	var runtimeManager *runtimeconfig.Manager
+	if len(runtimeManagers) > 0 {
+		runtimeManager = runtimeManagers[0]
+	}
+	return &APIServer{store: store, modules: modules, notifiers: notifiers, runner: runner, inAppHub: inAppHub, plugins: plugins, auth: authService, runtime: runtimeManager, loginLimiter: newLoginLimiter(), config: config, logger: logger, accessLogger: accessLogger}
 }
 
 func (a *APIServer) Router() http.Handler {
@@ -67,6 +73,7 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/auth/login", a.authLogin)
 	api.Use(a.requireAuth())
 	api.POST("/auth/logout", a.authLogout)
+	api.POST("/auth/change-key", a.authChangeKey)
 	api.GET("/auth/session", a.authSession)
 	api.GET("/plugins", a.listPlugins)
 	api.POST("/plugins/import", a.importPlugin)
@@ -83,15 +90,19 @@ func (a *APIServer) Router() http.Handler {
 	api.GET("/modules/:type", func(c *gin.Context) { a.handleModules(c.Writer, c.Request, []string{c.Param("type")}) })
 	api.GET("/notifiers", legacy(a.handleNotifiers))
 	api.GET("/system", func(c *gin.Context) {
+		runtime := a.runtimeSnapshot()
 		writeJSON(c.Writer, http.StatusOK, map[string]any{
-			"server": a.config.ListenAddress(), "retention": a.config.Storage.Retention,
-			"notification_retention": a.config.Storage.NotificationRetention, "cleanup_interval": a.config.Storage.CleanupInterval,
-			"timezone": a.config.Scheduler.Timezone,
+			"server": a.config.ListenAddress(), "retention": runtime.Storage.Retention,
+			"notification_retention": runtime.Storage.NotificationRetention, "cleanup_interval": runtime.Storage.CleanupInterval,
+			"timezone": runtime.Scheduler.Timezone,
 		})
 	})
 	api.GET("/system/config", func(c *gin.Context) {
-		writeJSON(c.Writer, http.StatusOK, a.config.Metadata)
+		a.systemConfig(c)
 	})
+	api.PATCH("/system/config/runtime/:type", func(c *gin.Context) { a.updateSystemConfig(c, c.Param("type")) })
+	api.POST("/system/config/runtime/:type/reset", func(c *gin.Context) { a.resetSystemConfig(c, c.Param("type")) })
+	api.POST("/system/config/runtime/reset", a.resetAllSystemConfigs)
 
 	api.GET("/notification-channels", legacyParts(a.handleChannels))
 	api.POST("/notification-channels", legacyParts(a.handleChannels))
@@ -503,6 +514,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	if len(parts) == 0 {
 		switch r.Method {
 		case http.MethodGet:
+			runtime := a.runtimeSnapshot()
 			monitors, err := a.store.ListMonitorsPage(r.Context(), store.MonitorListOptions{
 				Page:                 queryInt(r, "page", 1),
 				PageSize:             queryInt(r, "page_size", 20),
@@ -515,7 +527,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, monitorListPage(monitors, a.config.Scheduler.Timezone, a.modules))
+			writeJSON(w, http.StatusOK, monitorListPage(monitors, runtime.Scheduler.Timezone, a.modules))
 		case http.MethodPost:
 			a.createMonitor(w, r)
 		default:
@@ -604,7 +616,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				writeError(w, http.StatusNotFound, "monitor_not_found", err.Error())
 				return
 			}
-			next, err := runtimeapp.NextScheduleTimes(monitor.Schedules, a.config.Scheduler.Timezone, 5)
+			next, err := runtimeapp.NextScheduleTimes(monitor.Schedules, a.runtimeSnapshot().Scheduler.Timezone, 5)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 				return
@@ -622,7 +634,7 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, monitorListItemFor(monitor, a.config.Scheduler.Timezone, a.modules))
+		writeJSON(w, http.StatusOK, monitorListItemFor(monitor, a.runtimeSnapshot().Scheduler.Timezone, a.modules))
 	case http.MethodPatch, http.MethodPut:
 		a.updateMonitor(w, r, monitor)
 	case http.MethodDelete:
@@ -729,11 +741,12 @@ func (a *APIServer) previewSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Expression = strings.TrimSpace(payload.Expression)
-	if err := runtimeapp.ValidateSchedules([]string{payload.Expression}, a.config.Scheduler.Timezone); err != nil {
+	timezone := a.runtimeSnapshot().Scheduler.Timezone
+	if err := runtimeapp.ValidateSchedules([]string{payload.Expression}, timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}
-	next, err := runtimeapp.NextScheduleTimes([]string{payload.Expression}, a.config.Scheduler.Timezone, 3)
+	next, err := runtimeapp.NextScheduleTimes([]string{payload.Expression}, timezone, 3)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
@@ -742,7 +755,7 @@ func (a *APIServer) previewSchedule(w http.ResponseWriter, r *http.Request) {
 		"expression":  payload.Expression,
 		"description": runtimeapp.DescribeSchedule(payload.Expression),
 		"next_runs":   next,
-		"timezone":    a.config.Scheduler.Timezone,
+		"timezone":    timezone,
 	})
 }
 
@@ -775,7 +788,7 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 	if len(payload.Schedules) == 0 {
 		payload.Schedules = []string{"*/5 * * * *"}
 	}
-	if err := runtimeapp.ValidateSchedules(payload.Schedules, a.config.Scheduler.Timezone); err != nil {
+	if err := runtimeapp.ValidateSchedules(payload.Schedules, a.runtimeSnapshot().Scheduler.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}
@@ -866,7 +879,7 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 	if payload.NotificationChannelIDs != nil {
 		current.NotificationChannelIDs = payload.NotificationChannelIDs
 	}
-	if err := runtimeapp.ValidateSchedules(current.Schedules, a.config.Scheduler.Timezone); err != nil {
+	if err := runtimeapp.ValidateSchedules(current.Schedules, a.runtimeSnapshot().Scheduler.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", err.Error())
 		return
 	}

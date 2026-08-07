@@ -297,27 +297,34 @@ type scheduleTask struct {
 type Scheduler struct {
 	runner           *Runner
 	store            *store.Store
-	defaultTimezone  string
-	poll             time.Duration
-	maxConcurrency   int
-	semaphore        chan struct{}
+	config           func() app.RuntimeConfig
 	logger           *slog.Logger
+	changes          <-chan struct{}
 	tasksMu          sync.Mutex
 	tasks            map[string]*scheduleTask
 	invalidSchedules map[string]string
 	pausedMonitors   map[string]string
+	activeMu         sync.Mutex
+	activeRuns       int
+	lastTimezone     string
 }
 
-func NewScheduler(runner *Runner, store *store.Store, config app.Config, logger *slog.Logger) *Scheduler {
-	return &Scheduler{runner: runner, store: store, defaultTimezone: config.Scheduler.Timezone, poll: time.Duration(config.Scheduler.PollMilliseconds) * time.Millisecond, maxConcurrency: config.Scheduler.MaxConcurrency, semaphore: make(chan struct{}, config.Scheduler.MaxConcurrency), logger: logger, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string), pausedMonitors: make(map[string]string)}
+func NewScheduler(runner *Runner, store *store.Store, config func() app.RuntimeConfig, logger *slog.Logger, changes ...<-chan struct{}) *Scheduler {
+	current := config()
+	var changeChannel <-chan struct{}
+	if len(changes) > 0 {
+		changeChannel = changes[0]
+	}
+	return &Scheduler{runner: runner, store: store, config: config, logger: logger, changes: changeChannel, tasks: make(map[string]*scheduleTask), invalidSchedules: make(map[string]string), pausedMonitors: make(map[string]string), lastTimezone: current.Scheduler.Timezone}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
+	current := s.config()
 	if s.logger != nil {
-		s.logger.Info("scheduler started", "poll_ms", s.poll.Milliseconds(), "max_concurrency", s.maxConcurrency)
+		s.logger.Info("scheduler started", "poll_ms", current.Scheduler.PollMilliseconds, "max_concurrency", current.Scheduler.MaxConcurrency)
 	}
-	ticker := time.NewTicker(s.poll)
-	defer ticker.Stop()
+	timer := time.NewTimer(time.Duration(current.Scheduler.PollMilliseconds) * time.Millisecond)
+	defer timer.Stop()
 	defer func() {
 		if s.logger != nil {
 			s.logger.Info("scheduler stopped")
@@ -327,13 +334,31 @@ func (s *Scheduler) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case <-s.changes:
+			current = s.config()
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			s.syncAndRun(ctx, time.Now())
+			interval := time.Duration(current.Scheduler.PollMilliseconds) * time.Millisecond
+			if interval <= 0 {
+				interval = 500 * time.Millisecond
+			}
+			timer.Reset(interval)
+		case now := <-timer.C:
 			s.syncAndRun(ctx, now)
+			current = s.config()
+			timer.Reset(time.Duration(current.Scheduler.PollMilliseconds) * time.Millisecond)
 		}
 	}
 }
 
 func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
+	current := s.config()
+	timezone := current.Scheduler.Timezone
 	monitors, err := s.store.ListMonitors(ctx)
 	if err != nil {
 		if s.logger != nil {
@@ -347,6 +372,11 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 	present := make(map[string]bool, len(monitors))
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
+	if s.lastTimezone != timezone {
+		s.tasks = make(map[string]*scheduleTask)
+		s.invalidSchedules = make(map[string]string)
+		s.lastTimezone = timezone
+	}
 	for _, monitor := range monitors {
 		if !monitor.Enabled {
 			delete(s.pausedMonitors, monitor.ID)
@@ -370,10 +400,10 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 		task := s.tasks[monitor.ID]
 		signature := strings.Join(monitor.Schedules, "\x00")
 		if task == nil || strings.Join(task.expressions, "\x00") != signature {
-			next, scheduleErr := nextScheduleTime(monitor.Schedules, s.defaultTimezone, now)
+			next, scheduleErr := nextScheduleTime(monitor.Schedules, timezone, now)
 			if scheduleErr != nil {
 				if s.invalidSchedules[monitor.ID] != signature && s.logger != nil {
-					s.logger.Warn("monitor schedule is invalid", "monitor_id", monitor.ID, "schedules", monitor.Schedules, "timezone", s.defaultTimezone, "error", scheduleErr)
+					s.logger.Warn("monitor schedule is invalid", "monitor_id", monitor.ID, "schedules", monitor.Schedules, "timezone", timezone, "error", scheduleErr)
 				}
 				s.invalidSchedules[monitor.ID] = signature
 				continue
@@ -382,7 +412,7 @@ func (s *Scheduler) syncAndRun(ctx context.Context, now time.Time) {
 			task = &scheduleTask{expressions: append([]string(nil), monitor.Schedules...), next: next}
 			s.tasks[monitor.ID] = task
 		}
-		due, scheduleErr := advanceScheduleTask(task, s.defaultTimezone, now)
+		due, scheduleErr := advanceScheduleTask(task, timezone, now)
 		if scheduleErr != nil {
 			if s.logger != nil {
 				s.logger.Warn("monitor schedule became invalid", "monitor_id", monitor.ID, "schedules", task.expressions, "error", scheduleErr)
@@ -432,23 +462,31 @@ func advanceScheduleTask(task *scheduleTask, timezone string, now time.Time) (bo
 }
 
 func (s *Scheduler) launch(ctx context.Context, monitorID string) {
-	select {
-	case s.semaphore <- struct{}{}:
-		go func() {
-			defer func() { <-s.semaphore }()
-			if _, err := s.runner.TryRun(ctx, monitorID); err != nil && !errors.Is(err, ErrMonitorRunning) && s.logger != nil {
-				if errors.Is(err, ErrMonitorModuleUnavailable) {
-					s.logger.Warn("scheduled monitor skipped because module became unavailable", "monitor_id", monitorID)
-				} else {
-					s.logger.Error("scheduled monitor failed", "monitor_id", monitorID, "error", err)
-				}
-			}
-		}()
-	default:
+	limit := s.config().Scheduler.MaxConcurrency
+	s.activeMu.Lock()
+	if s.activeRuns >= limit {
+		s.activeMu.Unlock()
 		if s.logger != nil {
-			s.logger.Warn("scheduler concurrency limit reached", "monitor_id", monitorID, "limit", s.maxConcurrency)
+			s.logger.Warn("scheduler concurrency limit reached", "monitor_id", monitorID, "limit", limit)
 		}
+		return
 	}
+	s.activeRuns++
+	s.activeMu.Unlock()
+	go func() {
+		defer func() {
+			s.activeMu.Lock()
+			s.activeRuns--
+			s.activeMu.Unlock()
+		}()
+		if _, err := s.runner.TryRun(ctx, monitorID); err != nil && !errors.Is(err, ErrMonitorRunning) && s.logger != nil {
+			if errors.Is(err, ErrMonitorModuleUnavailable) {
+				s.logger.Warn("scheduled monitor skipped because module became unavailable", "monitor_id", monitorID)
+			} else {
+				s.logger.Error("scheduled monitor failed", "monitor_id", monitorID, "error", err)
+			}
+		}
+	}()
 }
 
 func parseSchedule(expression string) (cron.Schedule, error) {

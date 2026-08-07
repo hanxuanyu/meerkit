@@ -80,12 +80,6 @@ The plugin logs request start, request failures, response-read failures, and pro
 
 Configure plugin logging through the host:
 
-```yaml
-plugins:
-  log_level: info
-  log_format: simple
-```
-
 Logs are stored under `${storage.data_dir}/plugins/logs` and can be followed from the plugin management page.
 
 ## Development and testing

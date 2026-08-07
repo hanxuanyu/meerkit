@@ -97,6 +97,89 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
   .page-heading-with-action > .button { grid-area: action; align-self: center; justify-self: end; white-space: nowrap; }
 }
 
+.settings-config-tabs { gap: 14px; }
+.settings-config-tabs > .tabs-list { padding: 0 4px; }
+.settings-config-tabs > .tabs-list .tabs-trigger { min-width: 94px; padding-right: 12px; padding-left: 12px; font-size: 11px; }
+.settings-unsaved-banner { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 7px; color: #92400e; background: #fffbeb; }
+.settings-unsaved-banner > svg { flex: none; margin-top: 1px; }
+.settings-unsaved-banner > div { display: grid; gap: 3px; min-width: 0; }
+.settings-unsaved-banner strong { font-size: 12px; }
+.settings-unsaved-banner span { font-size: 11px; line-height: 1.45; }
+.settings-config-runtime { min-width: 0; }
+.settings-config-runtime > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
+.settings-config-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.settings-config-startup { min-width: 0; }
+.settings-config-startup > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
+.startup-config-items { display: grid; gap: 0; margin: 16px 20px 22px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.startup-config-item { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.4fr) max-content; grid-template-areas: "header values source"; align-items: center; gap: 12px; min-width: 0; padding: 10px 14px; }
+.startup-config-item + .startup-config-item { border-top: 1px solid var(--border); }
+.startup-config-item-header { display: grid; grid-area: header; gap: 5px; min-width: 0; }
+.startup-config-item-key { display: flex; align-items: center; min-width: 0; }
+.startup-config-item-key code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.startup-config-source.badge { grid-area: source; justify-self: end; min-height: 18px; max-width: 118px; padding: 0 6px; overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.startup-config-item-description { max-width: 300px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.startup-config-values { display: grid; grid-area: values; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; }
+.startup-config-values > div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.startup-config-values span { flex: none; color: var(--muted); font-size: 10px; font-weight: 650; }
+.startup-config-values .config-value { max-width: 100%; min-width: 0; overflow: hidden; overflow-wrap: anywhere; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-config-groups { display: grid; gap: 12px; padding: 16px 20px 22px; }
+.runtime-config-group { overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.runtime-config-group-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 15px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 82%, var(--panel-subtle)); }
+.runtime-config-group-header > div:first-child { min-width: 0; }
+.runtime-config-group-header p { margin-top: 4px; font-size: 11px; }
+.runtime-config-group-header code { font-size: 9px; }
+.runtime-config-group-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.runtime-config-unsaved-label { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid #fbbf24; border-radius: 999px; color: #92400e; background: #fffbeb; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.runtime-config-items { display: grid; gap: 0; }
+.runtime-config-item { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.5fr) 34px; grid-template-areas: "header fields footer"; align-items: center; gap: 12px; min-width: 0; padding: 10px 15px; }
+.runtime-config-item + .runtime-config-item { border-top: 1px solid var(--border); }
+.runtime-config-item.is-unsaved { background: color-mix(in srgb, #f59e0b 7%, var(--panel)); box-shadow: inset 3px 0 #f59e0b; }
+.runtime-config-item-header { display: grid; grid-area: header; align-content: center; gap: 5px; min-width: 0; }
+.runtime-config-path { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.runtime-config-path code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-config-path > span { color: #b45309; font-size: 10px; font-weight: 650; }
+.runtime-config-item-alert { flex: none; color: #b45309; }
+.runtime-config-item-description { max-width: 300px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-config-item-fields { display: grid; grid-area: fields; grid-template-columns: minmax(0, 1fr) minmax(0, .85fr); align-items: center; gap: 10px; min-width: 0; }
+.runtime-config-field { display: grid; grid-template-columns: auto minmax(0, 1fr); min-width: 0; align-items: center; gap: 6px; }
+.runtime-config-field > span { flex: none; color: var(--muted); font-size: 10px; font-weight: 650; }
+.runtime-config-field > .config-value { min-width: 0; padding: 7px 8px; }
+.runtime-config-editor { width: 100%; min-width: 0; min-height: 30px; border-color: var(--border); border-radius: 6px; color: var(--foreground); background: var(--panel); font-size: 11px; }
+.runtime-config-editor:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(113,113,122,.12); outline: none; }
+.runtime-config-item-footer { display: flex; grid-area: footer; align-items: center; justify-content: flex-end; gap: 6px; min-height: 30px; }
+.runtime-config-group .icon-button, .runtime-config-item-footer .icon-button { color: var(--muted); }
+.admin-key-dialog { width: min(540px, 100%); }
+.admin-key-dialog-heading { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+.admin-key-dialog-heading > svg { flex: none; margin-top: 2px; color: var(--primary); }
+.admin-key-dialog-heading > div { display: grid; min-width: 0; gap: 5px; }
+.admin-key-dialog-heading .eyebrow { margin-bottom: 2px; }
+.admin-key-dialog-heading p { max-width: 420px; margin-top: 2px; }
+.admin-key-dialog-body { gap: 14px; }
+.admin-key-field { display: grid; gap: 7px; color: var(--foreground); font-size: 11px; font-weight: 650; }
+.admin-key-form-error { color: var(--destructive); font-size: 11px; line-height: 1.45; }
+.tabs-content[hidden] { display: none; }
+.dark .settings-unsaved-banner { border-color: #92400e; color: #fcd34d; background: #3f2a12; }
+.dark .runtime-config-unsaved-label { border-color: #92400e; color: #fcd34d; background: #3f2a12; }
+.dark .runtime-config-item.is-unsaved { border-color: #b45309; box-shadow: inset 3px 0 #b45309; }
+.dark .runtime-config-path > span, .dark .runtime-config-item-alert { color: #fbbf24; }
+
+@media (max-width: 640px) {
+  .settings-config-runtime > .section-header, .settings-config-startup > .section-header, .runtime-config-group-header { padding: 15px; }
+  .settings-config-runtime > .section-header { flex-wrap: wrap; }
+  .settings-config-runtime > .section-header .settings-config-actions { width: 100%; justify-content: flex-start; }
+  .startup-config-items { margin: 14px 15px 18px; }
+  .startup-config-item { grid-template-columns: minmax(0, 1fr); grid-template-areas: "header" "values" "source"; gap: 8px; padding: 11px 12px; }
+  .startup-config-values > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .runtime-config-groups { padding: 14px 15px 18px; }
+  .runtime-config-item { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "header footer" "fields fields"; gap: 8px 10px; padding: 11px 12px; }
+  .runtime-config-item-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .settings-config-error { margin: 0 15px 15px; }
+}
+
+@media (max-width: 480px) {
+  .runtime-config-item-fields, .startup-config-values { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Dialog surfaces follow shadcn's portal/overlay composition while keeping
    the monitor form's header, body, and footer as separate layout regions. */
 .modal {
@@ -395,15 +478,13 @@ button.collapsible-text-heading:focus-visible { outline: 2px solid var(--ring); 
 .record-error-block pre { padding: 10px 12px; border-color: #fecaca; color: #991b1b; background: #fef2f2; font-family: inherit; font-size: 12px; line-height: 1.55; }
 .modal-header:has(.records-open-tab) { flex-direction: row; justify-content: space-between; }
 .records-open-tab { margin-right: 24px; }
-.settings-config-card { overflow: hidden; }
-.settings-config-icon { display: grid; place-items: center; width: 30px; height: 30px; color: var(--muted); }
-.settings-config-error { padding: 26px 20px; color: #b91c1c; font-size: 12px; }
-.config-path { display: grid; gap: 5px; }
-.config-path { min-width: 170px; }
+.settings-config-icon { display: grid; width: 32px; height: 32px; flex: none; place-items: center; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--panel-subtle); }
+.settings-config-error { padding: 11px 14px; border: 1px solid #fecaca; border-radius: 7px; color: #991b1b; background: #fef2f2; font-size: 12px; }
+.config-path { display: grid; min-width: 170px; gap: 5px; }
 .config-path .badge { width: max-content; }
 .config-description { display: block; min-width: 220px; max-width: 340px; color: var(--muted); line-height: 1.5; }
-.config-value { display: block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.config-default { color: var(--muted); }
+.config-value { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.config-default { color: var(--muted); background: var(--panel-subtle); }
 
 /* Keep the condition action in a fixed trailing column even when the rule
    does not need a comparison value. The placeholder preserves that column. */

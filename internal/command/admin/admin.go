@@ -2,13 +2,11 @@ package admin
 
 import (
 	"fmt"
-	"os"
-	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"meerkit/internal/app"
 	"meerkit/internal/auth"
+	"meerkit/internal/runtimeconfig"
 	"meerkit/internal/store"
 )
 
@@ -23,18 +21,18 @@ func New(load ConfigLoader) *cobra.Command {
 		}
 		key, _ := command.Flags().GetString("key")
 		if key == "" {
-			key = os.Getenv("MEERKIT_ADMIN_KEY")
-		}
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("provide --key or MEERKIT_ADMIN_KEY")
+			return fmt.Errorf("provide --key")
 		}
 		database, err := store.OpenStore(config.Storage.DataDir)
 		if err != nil {
 			return err
 		}
 		defer database.Close()
-		ttl, _ := time.ParseDuration(config.Security.SessionTTL)
-		if err := auth.NewService(database, ttl).ResetKey(command.Context(), key); err != nil {
+		runtimeManager, err := runtimeconfig.New(command.Context(), database)
+		if err != nil {
+			return err
+		}
+		if err := auth.NewService(database, runtimeManager.Snapshot().SessionTTLDuration()).ResetKey(command.Context(), key); err != nil {
 			return err
 		}
 		fmt.Fprintln(command.OutOrStdout(), "Administrator access key reset; all sessions revoked.")

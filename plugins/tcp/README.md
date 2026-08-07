@@ -62,12 +62,6 @@
 
 日志由宿主配置：
 
-```yaml
-plugins:
-  log_level: info
-  log_format: simple
-```
-
 插件日志保存在 `${storage.data_dir}/plugins/logs`，也可以在插件管理页面实时查看。
 
 ## 开发与测试

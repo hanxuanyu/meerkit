@@ -95,7 +95,8 @@ func TestSchedulerPausesMonitorWhileModuleIsUnavailable(t *testing.T) {
 	}
 
 	modules := monitor.NewRegistry()
-	scheduler := NewScheduler(NewRunner(database, modules, nil, nil), database, app.DefaultConfig(), nil)
+	runtimeConfig := app.DefaultRuntimeConfig()
+	scheduler := NewScheduler(NewRunner(database, modules, nil, nil), database, func() app.RuntimeConfig { return runtimeConfig }, nil)
 	scheduler.syncAndRun(ctx, now)
 	if len(scheduler.tasks) != 0 || scheduler.pausedMonitors[value.ID] == "" {
 		t.Fatalf("unavailable monitor was not paused: tasks=%#v paused=%#v", scheduler.tasks, scheduler.pausedMonitors)

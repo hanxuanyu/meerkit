@@ -23,8 +23,9 @@ export function TabsTrigger({ value, className, children, ...props }) {
   return <button type="button" role="tab" aria-selected={active} tabIndex={active ? 0 : -1} className={cn("tabs-trigger", className)} data-state={active ? "active" : "inactive"} onClick={() => context?.changeValue(value)} {...props}>{children}</button>;
 }
 
-export function TabsContent({ value, className, children }) {
+export function TabsContent({ value, className, children, forceMount = false }) {
   const context = useContext(TabsContext);
-  if (context?.activeValue !== value) return null;
-  return <div role="tabpanel" className={cn("tabs-content", className)}>{children}</div>;
+  const active = context?.activeValue === value;
+  if (!active && !forceMount) return null;
+  return <div role="tabpanel" hidden={!active} className={cn("tabs-content", className)}>{children}</div>;
 }

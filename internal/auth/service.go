@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -24,15 +25,31 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 type Service struct {
-	store *store.Store
-	ttl   time.Duration
+	store    *store.Store
+	ttlNanos atomic.Int64
 }
 
 func NewService(database *store.Store, ttl time.Duration) *Service {
 	if ttl <= 0 {
 		ttl = 30 * 24 * time.Hour
 	}
-	return &Service{store: database, ttl: ttl}
+	service := &Service{store: database}
+	service.ttlNanos.Store(int64(ttl))
+	return service
+}
+
+func (s *Service) SetSessionTTL(ttl time.Duration) {
+	if ttl > 0 {
+		s.ttlNanos.Store(int64(ttl))
+	}
+}
+
+func (s *Service) SessionTTL() time.Duration {
+	value := time.Duration(s.ttlNanos.Load())
+	if value <= 0 {
+		return 30 * 24 * time.Hour
+	}
+	return value
 }
 func (s *Service) Initialized(ctx context.Context) (bool, error) {
 	_, err := s.store.AdminKeyHash(ctx)
@@ -52,6 +69,22 @@ func (s *Service) Setup(ctx context.Context, accessKey string) (Session, error) 
 	return s.setKeyAndSession(ctx, accessKey, false)
 }
 func (s *Service) ResetKey(ctx context.Context, accessKey string) error {
+	return s.replaceKey(ctx, accessKey)
+}
+
+func (s *Service) ChangeKey(ctx context.Context, currentAccessKey, accessKey string) error {
+	encoded, err := s.store.AdminKeyHash(ctx)
+	if err != nil {
+		return fmt.Errorf("administrator is not initialized")
+	}
+	valid, err := verifyAccessKey(currentAccessKey, encoded)
+	if err != nil || !valid {
+		return fmt.Errorf("invalid current administrator access key")
+	}
+	return s.replaceKey(ctx, accessKey)
+}
+
+func (s *Service) replaceKey(ctx context.Context, accessKey string) error {
 	if err := validateAccessKey(accessKey); err != nil {
 		return err
 	}
@@ -85,8 +118,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (store.AdminSe
 		}
 		return store.AdminSession{}, fmt.Errorf("session is invalid or expired")
 	}
-	if value.ExpiresAt.Sub(now) < s.ttl/2 {
-		value.ExpiresAt = now.Add(s.ttl)
+	ttl := s.SessionTTL()
+	if value.ExpiresAt.Sub(now) < ttl/2 {
+		value.ExpiresAt = now.Add(ttl)
 		value.LastSeenAt = now
 		if err := s.store.RefreshAdminSession(ctx, tokenHash, value.ExpiresAt, now); err != nil {
 			return store.AdminSession{}, err
@@ -123,7 +157,7 @@ func (s *Service) createSession(ctx context.Context) (Session, error) {
 		return Session{}, err
 	}
 	now := time.Now().UTC()
-	value := Session{Token: token, CSRFToken: csrf, ExpiresAt: now.Add(s.ttl)}
+	value := Session{Token: token, CSRFToken: csrf, ExpiresAt: now.Add(s.SessionTTL())}
 	if err := s.store.CreateAdminSession(ctx, store.AdminSession{TokenHash: digest(token), CSRFToken: csrf, ExpiresAt: value.ExpiresAt, LastSeenAt: now, CreatedAt: now}); err != nil {
 		return Session{}, err
 	}

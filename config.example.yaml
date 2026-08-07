@@ -3,22 +3,8 @@ server:
     port: 8080
 storage:
     data_dir: ./data
-    retention: 30d
-    notification_retention: 30d
-    cleanup_interval: 1h
-scheduler:
-    timezone: Local
-    max_concurrency: 16
-    poll_milliseconds: 500
 logging:
-    level: info
-    format: simple
-    add_source: true
-    console:
-        enabled: true
-        access: false
     file:
-        enabled: true
         directory: ./logs
         filename: meerkit.log
         max_size_mb: 100
@@ -26,13 +12,9 @@ logging:
         max_age_days: 30
         compress: true
         access:
-            enabled: true
             filename: meerkit-access.log
 security:
-    session_ttl: 720h
     master_key_file: ./data/master.key
 plugins:
     source_dir: ./plugins
-    log_level: info
-    log_format: simple
     trusted_keys: {}

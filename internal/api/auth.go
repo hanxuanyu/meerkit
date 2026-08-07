@@ -105,6 +105,28 @@ func (a *APIServer) authLogout(c *gin.Context) {
 	c.SetCookie(auth.CookieName, "", -1, "/", "", c.Request.TLS != nil, true)
 	c.Status(http.StatusNoContent)
 }
+
+func (a *APIServer) authChangeKey(c *gin.Context) {
+	var payload struct {
+		CurrentAccessKey string `json:"current_access_key"`
+		AccessKey        string `json:"access_key"`
+		Confirm          string `json:"confirm"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		writeError(c.Writer, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if payload.AccessKey != payload.Confirm {
+		writeError(c.Writer, http.StatusBadRequest, "validation_error", "access key confirmation does not match")
+		return
+	}
+	if err := a.auth.ChangeKey(c.Request.Context(), payload.CurrentAccessKey, payload.AccessKey); err != nil {
+		writeError(c.Writer, http.StatusBadRequest, "change_key_failed", err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *APIServer) authSession(c *gin.Context) {
 	value, _ := c.Get(authSessionKey)
 	writeJSON(c.Writer, http.StatusOK, value)

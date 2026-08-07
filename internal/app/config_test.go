@@ -23,12 +23,12 @@ func TestLoadConfigPrecedence(t *testing.T) {
 	if config.Storage.DataDir != "./from-file" {
 		t.Fatalf("file value was not loaded: %s", config.Storage.DataDir)
 	}
-	if config.Storage.NotificationRetention != "30d" || config.Storage.CleanupInterval != "1h" {
-		t.Fatalf("cleanup defaults were not loaded: %#v", config.Storage)
+	if config.Logging.File.Directory != DefaultConfig().Logging.File.Directory {
+		t.Fatalf("static logging defaults were not loaded: %#v", config.Logging.File)
 	}
 }
 
-func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
+func TestRuntimeConfigIsNotLoadedFromYamlEnvironmentOrFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("logging:\n  level: error\n  format: text\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -37,12 +37,9 @@ func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("MEERKIT_LOGGING__LEVEL", "debug")
 	t.Setenv("MEERKIT_LOGGING__FILE__DIRECTORY", logDirectory)
 	t.Setenv("MEERKIT_LOGGING__FILE__ACCESS__FILENAME", "access.log")
-	config, err := LoadConfig([]string{"--config", path, "--log-level", "warn"})
+	config, err := LoadConfig([]string{"--config", path})
 	if err != nil {
 		t.Fatalf("load config failed: %v", err)
-	}
-	if config.Logging.Level != "warn" {
-		t.Fatalf("CLI should override environment: %s", config.Logging.Level)
 	}
 	if config.Logging.File.Directory != logDirectory {
 		t.Fatalf("environment file directory was not loaded: %s", config.Logging.File.Directory)
@@ -53,25 +50,10 @@ func TestLoadLoggingConfigFromEnvironmentAndFlags(t *testing.T) {
 	if config.Metadata.ConfigFile != path {
 		t.Fatalf("metadata config file = %q, want %q", config.Metadata.ConfigFile, path)
 	}
-	var pollDescription string
-	var notificationRetentionDescription string
-	var cleanupIntervalDescription string
 	for _, item := range config.Metadata.Items {
-		if item.Path == "scheduler.poll_milliseconds" {
-			pollDescription = item.Description
+		if strings.HasPrefix(item.Path, "scheduler.") || strings.HasPrefix(item.Path, "storage.retention") {
+			t.Fatalf("runtime config leaked into startup metadata: %s", item.Path)
 		}
-		if item.Path == "storage.notification_retention" {
-			notificationRetentionDescription = item.Description
-		}
-		if item.Path == "storage.cleanup_interval" {
-			cleanupIntervalDescription = item.Description
-		}
-	}
-	if !strings.Contains(pollDescription, "不决定监控执行频率") {
-		t.Fatalf("poll metadata description does not explain cron behavior: %q", pollDescription)
-	}
-	if notificationRetentionDescription == "" || cleanupIntervalDescription == "" {
-		t.Fatalf("cleanup metadata descriptions are missing: notification=%q interval=%q", notificationRetentionDescription, cleanupIntervalDescription)
 	}
 }
 
@@ -97,14 +79,19 @@ func TestLoadConfigCreatesDefaultFileWhenMissing(t *testing.T) {
 	if !strings.Contains(string(data), "server:") || !strings.Contains(string(data), "address: 0.0.0.0") || !strings.Contains(string(data), "port: 8080") {
 		t.Fatalf("generated config does not contain defaults: %s", data)
 	}
+	for _, forbidden := range []string{"retention:", "timezone:", "session_ttl:", "log_level:", "log_format:"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("generated config contains runtime setting %q: %s", forbidden, data)
+		}
+	}
 	if config.Server.Port != DefaultConfig().Server.Port {
 		t.Fatalf("generated default port = %d, want %d", config.Server.Port, DefaultConfig().Server.Port)
 	}
 	if config.Server.Address != "0.0.0.0" {
 		t.Fatalf("generated default address = %q, want 0.0.0.0", config.Server.Address)
 	}
-	if config.Logging.Format != "simple" {
-		t.Fatalf("generated default log format = %q, want simple", config.Logging.Format)
+	if DefaultRuntimeConfig().Logging.Format != "simple" {
+		t.Fatalf("generated runtime default log format = %q, want simple", DefaultRuntimeConfig().Logging.Format)
 	}
 	if config.Metadata.ConfigFile == "" {
 		t.Fatal("generated config file was not reported in metadata")
@@ -146,39 +133,41 @@ func TestPluginConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load plugin config: %v", err)
 	}
-	if config.Plugins.SourceDir != "./custom-plugins" || config.Plugins.LogLevel != "debug" || config.Plugins.LogFormat != "json" {
+	if config.Plugins.SourceDir != "./custom-plugins" {
 		t.Fatalf("plugin config = %#v", config.Plugins)
 	}
 	definitions := map[string]ConfigItem{}
 	for _, item := range config.Metadata.Items {
 		definitions[item.Path] = item
 	}
-	if definitions["plugins.source_dir"].Description == "" || definitions["plugins.log_format"].Description == "" {
+	if definitions["plugins.source_dir"].Description == "" {
 		t.Fatalf("plugin config metadata is incomplete: %#v", definitions)
 	}
 }
 
-func TestPluginLogConfigurationFromEnvironment(t *testing.T) {
+func TestPluginLogConfigurationIsNotLoadedFromEnvironment(t *testing.T) {
 	t.Setenv("MEERKIT_PLUGINS__LOG_LEVEL", "warning")
 	t.Setenv("MEERKIT_PLUGINS__LOG_FORMAT", "simple")
 	config, err := LoadConfigWithOptions(ConfigOptions{})
 	if err != nil {
 		t.Fatalf("load plugin logging config: %v", err)
 	}
-	if config.Plugins.LogLevel != "warn" || config.Plugins.LogFormat != "simple" {
-		t.Fatalf("plugin logging config = %#v", config.Plugins)
+	for _, item := range config.Metadata.Items {
+		if item.Path == "plugins.log_level" || item.Path == "plugins.log_format" {
+			t.Fatalf("plugin logging config leaked into startup metadata: %s", item.Path)
+		}
 	}
 }
 
 func TestRejectsUnknownLogFormats(t *testing.T) {
-	config := DefaultConfig()
-	config.Logging.Format = "pretty"
-	if _, err := normalizeConfig(config); err == nil || !strings.Contains(err.Error(), "logging.format") {
+	runtime := DefaultRuntimeConfig()
+	runtime.Logging.Format = "pretty"
+	if err := runtime.Validate(); err == nil || !strings.Contains(err.Error(), "logging.format") {
 		t.Fatalf("invalid host log format error = %v", err)
 	}
-	config = DefaultConfig()
-	config.Plugins.LogFormat = "pretty"
-	if _, err := normalizeConfig(config); err == nil || !strings.Contains(err.Error(), "plugins.log_format") {
+	runtime = DefaultRuntimeConfig()
+	runtime.Plugins.LogFormat = "pretty"
+	if err := runtime.Validate(); err == nil || !strings.Contains(err.Error(), "plugins.log_format") {
 		t.Fatalf("invalid plugin log format error = %v", err)
 	}
 }

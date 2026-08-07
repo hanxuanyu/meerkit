@@ -21,6 +21,7 @@ import (
 	"meerkit/internal/notification/inapp"
 	pluginruntime "meerkit/internal/plugin"
 	runtimeapp "meerkit/internal/runtime"
+	"meerkit/internal/runtimeconfig"
 	"meerkit/internal/store"
 )
 
@@ -33,24 +34,29 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	if len(serverOptions) > 0 {
 		options = serverOptions[0]
 	}
-	logger, accessLogger, closeLogger, err := logging.New(config.Logging)
-	if err != nil {
-		return err
-	}
-	defer closeLogger()
-	runtimeMode := "release"
-	if options.Version == "dev" {
-		runtimeMode = "development"
-	}
-	logger.Info("Meerkit runtime selected", "version", options.Version, "runtime_mode", runtimeMode, "address", config.ListenAddress(), "data_dir", config.Storage.DataDir, "config_file", config.Metadata.ConfigFile)
-	logger.Info("Meerkit scheduler configuration", "timezone", config.Scheduler.Timezone, "max_concurrency", config.Scheduler.MaxConcurrency, "poll_ms", config.Scheduler.PollMilliseconds)
-	logger.Info("Meerkit retention configuration", "records", config.Storage.Retention, "notifications", config.Storage.NotificationRetention, "cleanup_interval", config.Storage.CleanupInterval)
-	logger.Info("Meerkit logging configuration", "host_level", config.Logging.Level, "host_format", config.Logging.Format, "plugin_level", config.Plugins.LogLevel, "plugin_format", config.Plugins.LogFormat)
 	database, err := store.OpenStore(config.Storage.DataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
+	runtimeManager, err := runtimeconfig.New(ctx, database)
+	if err != nil {
+		return err
+	}
+	runtimeSnapshot := runtimeManager.Snapshot()
+	logger, accessLogger, loggingController, err := logging.NewDynamic(config.Logging, runtimeSnapshot.Logging)
+	if err != nil {
+		return err
+	}
+	defer loggingController.Close()
+	runtimeMode := "release"
+	if options.Version == "dev" {
+		runtimeMode = "development"
+	}
+	logger.Info("Meerkit runtime selected", "version", options.Version, "runtime_mode", runtimeMode, "address", config.ListenAddress(), "data_dir", config.Storage.DataDir, "config_file", config.Metadata.ConfigFile)
+	logger.Info("Meerkit scheduler configuration", "timezone", runtimeSnapshot.Scheduler.Timezone, "max_concurrency", runtimeSnapshot.Scheduler.MaxConcurrency, "poll_ms", runtimeSnapshot.Scheduler.PollMilliseconds)
+	logger.Info("Meerkit retention configuration", "records", runtimeSnapshot.Storage.Retention, "notifications", runtimeSnapshot.Storage.NotificationRetention, "cleanup_interval", runtimeSnapshot.Storage.CleanupInterval)
+	logger.Info("Meerkit logging configuration", "host_level", runtimeSnapshot.Logging.Level, "host_format", runtimeSnapshot.Logging.Format, "plugin_level", runtimeSnapshot.Plugins.LogLevel, "plugin_format", runtimeSnapshot.Plugins.LogFormat)
 	logger.Info("Meerkit storage initialized", "data_dir", config.Storage.DataDir)
 	api.SetFrontendFS(frontend)
 	modules := monitor.NewRegistry()
@@ -62,7 +68,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 		}
 		trustedKeys[id] = ed25519.PublicKey(value)
 	}
-	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: config.Plugins.LogLevel, LogFormat: config.Plugins.LogFormat})
+	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: runtimeSnapshot.Plugins.LogLevel, LogFormat: runtimeSnapshot.Plugins.LogFormat})
 	if err != nil {
 		return err
 	}
@@ -115,12 +121,25 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	inAppHub := inapp.NewHub()
 	notifiers := notification.NewRegistry(database, inAppHub)
 	runner := runtimeapp.NewRunner(database, modules, notifiers, logger)
-	scheduler := runtimeapp.NewScheduler(runner, database, config, logger)
-	cleaner := runtimeapp.NewCleanupWorker(database, config, logger, func(unreadCount int) { inAppHub.Publish(inapp.StreamEvent{Type: "pruned", UnreadCount: unreadCount}) })
-	logger.Info("Meerkit background workers configured", "scheduler", true, "cleanup", true, "max_concurrency", config.Scheduler.MaxConcurrency, "cleanup_interval", config.Storage.CleanupInterval)
-	sessionTTL, _ := time.ParseDuration(config.Security.SessionTTL)
-	authService := auth.NewService(database, sessionTTL)
-	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger)
+	scheduler := runtimeapp.NewScheduler(runner, database, runtimeManager.Snapshot, logger, runtimeManager.Subscribe())
+	cleaner := runtimeapp.NewCleanupWorker(database, runtimeManager.Snapshot, logger, func(unreadCount int) { inAppHub.Publish(inapp.StreamEvent{Type: "pruned", UnreadCount: unreadCount}) }, runtimeManager.Subscribe())
+	logger.Info("Meerkit background workers configured", "scheduler", true, "cleanup", true, "max_concurrency", runtimeSnapshot.Scheduler.MaxConcurrency, "cleanup_interval", runtimeSnapshot.Storage.CleanupInterval)
+	authService := auth.NewService(database, runtimeSnapshot.SessionTTLDuration())
+	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger, runtimeManager)
+	runtimeManager.SetApply(func(applyCtx context.Context, oldConfig, newConfig app.RuntimeConfig) error {
+		if oldConfig.Logging != newConfig.Logging {
+			if err := loggingController.Apply(newConfig.Logging); err != nil {
+				return err
+			}
+		}
+		if oldConfig.Plugins != newConfig.Plugins {
+			if err := pluginManager.UpdateLogConfig(applyCtx, newConfig.Plugins.LogLevel, newConfig.Plugins.LogFormat); err != nil {
+				return err
+			}
+		}
+		authService.SetSessionTTL(newConfig.SessionTTLDuration())
+		return nil
+	})
 	go scheduler.Start(ctx)
 	go cleaner.Start(ctx)
 	server := &http.Server{Addr: config.ListenAddress(), Handler: apiServer.Router(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}

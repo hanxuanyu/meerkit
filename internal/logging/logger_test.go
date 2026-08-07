@@ -27,14 +27,14 @@ func TestParseLevel(t *testing.T) {
 
 func TestNewWritesSingleLineTextLogAndRotatesFile(t *testing.T) {
 	directory := t.TempDir()
-	config := app.LoggingConfig{
-		Level: "info", Format: "text", Console: app.ConsoleLogConfig{Enabled: false}, AddSource: true,
-		File: app.LogFileConfig{Enabled: true, Directory: directory, Filename: "meerkit.log", MaxSizeMB: 1, MaxBackups: 2, MaxAgeDays: 1, Compress: true},
-	}
-	logger, _, closeLogger, err := New(config)
+	config := app.LoggingConfig{File: app.LogFileConfig{Directory: directory, Filename: "meerkit.log", MaxSizeMB: 1, MaxBackups: 2, MaxAgeDays: 1, Compress: true}}
+	runtime := app.DefaultRuntimeConfig().Logging
+	runtime.Format, runtime.Console.Enabled, runtime.File.Enabled, runtime.File.Access.Enabled, runtime.AddSource = "text", false, true, false, true
+	logger, _, controller, err := NewDynamic(config, runtime)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewDynamic: %v", err)
 	}
+	closeLogger := controller.Close
 	logger.Debug("hidden detail", "step", "debug")
 	logger.Info("monitor execution completed", "monitor_id", "monitor-1", "success", true)
 	if err := closeLogger(); err != nil {
@@ -59,11 +59,14 @@ func TestNewWritesSingleLineTextLogAndRotatesFile(t *testing.T) {
 
 func TestNewWritesJSONLog(t *testing.T) {
 	directory := t.TempDir()
-	config := app.LoggingConfig{Level: "info", Format: "json", Console: app.ConsoleLogConfig{Enabled: false}, File: app.LogFileConfig{Enabled: true, Directory: directory, Filename: "meerkit.json.log", MaxSizeMB: 1}}
-	logger, _, closeLogger, err := New(config)
+	config := app.LoggingConfig{File: app.LogFileConfig{Directory: directory, Filename: "meerkit.json.log", MaxSizeMB: 1}}
+	runtime := app.DefaultRuntimeConfig().Logging
+	runtime.Format, runtime.Console.Enabled, runtime.File.Enabled, runtime.File.Access.Enabled = "json", false, true, false
+	logger, _, controller, err := NewDynamic(config, runtime)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewDynamic: %v", err)
 	}
+	closeLogger := controller.Close
 	logger.Warn("scheduler concurrency limit reached", "limit", 4)
 	if err := closeLogger(); err != nil {
 		t.Fatalf("close logger: %v", err)
@@ -80,11 +83,14 @@ func TestNewWritesJSONLog(t *testing.T) {
 
 func TestNewWritesSimpleLogWithoutFixedContext(t *testing.T) {
 	directory := t.TempDir()
-	config := app.LoggingConfig{Level: "info", Format: "simple", Console: app.ConsoleLogConfig{Enabled: false}, File: app.LogFileConfig{Enabled: true, Directory: directory, Filename: "meerkit.simple.log", MaxSizeMB: 1}}
-	logger, _, closeLogger, err := New(config)
+	config := app.LoggingConfig{File: app.LogFileConfig{Directory: directory, Filename: "meerkit.simple.log", MaxSizeMB: 1}}
+	runtime := app.DefaultRuntimeConfig().Logging
+	runtime.Console.Enabled, runtime.File.Enabled, runtime.File.Access.Enabled = false, true, false
+	logger, _, controller, err := NewDynamic(config, runtime)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewDynamic: %v", err)
 	}
+	closeLogger := controller.Close
 	logger.Info("plugin activated", "plugin_id", "meerkit.http")
 	if err := closeLogger(); err != nil {
 		t.Fatalf("close logger: %v", err)
@@ -104,17 +110,17 @@ func TestNewWritesSimpleLogWithoutFixedContext(t *testing.T) {
 
 func TestNewSeparatesBusinessAndAccessLogs(t *testing.T) {
 	directory := t.TempDir()
-	config := app.LoggingConfig{
-		Level: "info", Format: "text", Console: app.ConsoleLogConfig{Enabled: false},
-		File: app.LogFileConfig{
-			Enabled: true, Directory: directory, Filename: "meerkit.log", MaxSizeMB: 1,
-			Access: app.AccessFileConfig{Enabled: true, Filename: "meerkit-access.log"},
-		},
-	}
-	businessLogger, accessLogger, closeLogger, err := New(config)
+	config := app.LoggingConfig{File: app.LogFileConfig{
+		Directory: directory, Filename: "meerkit.log", MaxSizeMB: 1,
+		Access: app.AccessFileConfig{Filename: "meerkit-access.log"},
+	}}
+	runtime := app.DefaultRuntimeConfig().Logging
+	runtime.Format, runtime.Console.Enabled, runtime.File.Enabled, runtime.File.Access.Enabled = "text", false, true, true
+	businessLogger, accessLogger, controller, err := NewDynamic(config, runtime)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewDynamic: %v", err)
 	}
+	closeLogger := controller.Close
 	businessLogger.Info("monitor execution completed")
 	accessLogger.Info("http request", "method", "GET", "path", "/healthz")
 	if err := closeLogger(); err != nil {

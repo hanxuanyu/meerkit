@@ -15,11 +15,13 @@ go run . serve --config config.yaml
 meerkit --data-dir ./data admin reset-key --key '新的管理员访问密钥'
 ```
 
-配置优先级依次为内置默认值、`config.yaml`、`MEERKIT_*` 环境变量和命令行参数。嵌套环境变量使用双下划线：
+`config.yaml`、`MEERKIT_*` 环境变量和命令行参数只用于启动配置：监听地址和端口、数据目录、日志文件目录/文件名/轮转参数、主密钥文件、插件源码目录和可信签名公钥。优先级依次为内置默认值、配置文件、环境变量和命令行参数，嵌套环境变量使用双下划线：
 
 ```bash
 MEERKIT_SERVER__PORT=9090 MEERKIT_STORAGE__DATA_DIR=/var/lib/meerkit go run .
 ```
+
+保留周期、清理周期、调度器参数、会话 TTL、宿主和插件日志级别/格式以及日志输出开关属于运行时配置，保存于 SQLite 的 `system_configs` 表。它们只能通过设置页或运行时配置 API（`GET /api/v1/system/config`、`PATCH /api/v1/system/config/runtime/:type`）修改，Docker 重启时不会被环境变量覆盖；数据库中的值会在重启后继续生效。设置页可以按类型或全部恢复代码默认值。管理员密钥也保存在 `auth` 配置行中，但只通过初始化和 `admin reset-key --key` 流程管理，不会显示或参与恢复默认值。
 
 ## 插件
 
@@ -80,14 +82,12 @@ scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/ar
 ```yaml
 plugins:
   source_dir: ./plugins
-  log_level: info
-  log_format: simple
   trusted_keys: {}
 ```
 
 插件运行模式由宿主版本自动决定，不再需要 `plugins.mode`：`dev` 版本优先构建源码插件，未发现源码时回退发行包；带正式版本号的宿主只加载发行包。`MEERKIT_PLUGINS__SOURCE_DIR` 可覆盖源码目录。开发构建的暂存文件和最终二进制只写入 `${storage.data_dir}/plugins`（默认即仓库根目录的 `data/plugins`），不会在插件源码目录中生成 `data` 或制品目录。源码插件在管理页标记为“开发源码”，没有可导出的签名包；正式版本启动后会清理开发安装记录并恢复使用可执行文件同级的插件包。
 
-宿主的 `logging.format` 支持 `text`、`simple` 和 `json`，默认使用 `simple`。插件日志可通过 `plugins.log_level` 与 `plugins.log_format` 单独配置（对应环境变量为 `MEERKIT_PLUGINS__LOG_LEVEL`、`MEERKIT_PLUGINS__LOG_FORMAT`），同样默认使用 `simple`，输出形如 `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http`，便于快速浏览。
+宿主和插件日志级别、格式以及输出开关在设置页的运行时配置中调整，支持 `text`、`simple` 和 `json`，默认使用 `simple`。插件日志输出形如 `[09:08:07] [INFO] plugin activated plugin_id=meerkit.http`，修改后会应用到后续启动的插件，必要时宿主会重启当前插件进程。
 
 Windows PowerShell 使用等效脚本：
 
@@ -114,6 +114,7 @@ internal/
   monitor/       带所有者的模块注册表与远程适配器
   plugin/        插件包校验、安装和进程管理
   runtime/       执行器与 Cron 调度器
+  runtimeconfig/ 运行时配置默认值、校验和热应用
   store/         SQLite 持久化
 plugins/          插件协议定义、官方插件和示例插件
 cmd/pluginpack/   插件打包与签名工具

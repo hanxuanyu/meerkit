@@ -43,11 +43,11 @@ func TestCleanupWorkerPrunesExpiredData(t *testing.T) {
 		}
 	}
 
-	config := app.DefaultConfig()
+	config := app.DefaultRuntimeConfig()
 	config.Storage.Retention = "1h"
 	config.Storage.NotificationRetention = "1h"
 	var publishedUnread int
-	worker := NewCleanupWorker(database, config, nil, func(count int) { publishedUnread = count })
+	worker := NewCleanupWorker(database, func() app.RuntimeConfig { return config }, nil, func(count int) { publishedUnread = count })
 	worker.run(ctx, now)
 
 	records, err := database.ListRecordsPage(ctx, monitor.ID, store.RecordListOptions{PageSize: 20})

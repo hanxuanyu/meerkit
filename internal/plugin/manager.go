@@ -115,6 +115,36 @@ func (m *Manager) List(ctx context.Context) ([]core.PluginInstallation, error) {
 	return m.store.ListPlugins(ctx)
 }
 
+func (m *Manager) UpdateLogConfig(ctx context.Context, level, format string) error {
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level == "warning" {
+		level = "warn"
+	}
+	if level != "debug" && level != "info" && level != "warn" && level != "error" {
+		return fmt.Errorf("plugins.log_level must be debug, info, warn, or error")
+	}
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != "text" && format != "simple" && format != "json" {
+		return fmt.Errorf("plugins.log_format must be text, simple, or json")
+	}
+	m.mu.Lock()
+	m.pluginLogLevel, m.pluginLogFormat = level, format
+	active := make(map[string]string, len(m.processes))
+	for id, value := range m.processes {
+		active[id] = value.version
+	}
+	m.mu.Unlock()
+	for id, version := range active {
+		if err := m.stopActive(id); err != nil {
+			return err
+		}
+		if err := m.Enable(ctx, id, version, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Manager) Details(ctx context.Context, id, version string) (core.PluginDetails, error) {
 	value, err := m.store.GetPlugin(ctx, id, version)
 	if err != nil {

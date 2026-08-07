@@ -76,7 +76,7 @@ func configOptions(command *cobra.Command, create bool) app.ConfigOptions {
 		options.Overrides["storage.data_dir"] = value
 		options.ChangedFlags["data-dir"] = true
 	}
-	mappings := map[string]string{"retention": "storage.retention", "timezone": "scheduler.timezone", "max-concurrency": "scheduler.max_concurrency", "log-level": "logging.level", "log-format": "logging.format", "log-dir": "logging.file.directory", "log-filename": "logging.file.filename", "log-console": "logging.console.enabled", "log-file-enabled": "logging.file.enabled", "log-console-access": "logging.console.access", "access-log-filename": "logging.file.access.filename", "access-log-file-enabled": "logging.file.access.enabled"}
+	mappings := map[string]string{"log-dir": "logging.file.directory", "log-filename": "logging.file.filename", "access-log-filename": "logging.file.access.filename"}
 	for name, path := range mappings {
 		flag := command.Flags().Lookup(name)
 		if flag == nil || !flag.Changed {
