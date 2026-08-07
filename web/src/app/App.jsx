@@ -237,7 +237,6 @@ export function App() {
 
   const openCreateMonitor = () => { setSelectedMonitor(null); setShowMonitorDialog(true); };
   const openEditMonitor = (monitor) => { if (monitor.module_available === false) return; setSelectedMonitor(monitor); setShowMonitorDialog(true); };
-  const openMonitorList = (monitor) => { if (monitor) setSelectedMonitor(monitor); navigate("monitors"); };
   const deleteMonitor = (monitor) => setDeleteTarget(monitor);
   const confirmDeleteMonitor = async (event) => {
     event.preventDefault();
@@ -270,7 +269,7 @@ export function App() {
   }, [notify, refresh, togglingChannelId]);
 
   const page = activePage === "overview"
-    ? <OverviewPage monitors={monitors} modules={modules} loading={loading} onCreate={openCreateMonitor} onOpen={openMonitorList} onRun={runMonitor} onViewRecords={openRecords} />
+    ? <OverviewPage monitors={monitors} modules={modules} channels={channels} recentNotifications={recentNotifications} unreadCount={unreadCount} loading={loading} onCreate={openCreateMonitor} onOpenMonitor={openRecords} onOpenMonitors={() => navigate("monitors")} onOpenInbox={() => navigate("inbox")} onOpenNotification={openNotification} />
     : activePage === "monitors"
       ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
       : activePage === "inbox"
