@@ -2,6 +2,8 @@
 
 Each plugin is an independent Go module and communicates with Meerkit through the public SDK and HashiCorp go-plugin gRPC transport. Meerkit imports only `.zip` and `.tar.gz` packages; copying a raw executable into the runtime directory never loads it.
 
+The `plugins/` directory contains only the plugin manifest protocol definition, official plugins, and example plugins. The packaging and signing tool lives at `cmd/pluginpack` in the repository root and is invoked by `scripts/package-plugins.sh` or `scripts/package-plugins.ps1`.
+
 ## Plugin development workflow
 
 1. Create an independent Go module from `plugins/template`, implement the SDK `Module` interface, and add contract tests. During repository development, `go run .` builds and runs every source plugin under `plugins` except `template`.

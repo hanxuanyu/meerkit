@@ -1,6 +1,6 @@
 # Packaging scripts
 
-- `package-plugins.sh --plugin <directory> [pluginpack arguments]` packages one plugin; use `--generate-key` to generate signing keys.
+- `package-plugins.sh --plugin <directory> [pluginpack arguments]` packages one plugin; use `--generate-key` to generate signing keys. The underlying tool lives at `cmd/pluginpack`.
 - `package-plugins.sh [output] [targets]` packages every publishable plugin under `plugins/` when `--plugin` is omitted. Targets use `GOOS/GOARCH` and may be comma-separated.
 - `package.sh [output] [targets]` builds the frontend, host executable, and all publishable plugins into complete release archives.
 - PowerShell equivalents provide the same workflow on Windows.
@@ -11,7 +11,7 @@ scripts/package-plugins.sh dist/plugins linux/amd64,windows/amd64
 scripts/package.sh dist/releases darwin/arm64,linux/amd64,windows/amd64
 ```
 
-To sign every generated plugin package, first generate a key pair with `pluginpack --generate-key`, then set the signing private key and key ID for the script. `package.sh` passes these environment variables to its plugin packaging step:
+To sign every generated plugin package, first generate a key pair with `go run ./cmd/pluginpack --generate-key`, then set the signing private key and key ID for the script. `package.sh` passes these environment variables to its plugin packaging step:
 
 ```sh
 scripts/package-plugins.sh --generate-key ./keys/meerkit-release

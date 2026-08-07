@@ -2,6 +2,8 @@
 
 每个插件都是独立 Go 模块，通过公共 SDK 和 HashiCorp go-plugin gRPC 通道与 Meerkit 通信。Meerkit 仅导入 `.zip` 和 `.tar.gz` 插件包，将裸二进制放入运行目录不会触发加载。
 
+`plugins/` 目录只存放插件清单协议定义、官方插件和示例插件。插件打包与签名工具位于项目根目录的 `cmd/pluginpack`，由 `scripts/package-plugins.sh` 或 `scripts/package-plugins.ps1` 调用。
+
 ## 插件开发流程
 
 1. 从 `plugins/template` 创建独立 Go 模块，实现 SDK `Module` 接口及契约测试。仓库内开发时可直接执行 `go run .`，宿主会构建并运行 `plugins` 下除 `template` 外的源码插件。

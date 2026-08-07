@@ -9,7 +9,7 @@ param(
 )
 
 if (-not [string]::IsNullOrWhiteSpace($GenerateKey)) {
-  go run ./plugins/cmd/pluginpack --generate-key $GenerateKey
+  go run ./cmd/pluginpack --generate-key $GenerateKey
   if ($LASTEXITCODE -ne 0) { throw "plugin key generation failed with exit code $LASTEXITCODE" }
   return
 }
@@ -18,7 +18,7 @@ if (-not [string]::IsNullOrWhiteSpace($Plugin)) {
   $toolArgs = @("--plugin", $Plugin, "--output", $Output, "--targets", $Targets)
   if ($Combined) { $toolArgs += "--combined" }
   if (-not [string]::IsNullOrWhiteSpace($SignKey)) { $toolArgs += @("--sign-key", $SignKey, "--key-id", $KeyID) }
-  go run ./plugins/cmd/pluginpack @toolArgs
+  go run ./cmd/pluginpack @toolArgs
   if ($LASTEXITCODE -ne 0) { throw "plugin packaging failed with exit code $LASTEXITCODE" }
   return
 }
@@ -35,9 +35,9 @@ $plugins = Get-ChildItem -Path "plugins" -Directory | Where-Object {
 if ($plugins.Count -eq 0) { throw "No publishable plugins found under plugins/" }
 foreach ($plugin in $plugins) {
   if ([string]::IsNullOrWhiteSpace($signKey)) {
-    go run ./plugins/cmd/pluginpack --plugin $plugin.FullName --output $Output --targets $Targets
+    go run ./cmd/pluginpack --plugin $plugin.FullName --output $Output --targets $Targets
   } else {
-    go run ./plugins/cmd/pluginpack --plugin $plugin.FullName --output $Output --targets $Targets --sign-key $signKey --key-id $keyId
+    go run ./cmd/pluginpack --plugin $plugin.FullName --output $Output --targets $Targets --sign-key $signKey --key-id $keyId
   }
   if ($LASTEXITCODE -ne 0) { throw "plugin packaging failed with exit code $LASTEXITCODE" }
 }

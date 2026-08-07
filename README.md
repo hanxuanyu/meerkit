@@ -115,7 +115,8 @@ internal/
   plugin/        插件包校验、安装和进程管理
   runtime/       执行器与 Cron 调度器
   store/         SQLite 持久化
-plugins/          官方插件、模板和打包工具
+plugins/          插件协议定义、官方插件和示例插件
+cmd/pluginpack/   插件打包与签名工具
 sdk/              公共监控插件 SDK 与 gRPC 协议
 scripts/          项目与插件发布脚本
 web/              React/Vite 前端与通用 UI 组件

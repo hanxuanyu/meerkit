@@ -105,7 +105,8 @@ Back up and retain the private key for the lifetime of the release line. Replaci
 ```text
 main.go
 internal/         host application packages
-plugins/          official plugins, template, and packaging tools
+plugins/          plugin protocol definitions, official plugins, and examples
+cmd/pluginpack/   plugin packaging and signing tool
 sdk/              public monitor plugin SDK and gRPC protocol
 scripts/          project and plugin release scripts
 web/              React/Vite frontend and shared UI components

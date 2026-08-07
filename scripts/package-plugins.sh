@@ -3,7 +3,7 @@ set -eu
 
 for argument in "$@"; do
   if [ "$argument" = "--plugin" ] || [ "$argument" = "--generate-key" ]; then
-    exec go run ./plugins/cmd/pluginpack "$@"
+    exec go run ./cmd/pluginpack "$@"
   fi
 done
 
@@ -25,9 +25,9 @@ for manifest in plugins/*/meerkit-plugin.yaml; do
   [ "$(basename "$plugin_dir")" = "template" ] && continue
   found=1
   if [ -n "$sign_key" ]; then
-    go run ./plugins/cmd/pluginpack --plugin "$plugin_dir" --output "$output" --targets "$targets" --sign-key "$sign_key" --key-id "$key_id"
+    go run ./cmd/pluginpack --plugin "$plugin_dir" --output "$output" --targets "$targets" --sign-key "$sign_key" --key-id "$key_id"
   else
-    go run ./plugins/cmd/pluginpack --plugin "$plugin_dir" --output "$output" --targets "$targets"
+    go run ./cmd/pluginpack --plugin "$plugin_dir" --output "$output" --targets "$targets"
   fi
 done
 
