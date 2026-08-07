@@ -28,6 +28,36 @@ func TestLoadConfigPrecedence(t *testing.T) {
 	}
 }
 
+func TestDatabaseConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := "storage:\n  database:\n    type: mysql\n    dsn: user:secret@tcp(localhost:3306)/meerkit\n    auto_migrate: false\n    max_open_conns: 40\n    max_idle_conns: 12\n    conn_max_lifetime: 20m\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path})
+	if err != nil {
+		t.Fatalf("load mysql config: %v", err)
+	}
+	if config.Storage.Database.Type != "mysql" || config.Storage.Database.AutoMigrate || config.Storage.Database.MaxOpenConns != 40 {
+		t.Fatalf("unexpected database config: %#v", config.Storage.Database)
+	}
+	for _, item := range config.Metadata.Items {
+		if item.Path == "storage.database.dsn" && item.Value != "configured" {
+			t.Fatalf("database DSN leaked through metadata: %#v", item.Value)
+		}
+	}
+}
+
+func TestMySQLRequiresDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("storage:\n  database:\n    type: mysql\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path}); err == nil || !strings.Contains(err.Error(), "dsn") {
+		t.Fatalf("expected missing mysql DSN error, got %v", err)
+	}
+}
+
 func TestRuntimeConfigIsNotLoadedFromYamlEnvironmentOrFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("logging:\n  level: error\n  format: text\n"), 0o600); err != nil {

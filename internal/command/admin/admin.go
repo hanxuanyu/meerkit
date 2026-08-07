@@ -23,7 +23,8 @@ func New(load ConfigLoader) *cobra.Command {
 		if key == "" {
 			return fmt.Errorf("provide --key")
 		}
-		database, err := store.OpenStore(config.Storage.DataDir)
+		connectionLifetime, connectionIdleTime := config.Storage.Database.ConnectionDurations()
+		database, err := store.Open(command.Context(), store.Options{Type: store.DatabaseType(config.Storage.Database.Type), DSN: config.Storage.Database.DSN, DataDir: config.Storage.DataDir, AutoMigrate: config.Storage.Database.AutoMigrate, MaxOpenConns: config.Storage.Database.MaxOpenConns, MaxIdleConns: config.Storage.Database.MaxIdleConns, ConnMaxLifetime: connectionLifetime, ConnMaxIdleTime: connectionIdleTime})
 		if err != nil {
 			return err
 		}

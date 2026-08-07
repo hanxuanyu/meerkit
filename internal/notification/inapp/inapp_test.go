@@ -13,9 +13,16 @@ type fakeStore struct {
 	notification core.InAppNotification
 }
 
-func (s *fakeStore) CreateInAppNotification(_ context.Context, notification core.InAppNotification) error {
-	s.notification = notification
+func (s *fakeStore) UpdateNotificationDeliveryContent(_ context.Context, eventID, channelID, title, content string, _ json.RawMessage) error {
+	s.notification.ID = eventID
+	s.notification.ChannelID = channelID
+	s.notification.Title = title
+	s.notification.Content = content
 	return nil
+}
+
+func (s *fakeStore) GetInAppNotificationByEvent(context.Context, string, string) (core.InAppNotification, error) {
+	return s.notification, nil
 }
 
 func (*fakeStore) CountUnreadInAppNotifications(context.Context) (int, error) { return 1, nil }
@@ -27,14 +34,14 @@ func TestNotifierRendersAndPublishesNotification(t *testing.T) {
 	defer cancel()
 	notifier := New(store, hub)
 	event := core.NotificationEvent{
-		EventType: "triggered", MonitorID: "monitor-1", RecordID: "record-1", MonitorName: "Production API", ModuleType: "http",
+		ID: "event-1", EventType: "triggered", MonitorID: "monitor-1", RecordID: "record-1", MonitorName: "Production API", ModuleType: "http",
 		TriggeredAt: time.Now().UTC(), Summary: "status changed", CurrentResult: map[string]any{"summary": map[string]any{"duration_ms": 120}},
 	}
 	config := json.RawMessage(`{"title_template":"{{monitor.name}} 告警","body_template":"{{event.summary}} · {{result.summary.duration_ms}}ms"}`)
 	if err := notifier.Send(context.Background(), config, event); err != nil {
 		t.Fatal(err)
 	}
-	if store.notification.Title != "Production API 告警" || store.notification.Content != "status changed · 120ms" || store.notification.RecordID != "record-1" {
+	if store.notification.Title != "Production API 告警" || store.notification.Content != "status changed · 120ms" {
 		t.Fatalf("unexpected notification: %+v", store.notification)
 	}
 	select {

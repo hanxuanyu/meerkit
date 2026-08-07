@@ -3,6 +3,14 @@ server:
     port: 8080
 storage:
     data_dir: ./data
+    database:
+        type: sqlite
+        dsn: ""
+        auto_migrate: true
+        max_open_conns: 0
+        max_idle_conns: 0
+        conn_max_lifetime: ""
+        conn_max_idle_time: ""
 logging:
     file:
         directory: ./logs

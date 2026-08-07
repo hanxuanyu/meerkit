@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -29,7 +30,29 @@ type ServerConfig struct {
 }
 
 type StorageConfig struct {
-	DataDir string `yaml:"data_dir" mapstructure:"data_dir"`
+	DataDir  string         `yaml:"data_dir" mapstructure:"data_dir"`
+	Database DatabaseConfig `yaml:"database" mapstructure:"database"`
+}
+
+type DatabaseConfig struct {
+	Type            string `yaml:"type" mapstructure:"type"`
+	DSN             string `yaml:"dsn,omitempty" mapstructure:"dsn"`
+	AutoMigrate     bool   `yaml:"auto_migrate" mapstructure:"auto_migrate"`
+	MaxOpenConns    int    `yaml:"max_open_conns" mapstructure:"max_open_conns"`
+	MaxIdleConns    int    `yaml:"max_idle_conns" mapstructure:"max_idle_conns"`
+	ConnMaxLifetime string `yaml:"conn_max_lifetime" mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime string `yaml:"conn_max_idle_time" mapstructure:"conn_max_idle_time"`
+}
+
+func (c DatabaseConfig) ConnectionDurations() (time.Duration, time.Duration) {
+	var lifetime, idle time.Duration
+	if c.ConnMaxLifetime != "" {
+		lifetime, _ = time.ParseDuration(c.ConnMaxLifetime)
+	}
+	if c.ConnMaxIdleTime != "" {
+		idle, _ = time.ParseDuration(c.ConnMaxIdleTime)
+	}
+	return lifetime, idle
 }
 
 type LoggingConfig struct {
@@ -69,8 +92,10 @@ type ConfigOptions struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Server:  ServerConfig{Address: "0.0.0.0", Port: 8080},
-		Storage: StorageConfig{DataDir: "./data"},
+		Server: ServerConfig{Address: "0.0.0.0", Port: 8080},
+		Storage: StorageConfig{DataDir: "./data", Database: DatabaseConfig{
+			Type: "sqlite", AutoMigrate: true,
+		}},
 		Logging: LoggingConfig{
 			File: LogFileConfig{
 				Directory: "./logs", Filename: "meerkit.log",
@@ -91,6 +116,9 @@ func LoadConfig(args []string) (Config, error) {
 	configPath := flags.String("config", "", "path to config.yaml")
 	listen := flags.String("listen", "", "listen address")
 	flags.String("data-dir", "", "SQLite data directory")
+	flags.String("database-type", "", "database type")
+	flags.String("database-dsn", "", "database DSN")
+	flags.Bool("database-auto-migrate", true, "automatically migrate database schema")
 	flags.String("log-dir", "", "log file directory")
 	flags.String("log-filename", "", "log file name")
 	flags.String("access-log-filename", "", "HTTP access log file name")
@@ -98,7 +126,10 @@ func LoadConfig(args []string) (Config, error) {
 		return Config{}, err
 	}
 	options := ConfigOptions{ConfigFile: *configPath, CreateDefault: true, Listen: *listen, Overrides: map[string]any{}, ChangedFlags: map[string]bool{}}
-	bindings := map[string]string{"storage.data_dir": "data-dir", "logging.file.directory": "log-dir", "logging.file.filename": "log-filename", "logging.file.access.filename": "access-log-filename"}
+	bindings := map[string]string{
+		"storage.data_dir": "data-dir", "storage.database.type": "database-type", "storage.database.dsn": "database-dsn", "storage.database.auto_migrate": "database-auto-migrate",
+		"logging.file.directory": "log-dir", "logging.file.filename": "log-filename", "logging.file.access.filename": "access-log-filename",
+	}
 	for key, name := range bindings {
 		if flags.Changed(name) {
 			options.ChangedFlags[name] = true
@@ -177,6 +208,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.address", defaults.Server.Address)
 	v.SetDefault("server.port", defaults.Server.Port)
 	v.SetDefault("storage.data_dir", defaults.Storage.DataDir)
+	v.SetDefault("storage.database.type", defaults.Storage.Database.Type)
+	v.SetDefault("storage.database.dsn", defaults.Storage.Database.DSN)
+	v.SetDefault("storage.database.auto_migrate", defaults.Storage.Database.AutoMigrate)
+	v.SetDefault("storage.database.max_open_conns", defaults.Storage.Database.MaxOpenConns)
+	v.SetDefault("storage.database.max_idle_conns", defaults.Storage.Database.MaxIdleConns)
+	v.SetDefault("storage.database.conn_max_lifetime", defaults.Storage.Database.ConnMaxLifetime)
+	v.SetDefault("storage.database.conn_max_idle_time", defaults.Storage.Database.ConnMaxIdleTime)
 	v.SetDefault("logging.file.directory", defaults.Logging.File.Directory)
 	v.SetDefault("logging.file.filename", defaults.Logging.File.Filename)
 	v.SetDefault("logging.file.max_size_mb", defaults.Logging.File.MaxSizeMB)
@@ -194,18 +232,25 @@ func bindEnvironment(v *viper.Viper) error {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "__"))
 	v.AutomaticEnv()
 	envKeys := map[string]string{
-		"server.address":               "MEERKIT_SERVER__ADDRESS",
-		"server.port":                  "MEERKIT_SERVER__PORT",
-		"storage.data_dir":             "MEERKIT_STORAGE__DATA_DIR",
-		"logging.file.directory":       "MEERKIT_LOGGING__FILE__DIRECTORY",
-		"logging.file.filename":        "MEERKIT_LOGGING__FILE__FILENAME",
-		"logging.file.max_size_mb":     "MEERKIT_LOGGING__FILE__MAX_SIZE_MB",
-		"logging.file.max_backups":     "MEERKIT_LOGGING__FILE__MAX_BACKUPS",
-		"logging.file.max_age_days":    "MEERKIT_LOGGING__FILE__MAX_AGE_DAYS",
-		"logging.file.compress":        "MEERKIT_LOGGING__FILE__COMPRESS",
-		"logging.file.access.filename": "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
-		"security.master_key_file":     "MEERKIT_SECURITY__MASTER_KEY_FILE",
-		"plugins.source_dir":           "MEERKIT_PLUGINS__SOURCE_DIR",
+		"server.address":                      "MEERKIT_SERVER__ADDRESS",
+		"server.port":                         "MEERKIT_SERVER__PORT",
+		"storage.data_dir":                    "MEERKIT_STORAGE__DATA_DIR",
+		"storage.database.type":               "MEERKIT_STORAGE__DATABASE__TYPE",
+		"storage.database.dsn":                "MEERKIT_STORAGE__DATABASE__DSN",
+		"storage.database.auto_migrate":       "MEERKIT_STORAGE__DATABASE__AUTO_MIGRATE",
+		"storage.database.max_open_conns":     "MEERKIT_STORAGE__DATABASE__MAX_OPEN_CONNS",
+		"storage.database.max_idle_conns":     "MEERKIT_STORAGE__DATABASE__MAX_IDLE_CONNS",
+		"storage.database.conn_max_lifetime":  "MEERKIT_STORAGE__DATABASE__CONN_MAX_LIFETIME",
+		"storage.database.conn_max_idle_time": "MEERKIT_STORAGE__DATABASE__CONN_MAX_IDLE_TIME",
+		"logging.file.directory":              "MEERKIT_LOGGING__FILE__DIRECTORY",
+		"logging.file.filename":               "MEERKIT_LOGGING__FILE__FILENAME",
+		"logging.file.max_size_mb":            "MEERKIT_LOGGING__FILE__MAX_SIZE_MB",
+		"logging.file.max_backups":            "MEERKIT_LOGGING__FILE__MAX_BACKUPS",
+		"logging.file.max_age_days":           "MEERKIT_LOGGING__FILE__MAX_AGE_DAYS",
+		"logging.file.compress":               "MEERKIT_LOGGING__FILE__COMPRESS",
+		"logging.file.access.filename":        "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
+		"security.master_key_file":            "MEERKIT_SECURITY__MASTER_KEY_FILE",
+		"plugins.source_dir":                  "MEERKIT_PLUGINS__SOURCE_DIR",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -217,10 +262,13 @@ func bindEnvironment(v *viper.Viper) error {
 
 func bindFlags(v *viper.Viper, flags *pflag.FlagSet) {
 	bindings := map[string]string{
-		"storage.data_dir":             "data-dir",
-		"logging.file.directory":       "log-dir",
-		"logging.file.filename":        "log-filename",
-		"logging.file.access.filename": "access-log-filename",
+		"storage.data_dir":              "data-dir",
+		"storage.database.type":         "database-type",
+		"storage.database.dsn":          "database-dsn",
+		"storage.database.auto_migrate": "database-auto-migrate",
+		"logging.file.directory":        "log-dir",
+		"logging.file.filename":         "log-filename",
+		"logging.file.access.filename":  "access-log-filename",
 	}
 	for key, flagName := range bindings {
 		if flags.Changed(flagName) {
@@ -253,6 +301,36 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.Storage.DataDir == "" {
 		return cfg, errors.New("storage.data_dir cannot be empty")
+	}
+	cfg.Storage.Database.Type = strings.ToLower(strings.TrimSpace(cfg.Storage.Database.Type))
+	switch cfg.Storage.Database.Type {
+	case "sqlite":
+	case "mysql":
+		if strings.TrimSpace(cfg.Storage.Database.DSN) == "" {
+			return cfg, errors.New("storage.database.dsn cannot be empty for mysql")
+		}
+	default:
+		return cfg, fmt.Errorf("storage.database.type must be sqlite or mysql, got %q", cfg.Storage.Database.Type)
+	}
+	if cfg.Storage.Database.MaxOpenConns < 0 || cfg.Storage.Database.MaxIdleConns < 0 {
+		return cfg, errors.New("storage.database connection limits cannot be negative")
+	}
+	if cfg.Storage.Database.MaxOpenConns > 0 && cfg.Storage.Database.MaxIdleConns > cfg.Storage.Database.MaxOpenConns {
+		return cfg, errors.New("storage.database.max_idle_conns cannot exceed max_open_conns")
+	}
+	if cfg.Storage.Database.Type == "mysql" && cfg.Storage.Database.MaxOpenConns == 1 {
+		return cfg, errors.New("storage.database.max_open_conns must be at least 2 for mysql")
+	}
+	for name, value := range map[string]string{
+		"storage.database.conn_max_lifetime":  cfg.Storage.Database.ConnMaxLifetime,
+		"storage.database.conn_max_idle_time": cfg.Storage.Database.ConnMaxIdleTime,
+	} {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if duration, err := time.ParseDuration(value); err != nil || duration < 0 {
+			return cfg, fmt.Errorf("%s must be a non-negative duration", name)
+		}
 	}
 	if err := validateLogFile("logging.file", cfg.Logging.File); err != nil {
 		return cfg, err

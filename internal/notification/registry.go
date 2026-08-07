@@ -12,7 +12,7 @@ type Registry struct {
 	notifiers map[string]core.NotifierModule
 }
 
-func NewRegistry(store *store.Store, hub *inapp.Hub) *Registry {
+func NewRegistry(store store.NotificationRepository, hub *inapp.Hub) *Registry {
 	registry := &Registry{notifiers: make(map[string]core.NotifierModule)}
 	registry.Register(inapp.New(store, hub))
 	registry.Register(webhook.New())

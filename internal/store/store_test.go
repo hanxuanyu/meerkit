@@ -191,3 +191,37 @@ func TestBuiltInChannelAndInAppNotificationLifecycle(t *testing.T) {
 		t.Fatalf("notifications after delete: %+v err=%v", page, err)
 	}
 }
+
+func TestUnifiedNotificationDeliveryPersistence(t *testing.T) {
+	ctx := context.Background()
+	database, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	createdAt := time.Now().UTC().Add(-time.Hour)
+	for _, delivery := range []core.NotificationDeliveryRecord{
+		{ID: "delivery-inapp", EventID: "event-1", Source: "status_trend", EventType: "trend_triggered", ChannelID: core.BuiltInNotificationChannelID, NotifierType: "inapp", Title: "Alert", Content: "Threshold reached", Status: "sent", Attempts: 1, CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "delivery-webhook", EventID: "event-1", Source: "status_trend", EventType: "trend_triggered", ChannelID: "webhook-1", NotifierType: "webhook", Content: "Threshold reached", Payload: json.RawMessage(`{"value":12}`), Status: "error", Attempts: 3, Message: "timeout", CreatedAt: createdAt, UpdatedAt: createdAt},
+	} {
+		if err := database.CreateNotificationDelivery(ctx, delivery); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count, err := database.orm.NewSelect().Model((*notificationDeliveryModel)(nil)).Count(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("delivery count=%d err=%v", count, err)
+	}
+	page, err := database.ListInAppNotificationsPage(ctx, NotificationListOptions{PageSize: 20})
+	if err != nil || page.Total != 1 || page.Items[0].ID != "delivery-inapp" {
+		t.Fatalf("in-app projection = %+v err=%v", page, err)
+	}
+	if err := database.UpdateNotificationDeliveryResult(ctx, "event-1", "webhook-1", core.NotificationDelivery{Status: "sent", Attempts: 4}); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := database.orm.NewSelect().Model((*notificationDeliveryModel)(nil)).Column("status").Where("id = ?", "delivery-webhook").Scan(ctx, &status); err != nil || status != "sent" {
+		t.Fatalf("updated delivery status=%q err=%v", status, err)
+	}
+}

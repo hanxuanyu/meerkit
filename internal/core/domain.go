@@ -175,7 +175,7 @@ type RecordNotificationEvent struct {
 	TrendRuleID    string                          `json:"trend_rule_id,omitempty"`
 	TrendRuleName  string                          `json:"trend_rule_name,omitempty"`
 	Summary        string                          `json:"summary"`
-	Deliveries     map[string]NotificationDelivery `json:"deliveries"`
+	Deliveries     map[string]NotificationDelivery `json:"deliveries,omitempty"`
 }
 
 const BuiltInNotificationChannelID = "builtin-inapp"
@@ -191,6 +191,32 @@ type InAppNotification struct {
 	Read      bool       `json:"read"`
 	CreatedAt time.Time  `json:"created_at"`
 	ReadAt    *time.Time `json:"read_at,omitempty"`
+}
+
+// NotificationDeliveryRecord is the durable representation of one event sent
+// through one channel. In-app notifications are projections of these rows.
+type NotificationDeliveryRecord struct {
+	ID           string          `json:"id"`
+	EventID      string          `json:"event_id"`
+	Source       string          `json:"source"`
+	EventType    string          `json:"event_type"`
+	StatusItemID string          `json:"status_item_id,omitempty"`
+	TrendRuleID  string          `json:"trend_rule_id,omitempty"`
+	ChannelID    string          `json:"channel_id"`
+	NotifierType string          `json:"notifier_type"`
+	MonitorID    string          `json:"monitor_id,omitempty"`
+	RecordID     string          `json:"record_id,omitempty"`
+	Title        string          `json:"title,omitempty"`
+	Content      string          `json:"content,omitempty"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
+	Status       string          `json:"status"`
+	Attempts     int             `json:"attempts"`
+	Message      string          `json:"message,omitempty"`
+	Read         bool            `json:"read"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	DeliveredAt  *time.Time      `json:"delivered_at,omitempty"`
+	ReadAt       *time.Time      `json:"read_at,omitempty"`
 }
 
 type NotifierModule interface {

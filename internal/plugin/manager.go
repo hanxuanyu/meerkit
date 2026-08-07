@@ -68,7 +68,7 @@ type process struct {
 	logFile *os.File
 }
 type Manager struct {
-	store              *store.Store
+	store              store.PluginRepository
 	registry           *monitor.Registry
 	root               string
 	logger             *slog.Logger
@@ -81,7 +81,7 @@ type Manager struct {
 	developmentBuilder func(context.Context, string, string) error
 }
 
-func NewManager(database *store.Store, registry *monitor.Registry, options ManagerOptions) (*Manager, error) {
+func NewManager(database store.PluginRepository, registry *monitor.Registry, options ManagerOptions) (*Manager, error) {
 	dataDir, err := filepath.Abs(options.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve plugin data directory: %w", err)

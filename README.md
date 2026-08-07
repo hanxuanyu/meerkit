@@ -21,7 +21,24 @@ meerkit --data-dir ./data admin reset-key --key '新的管理员访问密钥'
 MEERKIT_SERVER__PORT=9090 MEERKIT_STORAGE__DATA_DIR=/var/lib/meerkit go run .
 ```
 
-保留周期、清理周期、调度器参数、会话 TTL、宿主和插件日志级别/格式以及日志输出开关属于运行时配置，保存于 SQLite 的 `system_configs` 表。它们只能通过设置页或运行时配置 API（`GET /api/v1/system/config`、`PATCH /api/v1/system/config/runtime/:type`）修改，Docker 重启时不会被环境变量覆盖；数据库中的值会在重启后继续生效。设置页可以按类型或全部恢复代码默认值。管理员密钥也保存在 `auth` 配置行中，但只通过初始化和 `admin reset-key --key` 流程管理，不会显示或参与恢复默认值。
+数据库默认为 SQLite，`dsn` 留空时使用 `${storage.data_dir}/meerkit.db`。MySQL 需要预先创建数据库，Meerkit 负责自动创建和升级表、索引及内置数据：
+
+```yaml
+storage:
+  data_dir: /var/lib/meerkit
+  database:
+    type: mysql
+    dsn: meerkit:secret@tcp(mysql:3306)/meerkit?tls=true
+    auto_migrate: true
+    max_open_conns: 25
+    max_idle_conns: 10
+    conn_max_lifetime: 30m
+    conn_max_idle_time: 5m
+```
+
+也可以使用 `MEERKIT_STORAGE__DATABASE__TYPE`、`MEERKIT_STORAGE__DATABASE__DSN` 或对应命令行参数。DSN 可能包含凭据，不会出现在配置元数据和日志中。关闭 `auto_migrate` 后，启动时仍会校验数据库版本并在结构缺失时拒绝运行。
+
+保留周期、清理周期、调度器参数、会话 TTL、宿主和插件日志级别/格式以及日志输出开关属于运行时配置，保存于当前数据库的 `system_configs` 表。它们只能通过设置页或运行时配置 API（`GET /api/v1/system/config`、`PATCH /api/v1/system/config/runtime/:type`）修改，Docker 重启时不会被环境变量覆盖；数据库中的值会在重启后继续生效。设置页可以按类型或全部恢复代码默认值。管理员密钥也保存在 `auth` 配置行中，但只通过初始化和 `admin reset-key --key` 流程管理，不会显示或参与恢复默认值。
 
 ## 插件
 
@@ -115,7 +132,7 @@ internal/
   plugin/        插件包校验、安装和进程管理
   runtime/       执行器与 Cron 调度器
   runtimeconfig/ 运行时配置默认值、校验和热应用
-  store/         SQLite 持久化
+  store/         Bun repository、SQLite/MySQL 方言与版本迁移
 plugins/          插件协议定义、官方插件和示例插件
 cmd/pluginpack/   插件打包与签名工具
 sdk/              公共监控插件 SDK 与 gRPC 协议

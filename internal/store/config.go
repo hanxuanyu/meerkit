@@ -61,7 +61,8 @@ func (s *Store) EnsureSystemConfig(ctx context.Context, configType string, data 
 		return SystemConfig{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO system_configs(config_type,data_json,version,created_at,updated_at) VALUES(?,?,1,?,?)`, configType, string(encoded), now, now)
+	model := &systemConfigModel{ConfigType: configType, DataJSON: string(encoded), Version: 1, CreatedAt: now, UpdatedAt: now}
+	_, err = s.orm.NewInsert().Model(model).Ignore().Exec(ctx)
 	if err != nil {
 		return SystemConfig{}, err
 	}

@@ -25,11 +25,11 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 type Service struct {
-	store    *store.Store
+	store    store.AuthRepository
 	ttlNanos atomic.Int64
 }
 
-func NewService(database *store.Store, ttl time.Duration) *Service {
+func NewService(database store.AuthRepository, ttl time.Duration) *Service {
 	if ttl <= 0 {
 		ttl = 30 * 24 * time.Hour
 	}

@@ -4,19 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/uptrace/bun"
 	"meerkit/internal/core"
-	_ "modernc.org/sqlite"
 )
 
 type Store struct {
 	db             *sql.DB
+	orm            *bun.DB
+	databaseType   DatabaseType
 	systemConfigMu sync.Mutex
 }
 
@@ -52,169 +52,7 @@ type NotificationListOptions struct {
 	UnreadOnly bool
 }
 
-func OpenStore(dataDir string) (*Store, error) {
-	if err := ensureDir(dataDir); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s/meerkit.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", strings.TrimRight(dataDir, "/")))
-	if err != nil {
-		return nil, err
-	}
-	store := &Store{db: db}
-	if err := store.migrate(context.Background()); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return store, nil
-}
-
-func ensureDir(path string) error {
-	return os.MkdirAll(path, 0o750)
-}
-
-func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-CREATE TABLE IF NOT EXISTS monitors (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  module_type TEXT NOT NULL,
-  module_version TEXT NOT NULL,
-  module_config_version TEXT NOT NULL DEFAULT '1',
-  schedules_json TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  module_config_json TEXT NOT NULL,
-  condition_config_json TEXT NOT NULL,
-  notification_channel_ids_json TEXT NOT NULL DEFAULT '[]',
-  runtime_state_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS monitor_records (
-  id TEXT PRIMARY KEY,
-  monitor_id TEXT NOT NULL,
-  module_type TEXT NOT NULL DEFAULT '',
-  module_version TEXT NOT NULL DEFAULT '',
-  started_at TEXT NOT NULL,
-  finished_at TEXT NOT NULL,
-  success INTEGER NOT NULL,
-  duration_ms INTEGER NOT NULL,
-  result_schema_version TEXT NOT NULL,
-  result_json TEXT NOT NULL,
-  result_hash TEXT NOT NULL,
-  condition_state TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  notification_events_json TEXT NOT NULL DEFAULT '[]',
-  error_code TEXT NOT NULL DEFAULT '',
-  error_message TEXT NOT NULL DEFAULT '',
-  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_monitor_records_monitor_time ON monitor_records(monitor_id, started_at DESC);
-CREATE TABLE IF NOT EXISTS status_board_items (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  monitor_id TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  source_json TEXT NOT NULL,
-  invert INTEGER NOT NULL DEFAULT 0,
-  thresholds_json TEXT NOT NULL DEFAULT '[]',
-  history_limit INTEGER NOT NULL DEFAULT 60,
-  trend_rules_json TEXT NOT NULL DEFAULT '[]',
-  notification_channel_ids_json TEXT NOT NULL DEFAULT '[]',
-  runtime_state_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_status_board_items_monitor_created ON status_board_items(monitor_id, created_at);
-CREATE TABLE IF NOT EXISTS notification_channels (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  notifier_type TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  config_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS in_app_notifications (
-  id TEXT PRIMARY KEY,
-  channel_id TEXT NOT NULL,
-  monitor_id TEXT NOT NULL DEFAULT '',
-  record_id TEXT NOT NULL DEFAULT '',
-  event_type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  is_read INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  read_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_in_app_notifications_created ON in_app_notifications(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_in_app_notifications_unread ON in_app_notifications(is_read, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_channels_builtin_inapp ON notification_channels(notifier_type) WHERE notifier_type='inapp';
-CREATE TABLE IF NOT EXISTS plugins (
-  id TEXT NOT NULL,
-  version TEXT NOT NULL,
-  name TEXT NOT NULL,
-  vendor TEXT NOT NULL,
-  desp TEXT NOT NULL,
-  url TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 0,
-  verified INTEGER NOT NULL DEFAULT 0,
-  official INTEGER NOT NULL DEFAULT 0,
-  trust_state TEXT NOT NULL DEFAULT 'unsigned',
-  signer_key_id TEXT NOT NULL DEFAULT '',
-  signer_fingerprint TEXT NOT NULL DEFAULT '',
-  signer_public_key TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'installed',
-  error TEXT NOT NULL DEFAULT '',
-  package_path TEXT NOT NULL,
-  binary_path TEXT NOT NULL,
-  package_name TEXT NOT NULL,
-  package_sha256 TEXT NOT NULL,
-  readme TEXT NOT NULL DEFAULT '',
-  manifest_json TEXT NOT NULL,
-  modules_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY(id, version)
-);
-CREATE INDEX IF NOT EXISTS idx_plugins_signer_fingerprint ON plugins(signer_fingerprint);
-CREATE TABLE IF NOT EXISTS plugin_trusted_signers (
-  fingerprint TEXT PRIMARY KEY,
-  key_id TEXT NOT NULL,
-  public_key TEXT NOT NULL,
-  vendor TEXT NOT NULL DEFAULT '',
-  source TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS module_descriptor_snapshots (
-  module_type TEXT NOT NULL,
-  module_version TEXT NOT NULL,
-  descriptor_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY(module_type, module_version)
-);
-CREATE TABLE IF NOT EXISTS system_configs (
-  config_type TEXT PRIMARY KEY,
-  data_json TEXT NOT NULL CHECK(json_valid(data_json)),
-  version INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS admin_sessions (
-  token_hash TEXT PRIMARY KEY,
-  csrf_token TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at);
-INSERT OR IGNORE INTO notification_channels(id,name,notifier_type,enabled,config_json,created_at,updated_at)
-VALUES('builtin-inapp','站内通知','inapp',1,'{"title_template":"{{monitor.name}} · {{event.type}}","body_template":"{{event.summary}}"}',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'));`)
-	return err
-}
-
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { return s.orm.Close() }
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
@@ -222,9 +60,7 @@ func (s *Store) CreateMonitor(ctx context.Context, monitor core.Monitor) error {
 	if monitor.ModuleConfigVersion == "" {
 		monitor.ModuleConfigVersion = "1"
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO monitors
-(id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, monitor.ID, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.ModuleConfigVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.CreatedAt.UTC().Format(time.RFC3339Nano), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := s.orm.NewInsert().Model(monitorFromDomain(monitor)).Exec(ctx)
 	return err
 }
 
@@ -232,7 +68,8 @@ func (s *Store) UpdateMonitor(ctx context.Context, monitor core.Monitor) error {
 	if monitor.ModuleConfigVersion == "" {
 		monitor.ModuleConfigVersion = "1"
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE monitors SET name=?,module_type=?,module_version=?,module_config_version=?,schedules_json=?,enabled=?,module_config_json=?,condition_config_json=?,notification_channel_ids_json=?,runtime_state_json=?,updated_at=? WHERE id=?`, monitor.Name, monitor.ModuleType, monitor.ModuleVersion, monitor.ModuleConfigVersion, jsonString(monitor.Schedules), boolInt(monitor.Enabled), string(monitor.ModuleConfig), string(monitor.ConditionConfig), jsonString(monitor.NotificationChannelIDs), string(monitor.RuntimeState), monitor.UpdatedAt.UTC().Format(time.RFC3339Nano), monitor.ID)
+	model := monitorFromDomain(monitor)
+	_, err := s.orm.NewUpdate().Model(model).Column("name", "module_type", "module_version", "module_config_version", "schedules_json", "enabled", "module_config_json", "condition_config_json", "notification_channel_ids_json", "runtime_state_json", "condition_active", "last_success", "updated_at").WherePK().Exec(ctx)
 	return err
 }
 
@@ -241,142 +78,170 @@ func (s *Store) UpdateRuntimeState(ctx context.Context, id string, state core.Ru
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE monitors SET runtime_state_json=?,updated_at=? WHERE id=?`, string(data), time.Now().UTC().Format(time.RFC3339Nano), id)
+	_, err = s.orm.NewUpdate().Model((*monitorModel)(nil)).Set("runtime_state_json = ?", string(data)).Set("condition_active = ?", state.ConditionActive).Set("last_success = ?", state.LastSuccess).Set("updated_at = ?", timestamp(time.Now())).Where("id = ?", id).Exec(ctx)
 	return err
 }
 
 func (s *Store) DeleteMonitor(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM monitors WHERE id=?`, id)
+	_, err := s.orm.NewDelete().Model((*monitorModel)(nil)).Where("id = ?", id).Exec(ctx)
 	return err
 }
 
 func (s *Store) GetMonitor(ctx context.Context, id string) (core.Monitor, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE id=?`, id)
-	return scanMonitor(row)
+	model := new(monitorModel)
+	if err := s.orm.NewSelect().Model(model).Where("id = ?", id).Scan(ctx); err != nil {
+		return core.Monitor{}, err
+	}
+	return monitorToDomain(model)
 }
 
 func (s *Store) ListMonitors(ctx context.Context) ([]core.Monitor, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors ORDER BY created_at DESC`)
-	if err != nil {
+	models := make([]monitorModel, 0)
+	if err := s.orm.NewSelect().Model(&models).OrderExpr("created_at DESC").Scan(ctx); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []core.Monitor
-	for rows.Next() {
-		monitor, err := scanMonitor(rows)
+	result := make([]core.Monitor, 0, len(models))
+	for index := range models {
+		monitor, err := monitorToDomain(&models[index])
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, monitor)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) ListMonitorsPage(ctx context.Context, options MonitorListOptions) (PageResult[core.Monitor], error) {
 	page, pageSize := normalizePage(options.Page, options.PageSize)
-	where := []string{"1=1"}
-	args := make([]any, 0, 8)
-	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
-		pattern := "%" + search + "%"
-		where = append(where, "(LOWER(name) LIKE ? OR LOWER(module_type) LIKE ? OR LOWER(module_config_json) LIKE ?)")
-		args = append(args, pattern, pattern, pattern)
-	}
-	if moduleType := strings.TrimSpace(options.ModuleType); moduleType != "" && moduleType != "all" {
-		where = append(where, "module_type=?")
-		args = append(args, moduleType)
-	}
-	switch options.Status {
-	case "enabled":
-		where = append(where, "enabled=1")
-	case "disabled":
-		where = append(where, "enabled=0")
-	case "triggered":
-		where = append(where, "enabled=1", "json_extract(runtime_state_json, '$.condition_active')=1")
-		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
-	case "healthy":
-		where = append(where, "enabled=1", "json_extract(runtime_state_json, '$.last_success')=1 AND COALESCE(json_extract(runtime_state_json, '$.condition_active'), 0)=0")
-		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
-	case "waiting":
-		where = append(where, "enabled=1 AND COALESCE(json_extract(runtime_state_json, '$.last_success'), 0)=0")
-		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, true)
-	case "unavailable":
-		where = append(where, "enabled=1")
-		where, args = appendModuleAvailabilityFilter(where, args, options.AvailableModuleTypes, false)
-	}
-
-	clause := strings.Join(where, " AND ")
-	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM monitors WHERE "+clause, args...).Scan(&total); err != nil {
-		return PageResult[core.Monitor]{}, err
-	}
-	result := PageResult[core.Monitor]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.Monitor{}}
-	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,module_type,module_version,module_config_version,schedules_json,enabled,module_config_json,condition_config_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at FROM monitors WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	countQuery := s.orm.NewSelect().Model((*monitorModel)(nil))
+	applyMonitorListOptions(countQuery, options)
+	total, err := countQuery.Count(ctx)
 	if err != nil {
 		return PageResult[core.Monitor]{}, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		monitor, err := scanMonitor(rows)
+	models := make([]monitorModel, 0, pageSize)
+	query := s.orm.NewSelect().Model(&models)
+	applyMonitorListOptions(query, options)
+	if err := query.OrderExpr("created_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(ctx); err != nil {
+		return PageResult[core.Monitor]{}, err
+	}
+	result := PageResult[core.Monitor]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: make([]core.Monitor, 0, len(models))}
+	for index := range models {
+		monitor, err := monitorToDomain(&models[index])
 		if err != nil {
 			return PageResult[core.Monitor]{}, err
 		}
 		result.Items = append(result.Items, monitor)
 	}
-	if err := rows.Err(); err != nil {
-		return PageResult[core.Monitor]{}, err
-	}
 	return result, nil
 }
 
-func appendModuleAvailabilityFilter(where []string, args []any, available []string, wantAvailable bool) ([]string, []any) {
-	if len(available) == 0 {
-		if wantAvailable {
-			where = append(where, "1=0")
-		}
-		return where, args
+func applyMonitorListOptions(query *bun.SelectQuery, options MonitorListOptions) {
+	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
+		pattern := "%" + search + "%"
+		query.Where("(LOWER(name) LIKE ? OR LOWER(module_type) LIKE ? OR LOWER(module_config_json) LIKE ?)", pattern, pattern, pattern)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(available)), ",")
-	operator := "IN"
-	if !wantAvailable {
-		operator = "NOT IN"
+	if moduleType := strings.TrimSpace(options.ModuleType); moduleType != "" && moduleType != "all" {
+		query.Where("module_type = ?", moduleType)
 	}
-	where = append(where, "module_type "+operator+" ("+placeholders+")")
-	for _, moduleType := range available {
-		args = append(args, moduleType)
+	switch options.Status {
+	case "enabled":
+		query.Where("enabled = ?", true)
+	case "disabled":
+		query.Where("enabled = ?", false)
+	case "triggered":
+		query.Where("enabled = ?", true).Where("condition_active = ?", true)
+		applyModuleAvailabilityFilter(query, options.AvailableModuleTypes, true)
+	case "healthy":
+		query.Where("enabled = ?", true).Where("last_success = ?", true).Where("condition_active = ?", false)
+		applyModuleAvailabilityFilter(query, options.AvailableModuleTypes, true)
+	case "waiting":
+		query.Where("enabled = ?", true).Where("last_success = ?", false)
+		applyModuleAvailabilityFilter(query, options.AvailableModuleTypes, true)
+	case "unavailable":
+		query.Where("enabled = ?", true)
+		applyModuleAvailabilityFilter(query, options.AvailableModuleTypes, false)
 	}
-	return where, args
 }
 
-func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) {
-	var monitor core.Monitor
-	var enabled int
-	var schedules, moduleConfig, conditionConfig, channelIDs, runtimeState string
-	var createdAt, updatedAt string
-	if err := scanner.Scan(&monitor.ID, &monitor.Name, &monitor.ModuleType, &monitor.ModuleVersion, &monitor.ModuleConfigVersion, &schedules, &enabled, &moduleConfig, &conditionConfig, &channelIDs, &runtimeState, &createdAt, &updatedAt); err != nil {
+func applyModuleAvailabilityFilter(query *bun.SelectQuery, available []string, wantAvailable bool) {
+	if len(available) == 0 {
+		if wantAvailable {
+			query.Where("1 = 0")
+		}
+		return
+	}
+	if !wantAvailable {
+		query.Where("module_type NOT IN (?)", bun.In(available))
+		return
+	}
+	query.Where("module_type IN (?)", bun.In(available))
+}
+
+func monitorFromDomain(monitor core.Monitor) *monitorModel {
+	conditionActive, lastSuccess := monitorRuntimeFlags(monitor.RuntimeState)
+	return &monitorModel{
+		ID: monitor.ID, Name: monitor.Name, ModuleType: monitor.ModuleType, ModuleVersion: monitor.ModuleVersion, ModuleConfigVersion: monitor.ModuleConfigVersion,
+		SchedulesJSON: jsonString(monitor.Schedules), Enabled: monitor.Enabled, ModuleConfigJSON: string(monitor.ModuleConfig), ConditionConfigJSON: string(monitor.ConditionConfig),
+		NotificationChannelIDsJSON: jsonString(monitor.NotificationChannelIDs), RuntimeStateJSON: string(monitor.RuntimeState), ConditionActive: conditionActive, LastSuccess: lastSuccess,
+		CreatedAt: timestamp(monitor.CreatedAt), UpdatedAt: timestamp(monitor.UpdatedAt),
+	}
+}
+
+func monitorToDomain(model *monitorModel) (core.Monitor, error) {
+	monitor := core.Monitor{
+		ID: model.ID, Name: model.Name, ModuleType: model.ModuleType, ModuleVersion: model.ModuleVersion, ModuleConfigVersion: model.ModuleConfigVersion,
+		Enabled: model.Enabled, ModuleConfig: json.RawMessage(model.ModuleConfigJSON), ConditionConfig: json.RawMessage(model.ConditionConfigJSON), RuntimeState: json.RawMessage(model.RuntimeStateJSON),
+	}
+	if err := json.Unmarshal([]byte(model.SchedulesJSON), &monitor.Schedules); err != nil {
 		return monitor, err
 	}
-	monitor.Enabled = enabled == 1
-	_ = json.Unmarshal([]byte(schedules), &monitor.Schedules)
-	monitor.ModuleConfig = json.RawMessage(moduleConfig)
-	monitor.ConditionConfig = json.RawMessage(conditionConfig)
-	monitor.RuntimeState = json.RawMessage(runtimeState)
-	_ = json.Unmarshal([]byte(channelIDs), &monitor.NotificationChannelIDs)
-	monitor.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-	monitor.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	if err := json.Unmarshal([]byte(model.NotificationChannelIDsJSON), &monitor.NotificationChannelIDs); err != nil {
+		return monitor, err
+	}
+	monitor.CreatedAt, _ = time.Parse(time.RFC3339Nano, model.CreatedAt)
+	monitor.UpdatedAt, _ = time.Parse(time.RFC3339Nano, model.UpdatedAt)
 	return monitor, nil
 }
 
 func (s *Store) AddRecord(ctx context.Context, record core.MonitorRecord) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_records
-(id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.MonitorID, record.ModuleType, record.ModuleVersion, record.StartedAt.UTC().Format(time.RFC3339Nano), record.FinishedAt.UTC().Format(time.RFC3339Nano), boolInt(record.Success), record.DurationMS, record.ResultSchemaVersion, jsonString(record.Result), record.ResultHash, record.ConditionState, record.EventType, jsonString(record.NotificationEvents), record.ErrorCode, record.ErrorMessage)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := addRecordTx(ctx, tx, record); err != nil {
+		return err
+	}
+	if err := addPendingNotificationDeliveriesTx(ctx, tx, record); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateRecordNotificationEvents(ctx context.Context, id string, events []core.RecordNotificationEvent) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE monitor_records SET notification_events_json=? WHERE id=?`, jsonString(events), id)
-	return err
+	eventCount, trendTriggered, trendRecovered := notificationEventFlags(events)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE monitor_records SET notification_events_json=?,notification_event_count=?,trend_triggered=?,trend_recovered=? WHERE id=?`, jsonString(notificationEventMetadata(events)), eventCount, boolInt(trendTriggered), boolInt(trendRecovered), id); err != nil {
+		return err
+	}
+	now := unixMicros(time.Now())
+	for _, event := range events {
+		for channelID, delivery := range event.Deliveries {
+			var deliveredAt any
+			if delivery.Status == "sent" {
+				deliveredAt = now
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE notification_deliveries SET status=?,attempts=?,message=?,updated_at=?,delivered_at=COALESCE(?,delivered_at) WHERE event_id=? AND channel_id=?`, delivery.Status, delivery.Attempts, delivery.Message, now, deliveredAt, event.ID, channelID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([]core.MonitorRecord, error) {
@@ -385,82 +250,153 @@ func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([
 }
 
 func (s *Store) GetRecord(ctx context.Context, monitorID, recordID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
-	return scanRecord(row)
+	model := new(monitorRecordModel)
+	if err := s.orm.NewSelect().Model(model).Where("monitor_id = ?", monitorID).Where("id = ?", recordID).Scan(ctx); err != nil {
+		return core.MonitorRecord{}, err
+	}
+	record, err := recordToDomain(model)
+	if err != nil {
+		return core.MonitorRecord{}, err
+	}
+	records := []core.MonitorRecord{record}
+	if err := s.hydrateNotificationDeliveries(ctx, records); err != nil {
+		return core.MonitorRecord{}, err
+	}
+	return records[0], nil
 }
 
 func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options RecordListOptions) (PageResult[core.MonitorRecord], error) {
 	page, pageSize := normalizePage(options.Page, options.PageSize)
-	where := []string{"monitor_id=?"}
-	args := []any{monitorID}
-	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
-		pattern := "%" + search + "%"
-		where = append(where, "(LOWER(error_message) LIKE ? OR LOWER(event_type) LIKE ? OR LOWER(condition_state) LIKE ? OR LOWER(result_hash) LIKE ? OR LOWER(result_json) LIKE ?)")
-		args = append(args, pattern, pattern, pattern, pattern, pattern)
-	}
-	switch options.Status {
-	case "success":
-		where = append(where, "success=1")
-	case "failed":
-		where = append(where, "success=0")
-	}
-	if eventType := strings.TrimSpace(options.EventType); eventType != "" && eventType != "all" {
-		if eventType == "trend_triggered" || eventType == "trend_recovered" {
-			where = append(where, "EXISTS (SELECT 1 FROM json_each(notification_events_json) WHERE json_extract(json_each.value, '$.event_type')=?)")
-			args = append(args, eventType)
-		} else if eventType == "none" {
-			where = append(where, "event_type='none' AND json_array_length(notification_events_json)=0")
-		} else {
-			where = append(where, "event_type=?")
-			args = append(args, eventType)
-		}
-	}
-
-	clause := strings.Join(where, " AND ")
-	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM monitor_records WHERE "+clause, args...).Scan(&total); err != nil {
-		return PageResult[core.MonitorRecord]{}, err
-	}
-	result := PageResult[core.MonitorRecord]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.MonitorRecord{}}
-	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	countQuery := s.orm.NewSelect().Model((*monitorRecordModel)(nil))
+	applyRecordListOptions(countQuery, monitorID, options)
+	total, err := countQuery.Count(ctx)
 	if err != nil {
 		return PageResult[core.MonitorRecord]{}, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		record, err := scanRecord(rows)
+	models := make([]monitorRecordModel, 0, pageSize)
+	query := s.orm.NewSelect().Model(&models)
+	applyRecordListOptions(query, monitorID, options)
+	if err := query.OrderExpr("started_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(ctx); err != nil {
+		return PageResult[core.MonitorRecord]{}, err
+	}
+	result := PageResult[core.MonitorRecord]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: make([]core.MonitorRecord, 0, len(models))}
+	for index := range models {
+		record, err := recordToDomain(&models[index])
 		if err != nil {
 			return PageResult[core.MonitorRecord]{}, err
 		}
 		result.Items = append(result.Items, record)
 	}
-	return result, rows.Err()
+	if err := s.hydrateNotificationDeliveries(ctx, result.Items); err != nil {
+		return PageResult[core.MonitorRecord]{}, err
+	}
+	return result, nil
+}
+
+func applyRecordListOptions(query *bun.SelectQuery, monitorID string, options RecordListOptions) {
+	query.Where("monitor_id = ?", monitorID)
+	if search := strings.TrimSpace(strings.ToLower(options.Search)); search != "" {
+		pattern := "%" + search + "%"
+		query.Where("(LOWER(error_message) LIKE ? OR LOWER(event_type) LIKE ? OR LOWER(condition_state) LIKE ? OR LOWER(result_hash) LIKE ? OR LOWER(result_json) LIKE ?)", pattern, pattern, pattern, pattern, pattern)
+	}
+	switch options.Status {
+	case "success":
+		query.Where("success = ?", true)
+	case "failed":
+		query.Where("success = ?", false)
+	}
+	if eventType := strings.TrimSpace(options.EventType); eventType != "" && eventType != "all" {
+		if eventType == "trend_triggered" || eventType == "trend_recovered" {
+			query.Where(map[string]string{"trend_triggered": "trend_triggered = ?", "trend_recovered": "trend_recovered = ?"}[eventType], true)
+		} else if eventType == "none" {
+			query.Where("event_type = ?", "none").Where("notification_event_count = 0")
+		} else {
+			query.Where("event_type = ?", eventType)
+		}
+	}
 }
 
 func (s *Store) LatestSuccessfulRecord(ctx context.Context, monitorID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND success=1 ORDER BY started_at DESC LIMIT 1`, monitorID)
-	return scanRecord(row)
+	model := new(monitorRecordModel)
+	if err := s.orm.NewSelect().Model(model).Where("monitor_id = ?", monitorID).Where("success = ?", true).OrderExpr("started_at DESC").Limit(1).Scan(ctx); err != nil {
+		return core.MonitorRecord{}, err
+	}
+	return recordToDomain(model)
 }
 
-func scanRecord(scanner interface{ Scan(...any) error }) (core.MonitorRecord, error) {
-	var record core.MonitorRecord
-	var success int
-	var resultJSON, notificationJSON string
-	var startedAt, finishedAt string
-	if err := scanner.Scan(&record.ID, &record.MonitorID, &record.ModuleType, &record.ModuleVersion, &startedAt, &finishedAt, &success, &record.DurationMS, &record.ResultSchemaVersion, &resultJSON, &record.ResultHash, &record.ConditionState, &record.EventType, &notificationJSON, &record.ErrorCode, &record.ErrorMessage); err != nil {
+func recordFromDomain(record core.MonitorRecord) *monitorRecordModel {
+	eventCount, trendTriggered, trendRecovered := notificationEventFlags(record.NotificationEvents)
+	return &monitorRecordModel{
+		ID: record.ID, MonitorID: record.MonitorID, ModuleType: record.ModuleType, ModuleVersion: record.ModuleVersion,
+		StartedAt: unixMicros(record.StartedAt), FinishedAt: unixMicros(record.FinishedAt), Success: record.Success, DurationMS: record.DurationMS,
+		ResultSchemaVersion: record.ResultSchemaVersion, ResultJSON: jsonString(record.Result), ResultHash: record.ResultHash,
+		ConditionState: record.ConditionState, EventType: record.EventType, NotificationEventsJSON: jsonString(notificationEventMetadata(record.NotificationEvents)),
+		NotificationEventCount: eventCount, TrendTriggered: trendTriggered, TrendRecovered: trendRecovered, ErrorCode: record.ErrorCode, ErrorMessage: record.ErrorMessage,
+	}
+}
+
+func notificationEventMetadata(events []core.RecordNotificationEvent) []core.RecordNotificationEvent {
+	result := make([]core.RecordNotificationEvent, len(events))
+	for index := range events {
+		result[index] = events[index]
+		result[index].Deliveries = nil
+	}
+	return result
+}
+
+func (s *Store) hydrateNotificationDeliveries(ctx context.Context, records []core.MonitorRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	recordIDs := make([]string, 0, len(records))
+	recordIndex := make(map[string]int, len(records))
+	for index := range records {
+		recordIDs = append(recordIDs, records[index].ID)
+		recordIndex[records[index].ID] = index
+		for eventIndex := range records[index].NotificationEvents {
+			records[index].NotificationEvents[eventIndex].Deliveries = map[string]core.NotificationDelivery{}
+		}
+	}
+	models := make([]notificationDeliveryModel, 0)
+	if err := s.orm.NewSelect().Model(&models).Where("record_id IN (?)", bun.In(recordIDs)).Scan(ctx); err != nil {
+		return err
+	}
+	for index := range models {
+		model := &models[index]
+		recordPosition, ok := recordIndex[model.RecordID]
+		if !ok {
+			continue
+		}
+		for eventIndex := range records[recordPosition].NotificationEvents {
+			event := &records[recordPosition].NotificationEvents[eventIndex]
+			if event.ID == model.EventID {
+				event.Deliveries[model.ChannelID] = core.NotificationDelivery{Status: model.Status, Attempts: model.Attempts, Message: model.Message}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func recordToDomain(model *monitorRecordModel) (core.MonitorRecord, error) {
+	record := core.MonitorRecord{
+		ID: model.ID, MonitorID: model.MonitorID, ModuleType: model.ModuleType, ModuleVersion: model.ModuleVersion,
+		Success: model.Success, DurationMS: model.DurationMS, ResultSchemaVersion: model.ResultSchemaVersion, ResultHash: model.ResultHash,
+		ConditionState: model.ConditionState, EventType: model.EventType, ErrorCode: model.ErrorCode, ErrorMessage: model.ErrorMessage,
+	}
+	if err := json.Unmarshal([]byte(model.ResultJSON), &record.Result); err != nil {
 		return record, err
 	}
-	record.Success = success == 1
-	_ = json.Unmarshal([]byte(resultJSON), &record.Result)
-	_ = json.Unmarshal([]byte(notificationJSON), &record.NotificationEvents)
-	record.StartedAt, _ = time.Parse(time.RFC3339Nano, startedAt)
-	record.FinishedAt, _ = time.Parse(time.RFC3339Nano, finishedAt)
+	if err := json.Unmarshal([]byte(model.NotificationEventsJSON), &record.NotificationEvents); err != nil {
+		return record, err
+	}
+	record.StartedAt = time.UnixMicro(model.StartedAt).UTC()
+	record.FinishedAt = time.UnixMicro(model.FinishedAt).UTC()
 	return record, nil
 }
 
 func (s *Store) DeleteMonitorRecords(ctx context.Context, monitorID string) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM monitor_records WHERE monitor_id=?`, monitorID)
+	result, err := s.orm.NewDelete().Model((*monitorRecordModel)(nil)).Where("monitor_id = ?", monitorID).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -468,7 +404,7 @@ func (s *Store) DeleteMonitorRecords(ctx context.Context, monitorID string) (int
 }
 
 func (s *Store) PruneRecords(ctx context.Context, before time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM monitor_records WHERE finished_at < ?`, before.UTC().Format(time.RFC3339Nano))
+	result, err := s.orm.NewDelete().Model((*monitorRecordModel)(nil)).Where("finished_at < ?", unixMicros(before)).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -476,55 +412,119 @@ func (s *Store) PruneRecords(ctx context.Context, before time.Time) (int64, erro
 }
 
 func (s *Store) CreateChannel(ctx context.Context, channel core.NotificationChannel) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO notification_channels(id,name,notifier_type,enabled,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, channel.ID, channel.Name, channel.NotifierType, boolInt(channel.Enabled), string(channel.Config), channel.CreatedAt.UTC().Format(time.RFC3339Nano), channel.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := s.orm.NewInsert().Model(notificationChannelFromDomain(channel)).Exec(ctx)
 	return err
 }
 
 func (s *Store) UpdateChannel(ctx context.Context, channel core.NotificationChannel) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE notification_channels SET name=?,notifier_type=?,enabled=?,config_json=?,updated_at=? WHERE id=?`, channel.Name, channel.NotifierType, boolInt(channel.Enabled), string(channel.Config), channel.UpdatedAt.UTC().Format(time.RFC3339Nano), channel.ID)
+	model := notificationChannelFromDomain(channel)
+	_, err := s.orm.NewUpdate().Model(model).Column("name", "notifier_type", "enabled", "config_json", "updated_at").WherePK().Exec(ctx)
 	return err
 }
 
 func (s *Store) DeleteChannel(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM notification_channels WHERE id=?`, id)
+	_, err := s.orm.NewDelete().Model((*notificationChannelModel)(nil)).Where("id = ?", id).Exec(ctx)
 	return err
 }
 
 func (s *Store) GetChannel(ctx context.Context, id string) (core.NotificationChannel, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,notifier_type,enabled,config_json,created_at,updated_at FROM notification_channels WHERE id=?`, id)
-	return scanChannel(row)
+	model := new(notificationChannelModel)
+	if err := s.orm.NewSelect().Model(model).Where("id = ?", id).Scan(ctx); err != nil {
+		return core.NotificationChannel{}, err
+	}
+	return notificationChannelToDomain(model), nil
 }
 
 func (s *Store) ListChannels(ctx context.Context) ([]core.NotificationChannel, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,notifier_type,enabled,config_json,created_at,updated_at FROM notification_channels ORDER BY created_at DESC`)
-	if err != nil {
+	models := make([]notificationChannelModel, 0)
+	if err := s.orm.NewSelect().Model(&models).OrderExpr("created_at DESC").Scan(ctx); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var channels []core.NotificationChannel
-	for rows.Next() {
-		channel, err := scanChannel(rows)
-		if err != nil {
-			return nil, err
-		}
-		channels = append(channels, channel)
+	channels := make([]core.NotificationChannel, 0, len(models))
+	for index := range models {
+		channels = append(channels, notificationChannelToDomain(&models[index]))
 	}
-	return channels, rows.Err()
+	return channels, nil
 }
 
 func (s *Store) CreateInAppNotification(ctx context.Context, notification core.InAppNotification) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO in_app_notifications(id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at) VALUES(?,?,?,?,?,?,?,?,?,NULL)`, notification.ID, notification.ChannelID, notification.MonitorID, notification.RecordID, notification.EventType, notification.Title, notification.Content, boolInt(notification.Read), notification.CreatedAt.UTC().Format(time.RFC3339Nano))
+	now := notification.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return s.CreateNotificationDelivery(ctx, core.NotificationDeliveryRecord{
+		ID: notification.ID, EventID: notification.ID, Source: "inapp", EventType: notification.EventType,
+		ChannelID: notification.ChannelID, NotifierType: "inapp", MonitorID: notification.MonitorID, RecordID: notification.RecordID,
+		Title: notification.Title, Content: notification.Content, Status: "sent", Attempts: 1, Read: notification.Read,
+		CreatedAt: now, UpdatedAt: now, DeliveredAt: &now, ReadAt: notification.ReadAt,
+	})
+}
+
+func (s *Store) CreateNotificationDelivery(ctx context.Context, delivery core.NotificationDeliveryRecord) error {
+	if delivery.ID == "" {
+		delivery.ID = core.NewID()
+	}
+	if delivery.CreatedAt.IsZero() {
+		delivery.CreatedAt = time.Now().UTC()
+	}
+	if delivery.UpdatedAt.IsZero() {
+		delivery.UpdatedAt = delivery.CreatedAt
+	}
+	model := notificationDeliveryFromDomain(delivery)
+	_, err := s.orm.NewInsert().Model(model).Ignore().Exec(ctx)
+	return err
+}
+
+func (s *Store) UpdateNotificationDeliveryContent(ctx context.Context, eventID, channelID, title, content string, payload json.RawMessage) error {
+	query := s.orm.NewUpdate().Model((*notificationDeliveryModel)(nil)).
+		Set("title = ?", title).
+		Set("content = ?", content).
+		Set("updated_at = ?", unixMicros(time.Now())).
+		Where("event_id = ? AND channel_id = ?", eventID, channelID)
+	if len(payload) > 0 {
+		query = query.Set("payload_json = ?", string(payload))
+	}
+	_, err := query.Exec(ctx)
+	return err
+}
+
+func (s *Store) UpdateNotificationDeliveryResult(ctx context.Context, eventID, channelID string, result core.NotificationDelivery) error {
+	now := time.Now().UTC()
+	query := s.orm.NewUpdate().Model((*notificationDeliveryModel)(nil)).
+		Set("status = ?", result.Status).
+		Set("attempts = ?", result.Attempts).
+		Set("message = ?", result.Message).
+		Set("updated_at = ?", unixMicros(now)).
+		Where("event_id = ? AND channel_id = ?", eventID, channelID)
+	if result.Status == "sent" {
+		query = query.Set("delivered_at = ?", unixMicros(now))
+	}
+	_, err := query.Exec(ctx)
 	return err
 }
 
 func (s *Store) GetInAppNotification(ctx context.Context, id string) (core.InAppNotification, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM in_app_notifications WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM notification_deliveries WHERE notifier_type='inapp' AND id=?`, id)
 	return scanInAppNotification(row)
+}
+
+func (s *Store) GetInAppNotificationByEvent(ctx context.Context, eventID, channelID string) (core.InAppNotification, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM notification_deliveries WHERE notifier_type='inapp' AND event_id=? AND channel_id=?`, eventID, channelID)
+	return scanInAppNotification(row)
+}
+
+func (s *Store) UpdateNotificationDeliveryNotifier(ctx context.Context, eventID, channelID, notifierType string) error {
+	_, err := s.orm.NewUpdate().Model((*notificationDeliveryModel)(nil)).
+		Set("notifier_type = ?", notifierType).
+		Set("updated_at = ?", unixMicros(time.Now())).
+		Where("event_id = ? AND channel_id = ?", eventID, channelID).
+		Exec(ctx)
+	return err
 }
 
 func (s *Store) ListInAppNotificationsPage(ctx context.Context, options NotificationListOptions) (PageResult[core.InAppNotification], error) {
 	page, pageSize := normalizePage(options.Page, options.PageSize)
-	where := []string{"1=1"}
+	where := []string{"notifier_type='inapp'"}
 	args := make([]any, 0, 4)
 	if options.UnreadOnly {
 		where = append(where, "is_read=0")
@@ -536,12 +536,12 @@ func (s *Store) ListInAppNotificationsPage(ctx context.Context, options Notifica
 	}
 	clause := strings.Join(where, " AND ")
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM in_app_notifications WHERE "+clause, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM notification_deliveries WHERE "+clause, args...).Scan(&total); err != nil {
 		return PageResult[core.InAppNotification]{}, err
 	}
 	result := PageResult[core.InAppNotification]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.InAppNotification{}}
 	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM in_app_notifications WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,channel_id,monitor_id,record_id,event_type,title,content,is_read,created_at,read_at FROM notification_deliveries WHERE `+clause+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return PageResult[core.InAppNotification]{}, err
 	}
@@ -558,20 +558,21 @@ func (s *Store) ListInAppNotificationsPage(ctx context.Context, options Notifica
 
 func (s *Store) CountUnreadInAppNotifications(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM in_app_notifications WHERE is_read=0`).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_deliveries WHERE notifier_type='inapp' AND is_read=0`).Scan(&count)
 	return count, err
 }
 
 func (s *Store) MarkInAppNotificationRead(ctx context.Context, id string) (core.InAppNotification, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, `UPDATE in_app_notifications SET is_read=1,read_at=COALESCE(read_at,?) WHERE id=?`, now, id); err != nil {
+	now := unixMicros(time.Now())
+	if _, err := s.db.ExecContext(ctx, `UPDATE notification_deliveries SET is_read=1,read_at=COALESCE(read_at,?),updated_at=? WHERE notifier_type='inapp' AND id=?`, now, now, id); err != nil {
 		return core.InAppNotification{}, err
 	}
 	return s.GetInAppNotification(ctx, id)
 }
 
 func (s *Store) MarkAllInAppNotificationsRead(ctx context.Context) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE in_app_notifications SET is_read=1,read_at=? WHERE is_read=0`, time.Now().UTC().Format(time.RFC3339Nano))
+	now := unixMicros(time.Now())
+	result, err := s.db.ExecContext(ctx, `UPDATE notification_deliveries SET is_read=1,read_at=?,updated_at=? WHERE notifier_type='inapp' AND is_read=0`, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -579,7 +580,7 @@ func (s *Store) MarkAllInAppNotificationsRead(ctx context.Context) (int64, error
 }
 
 func (s *Store) DeleteReadInAppNotifications(ctx context.Context) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM in_app_notifications WHERE is_read=1`)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE notifier_type='inapp' AND is_read=1`)
 	if err != nil {
 		return 0, err
 	}
@@ -587,7 +588,11 @@ func (s *Store) DeleteReadInAppNotifications(ctx context.Context) (int64, error)
 }
 
 func (s *Store) PruneInAppNotifications(ctx context.Context, before time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM in_app_notifications WHERE created_at < ?`, before.UTC().Format(time.RFC3339Nano))
+	return s.PruneNotificationDeliveries(ctx, before)
+}
+
+func (s *Store) PruneNotificationDeliveries(ctx context.Context, before time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE created_at < ?`, unixMicros(before))
 	if err != nil {
 		return 0, err
 	}
@@ -597,33 +602,63 @@ func (s *Store) PruneInAppNotifications(ctx context.Context, before time.Time) (
 func scanInAppNotification(scanner interface{ Scan(...any) error }) (core.InAppNotification, error) {
 	var notification core.InAppNotification
 	var read int
-	var createdAt string
-	var readAt sql.NullString
+	var createdAt int64
+	var readAt sql.NullInt64
 	if err := scanner.Scan(&notification.ID, &notification.ChannelID, &notification.MonitorID, &notification.RecordID, &notification.EventType, &notification.Title, &notification.Content, &read, &createdAt, &readAt); err != nil {
 		return notification, err
 	}
 	notification.Read = read == 1
-	notification.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	notification.CreatedAt = time.UnixMicro(createdAt).UTC()
 	if readAt.Valid {
-		value, _ := time.Parse(time.RFC3339Nano, readAt.String)
+		value := time.UnixMicro(readAt.Int64).UTC()
 		notification.ReadAt = &value
 	}
 	return notification, nil
 }
 
-func scanChannel(scanner interface{ Scan(...any) error }) (core.NotificationChannel, error) {
-	var channel core.NotificationChannel
-	var enabled int
-	var config, createdAt, updatedAt string
-	if err := scanner.Scan(&channel.ID, &channel.Name, &channel.NotifierType, &enabled, &config, &createdAt, &updatedAt); err != nil {
-		return channel, err
+func notificationDeliveryFromDomain(value core.NotificationDeliveryRecord) *notificationDeliveryModel {
+	payload := "{}"
+	if len(value.Payload) > 0 {
+		payload = string(value.Payload)
 	}
-	channel.Enabled = enabled == 1
-	channel.Config = json.RawMessage(config)
-	channel.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-	channel.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-	channel.BuiltIn = channel.ID == core.BuiltInNotificationChannelID || channel.NotifierType == "inapp"
-	return channel, nil
+	return &notificationDeliveryModel{
+		ID: value.ID, EventID: value.EventID, Source: value.Source, EventType: value.EventType,
+		StatusItemID: value.StatusItemID, TrendRuleID: value.TrendRuleID, ChannelID: value.ChannelID,
+		NotifierType: value.NotifierType, MonitorID: value.MonitorID, RecordID: value.RecordID,
+		Title: value.Title, Content: value.Content, PayloadJSON: payload, Status: value.Status,
+		Attempts: value.Attempts, Message: value.Message, IsRead: value.Read,
+		CreatedAt: unixMicros(value.CreatedAt), UpdatedAt: unixMicros(value.UpdatedAt),
+		DeliveredAt: optionalUnixMicros(value.DeliveredAt), ReadAt: optionalUnixMicros(value.ReadAt),
+	}
+}
+
+func optionalUnixMicros(value *time.Time) *int64 {
+	if value == nil {
+		return nil
+	}
+	formatted := unixMicros(*value)
+	return &formatted
+}
+
+func notificationChannelFromDomain(channel core.NotificationChannel) *notificationChannelModel {
+	var builtinKey *string
+	if channel.ID == core.BuiltInNotificationChannelID {
+		key := "inapp"
+		builtinKey = &key
+	}
+	return &notificationChannelModel{
+		ID: channel.ID, BuiltinKey: builtinKey, Name: channel.Name, NotifierType: channel.NotifierType,
+		Enabled: channel.Enabled, ConfigJSON: string(channel.Config), CreatedAt: timestamp(channel.CreatedAt), UpdatedAt: timestamp(channel.UpdatedAt),
+	}
+}
+
+func notificationChannelToDomain(model *notificationChannelModel) core.NotificationChannel {
+	createdAt, _ := time.Parse(time.RFC3339Nano, model.CreatedAt)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, model.UpdatedAt)
+	return core.NotificationChannel{
+		ID: model.ID, Name: model.Name, NotifierType: model.NotifierType, Enabled: model.Enabled,
+		Config: json.RawMessage(model.ConfigJSON), CreatedAt: createdAt, UpdatedAt: updatedAt, BuiltIn: model.BuiltinKey != nil,
+	}
 }
 
 func boolInt(value bool) int {
@@ -639,6 +674,27 @@ func jsonString(value any) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+func monitorRuntimeFlags(raw json.RawMessage) (bool, bool) {
+	var state core.RuntimeState
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &state)
+	}
+	return state.ConditionActive, state.LastSuccess
+}
+
+func notificationEventFlags(events []core.RecordNotificationEvent) (int, bool, bool) {
+	var triggered, recovered bool
+	for _, event := range events {
+		switch event.EventType {
+		case "trend_triggered":
+			triggered = true
+		case "trend_recovered":
+			recovered = true
+		}
+	}
+	return len(events), triggered, recovered
 }
 
 func normalizePage(page, pageSize int) (int, int) {

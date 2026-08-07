@@ -35,7 +35,17 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	if len(serverOptions) > 0 {
 		options = serverOptions[0]
 	}
-	database, err := store.OpenStore(config.Storage.DataDir)
+	connectionLifetime, connectionIdleTime := config.Storage.Database.ConnectionDurations()
+	database, err := store.Open(ctx, store.Options{
+		Type:            store.DatabaseType(config.Storage.Database.Type),
+		DSN:             config.Storage.Database.DSN,
+		DataDir:         config.Storage.DataDir,
+		AutoMigrate:     config.Storage.Database.AutoMigrate,
+		MaxOpenConns:    config.Storage.Database.MaxOpenConns,
+		MaxIdleConns:    config.Storage.Database.MaxIdleConns,
+		ConnMaxLifetime: connectionLifetime,
+		ConnMaxIdleTime: connectionIdleTime,
+	})
 	if err != nil {
 		return err
 	}
@@ -58,7 +68,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	logger.Info("Meerkit scheduler configuration", "timezone", runtimeSnapshot.Scheduler.Timezone, "max_concurrency", runtimeSnapshot.Scheduler.MaxConcurrency, "poll_ms", runtimeSnapshot.Scheduler.PollMilliseconds)
 	logger.Info("Meerkit retention configuration", "records", runtimeSnapshot.Storage.Retention, "notifications", runtimeSnapshot.Storage.NotificationRetention, "cleanup_interval", runtimeSnapshot.Storage.CleanupInterval)
 	logger.Info("Meerkit logging configuration", "host_level", runtimeSnapshot.Logging.Level, "host_format", runtimeSnapshot.Logging.Format, "plugin_level", runtimeSnapshot.Plugins.LogLevel, "plugin_format", runtimeSnapshot.Plugins.LogFormat)
-	logger.Info("Meerkit storage initialized", "data_dir", config.Storage.DataDir)
+	logger.Info("Meerkit storage initialized", "database_type", config.Storage.Database.Type, "data_dir", config.Storage.DataDir, "auto_migrate", config.Storage.Database.AutoMigrate)
 	api.SetFrontendFS(frontend)
 	modules := monitor.NewRegistry()
 	trustedKeys := make(map[string]ed25519.PublicKey, len(config.Plugins.TrustedKeys))

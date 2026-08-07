@@ -28,7 +28,7 @@ var (
 )
 
 type Runner struct {
-	store     *store.Store
+	store     store.RunnerRepository
 	modules   *monitor.Registry
 	notifiers *notification.Registry
 	board     *statusboard.Service
@@ -37,7 +37,7 @@ type Runner struct {
 	logger    *slog.Logger
 }
 
-func NewRunner(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, logger *slog.Logger, boards ...*statusboard.Service) *Runner {
+func NewRunner(store store.RunnerRepository, modules *monitor.Registry, notifiers *notification.Registry, logger *slog.Logger, boards ...*statusboard.Service) *Runner {
 	var board *statusboard.Service
 	if len(boards) > 0 {
 		board = boards[0]
@@ -270,12 +270,25 @@ func (r *Runner) sendNotification(ctx context.Context, recordID, channelID strin
 	if r.logger != nil {
 		r.logger.Debug("notification delivery started", "record_id", recordID, "event_type", event.EventType, "channel_id", channelID)
 	}
+	payload, _ := json.Marshal(event)
+	now := time.Now().UTC()
+	if err := r.store.CreateNotificationDelivery(ctx, core.NotificationDeliveryRecord{
+		ID: core.NewID(), EventID: event.ID, Source: event.Source, EventType: event.EventType,
+		StatusItemID: event.StatusItemID, TrendRuleID: event.TrendRuleID, ChannelID: channelID,
+		NotifierType: "unknown", MonitorID: event.MonitorID, RecordID: recordID, Content: event.Summary,
+		Payload: payload, Status: "pending", CreatedAt: now, UpdatedAt: now,
+	}); err != nil && r.logger != nil {
+		r.logger.Error("create notification delivery failed", "record_id", recordID, "event_id", event.ID, "channel_id", channelID, "error", err)
+	}
 	channel, err := r.store.GetChannel(ctx, channelID)
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Error("load notification channel failed", "record_id", recordID, "channel_id", channelID, "error", err)
 		}
 		return core.NotificationDelivery{Status: "error", Message: err.Error()}
+	}
+	if err := r.store.UpdateNotificationDeliveryNotifier(ctx, event.ID, channelID, channel.NotifierType); err != nil && r.logger != nil {
+		r.logger.Error("update notification delivery notifier failed", "record_id", recordID, "event_id", event.ID, "channel_id", channelID, "error", err)
 	}
 	if !channel.Enabled {
 		if r.logger != nil {
@@ -327,7 +340,7 @@ type scheduleTask struct {
 
 type Scheduler struct {
 	runner           *Runner
-	store            *store.Store
+	store            store.MonitorRepository
 	config           func() app.RuntimeConfig
 	logger           *slog.Logger
 	changes          <-chan struct{}
@@ -340,7 +353,7 @@ type Scheduler struct {
 	lastTimezone     string
 }
 
-func NewScheduler(runner *Runner, store *store.Store, config func() app.RuntimeConfig, logger *slog.Logger, changes ...<-chan struct{}) *Scheduler {
+func NewScheduler(runner *Runner, store store.MonitorRepository, config func() app.RuntimeConfig, logger *slog.Logger, changes ...<-chan struct{}) *Scheduler {
 	current := config()
 	var changeChannel <-chan struct{}
 	if len(changes) > 0 {

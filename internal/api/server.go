@@ -29,7 +29,7 @@ import (
 )
 
 type APIServer struct {
-	store        *store.Store
+	store        store.APIRepository
 	modules      *monitor.Registry
 	notifiers    *notification.Registry
 	runner       *runtimeapp.Runner
@@ -46,7 +46,7 @@ type APIServer struct {
 
 func (a *APIServer) SetStatusBoard(service *statusboard.Service) { a.statusBoard = service }
 
-func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
+func NewAPIServer(store store.APIRepository, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
 	var runtimeManager *runtimeconfig.Manager
 	if len(runtimeManagers) > 0 {
 		runtimeManager = runtimeManagers[0]

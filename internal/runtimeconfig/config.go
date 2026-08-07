@@ -18,7 +18,7 @@ import (
 type ApplyFunc func(context.Context, app.RuntimeConfig, app.RuntimeConfig) error
 
 type Manager struct {
-	store    *store.Store
+	store    store.SystemConfigRepository
 	defaults app.RuntimeConfig
 	config   app.RuntimeConfig
 	versions map[string]int
@@ -27,7 +27,7 @@ type Manager struct {
 	mu       sync.RWMutex
 }
 
-func New(ctx context.Context, database *store.Store) (*Manager, error) {
+func New(ctx context.Context, database store.SystemConfigRepository) (*Manager, error) {
 	defaults := app.DefaultRuntimeConfig()
 	manager := &Manager{store: database, defaults: defaults, versions: make(map[string]int), subs: make(map[chan struct{}]struct{})}
 	for _, configType := range managedTypes() {
@@ -51,7 +51,7 @@ func managedTypes() []string {
 	return []string{app.SystemConfigStorage, app.SystemConfigScheduler, app.SystemConfigLogging, app.SystemConfigPlugins, app.SystemConfigAuth}
 }
 
-func ensureAuthConfig(ctx context.Context, database *store.Store, defaults app.RuntimeAuthConfig) error {
+func ensureAuthConfig(ctx context.Context, database store.SystemConfigRepository, defaults app.RuntimeAuthConfig) error {
 	row, err := database.GetSystemConfig(ctx, app.SystemConfigAuth)
 	if store.IsNoRows(err) {
 		_, err = database.EnsureSystemConfig(ctx, app.SystemConfigAuth, defaults)

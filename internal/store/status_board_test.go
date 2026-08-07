@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,13 @@ func TestStatusBoardItemAndNotificationEventPersistence(t *testing.T) {
 	itemState.Rules["rule"] = core.TrendRuleState{Active: true, LastRecordID: record.ID}
 	if err := database.CommitMonitorExecution(ctx, record, monitor.ID, state, map[string]core.StatusItemRuntimeState{item.ID: itemState}); err != nil {
 		t.Fatal(err)
+	}
+	var eventMetadata string
+	if err := database.db.QueryRowContext(ctx, `SELECT notification_events_json FROM monitor_records WHERE id=?`, record.ID).Scan(&eventMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(eventMetadata, "pending") || strings.Contains(eventMetadata, "deliveries") {
+		t.Fatalf("record JSON contains delivery state: %s", eventMetadata)
 	}
 	stored, err := database.GetRecord(ctx, monitor.ID, record.ID)
 	if err != nil || len(stored.NotificationEvents) != 1 || stored.NotificationEvents[0].Deliveries["channel"].Status != "pending" {

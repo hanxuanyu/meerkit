@@ -21,7 +21,24 @@ meerkit --data-dir ./data admin reset-key --key 'a-new-access-key'
 MEERKIT_SERVER__PORT=9090 MEERKIT_STORAGE__DATA_DIR=/var/lib/meerkit go run .
 ```
 
-Retention and cleanup periods, scheduler settings, session TTL, host and plugin log levels/formats, and log output switches are runtime configuration. They are stored as JSON rows in the SQLite `system_configs` table and can only be changed from the Settings page or runtime configuration API (`GET /api/v1/system/config`, `PATCH /api/v1/system/config/runtime/:type`). Container restarts do not overwrite database values with environment variables; stored values remain effective after restart. Settings can reset one type or all types to code defaults. The administrator key is also stored in the `auth` row, but is managed only by setup and `admin reset-key --key`; it is never shown or reset as a default.
+SQLite is the default database. When `dsn` is empty, Meerkit uses `${storage.data_dir}/meerkit.db`. For MySQL, create the database first; Meerkit can create and upgrade its tables, indexes, and built-in rows automatically:
+
+```yaml
+storage:
+  data_dir: /var/lib/meerkit
+  database:
+    type: mysql
+    dsn: meerkit:secret@tcp(mysql:3306)/meerkit?tls=true
+    auto_migrate: true
+    max_open_conns: 25
+    max_idle_conns: 10
+    conn_max_lifetime: 30m
+    conn_max_idle_time: 5m
+```
+
+The same settings are available through `MEERKIT_STORAGE__DATABASE__TYPE`, `MEERKIT_STORAGE__DATABASE__DSN`, and the matching command-line flags. A DSN can contain credentials and is never exposed through configuration metadata or logs. When `auto_migrate` is disabled, startup still validates the schema version and refuses to run against a missing schema.
+
+Retention and cleanup periods, scheduler settings, session TTL, host and plugin log levels/formats, and log output switches are runtime configuration. They are stored as JSON rows in the selected database's `system_configs` table and can only be changed from the Settings page or runtime configuration API (`GET /api/v1/system/config`, `PATCH /api/v1/system/config/runtime/:type`). Container restarts do not overwrite database values with environment variables; stored values remain effective after restart. Settings can reset one type or all types to code defaults. The administrator key is also stored in the `auth` row, but is managed only by setup and `admin reset-key --key`; it is never shown or reset as a default.
 
 ## Plugins
 

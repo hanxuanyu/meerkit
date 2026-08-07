@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"meerkit/internal/core"
 	templateutil "meerkit/internal/template"
@@ -18,7 +17,8 @@ const (
 )
 
 type notificationStore interface {
-	CreateInAppNotification(context.Context, core.InAppNotification) error
+	UpdateNotificationDeliveryContent(context.Context, string, string, string, string, json.RawMessage) error
+	GetInAppNotificationByEvent(context.Context, string, string) (core.InAppNotification, error)
 	CountUnreadInAppNotifications(context.Context) (int, error)
 }
 
@@ -121,11 +121,11 @@ func (n *Notifier) Send(ctx context.Context, raw json.RawMessage, event core.Not
 	if err != nil {
 		return err
 	}
-	notification := core.InAppNotification{
-		ID: core.NewID(), ChannelID: core.BuiltInNotificationChannelID, MonitorID: event.MonitorID, RecordID: event.RecordID,
-		EventType: event.EventType, Title: strings.TrimSpace(title), Content: strings.TrimSpace(content), CreatedAt: time.Now().UTC(),
+	if err := n.store.UpdateNotificationDeliveryContent(ctx, event.ID, core.BuiltInNotificationChannelID, strings.TrimSpace(title), strings.TrimSpace(content), nil); err != nil {
+		return err
 	}
-	if err := n.store.CreateInAppNotification(ctx, notification); err != nil {
+	notification, err := n.store.GetInAppNotificationByEvent(ctx, event.ID, core.BuiltInNotificationChannelID)
+	if err != nil {
 		return err
 	}
 	unreadCount, _ := n.store.CountUnreadInAppNotifications(ctx)

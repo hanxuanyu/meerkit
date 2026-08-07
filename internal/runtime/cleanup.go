@@ -10,7 +10,7 @@ import (
 )
 
 type CleanupWorker struct {
-	store                 *store.Store
+	store                 store.CleanupRepository
 	config                func() app.RuntimeConfig
 	logger                *slog.Logger
 	onNotificationsPruned func(int)
@@ -20,7 +20,7 @@ type CleanupWorker struct {
 
 func (w *CleanupWorker) SetRecordsPruned(callback func(int)) { w.onRecordsPruned = callback }
 
-func NewCleanupWorker(database *store.Store, config func() app.RuntimeConfig, logger *slog.Logger, onNotificationsPruned func(int), changes ...<-chan struct{}) *CleanupWorker {
+func NewCleanupWorker(database store.CleanupRepository, config func() app.RuntimeConfig, logger *slog.Logger, onNotificationsPruned func(int), changes ...<-chan struct{}) *CleanupWorker {
 	var changeChannel <-chan struct{}
 	if len(changes) > 0 {
 		changeChannel = changes[0]
@@ -89,7 +89,7 @@ func (w *CleanupWorker) run(ctx context.Context, now time.Time) {
 	}
 
 	notificationBefore := now.Add(-notificationRetention)
-	notificationsDeleted, notificationErr := w.store.PruneInAppNotifications(ctx, notificationBefore)
+	notificationsDeleted, notificationErr := w.store.PruneNotificationDeliveries(ctx, notificationBefore)
 	if notificationErr != nil {
 		if w.logger != nil {
 			w.logger.Error("prune in-app notifications failed", "error", notificationErr)

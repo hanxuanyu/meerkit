@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/uptrace/bun"
 	"meerkit/internal/core"
 )
 
@@ -18,10 +19,7 @@ type MonitorConfigMigrator func(context.Context, string, string, string, json.Ra
 const pluginSelectColumns = `id,version,name,vendor,desp,url,enabled,verified,official,trust_state,signer_key_id,signer_fingerprint,signer_public_key,status,error,package_path,binary_path,package_name,package_sha256,readme,manifest_json,modules_json,created_at,updated_at`
 
 func (s *Store) UpsertPlugin(ctx context.Context, value core.PluginInstallation) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO plugins(`+pluginSelectColumns+`)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id,version) DO UPDATE SET name=excluded.name,vendor=excluded.vendor,desp=excluded.desp,url=excluded.url,enabled=excluded.enabled,verified=excluded.verified,official=excluded.official,trust_state=excluded.trust_state,signer_key_id=excluded.signer_key_id,signer_fingerprint=excluded.signer_fingerprint,signer_public_key=excluded.signer_public_key,status=excluded.status,error=excluded.error,package_path=excluded.package_path,binary_path=excluded.binary_path,package_name=excluded.package_name,package_sha256=excluded.package_sha256,readme=excluded.readme,manifest_json=excluded.manifest_json,modules_json=excluded.modules_json,updated_at=excluded.updated_at`, value.ID, value.Version, value.Name, value.Vendor, value.Description, value.URL, boolInt(value.Enabled), boolInt(value.Verified), boolInt(value.Official), value.TrustState, value.SignerKeyID, value.SignerFingerprint, value.SignerPublicKey, value.Status, value.Error, value.PackagePath, value.BinaryPath, value.PackageName, value.PackageSHA256, value.Readme, string(value.Manifest), jsonString(value.Modules), value.CreatedAt.UTC().Format(time.RFC3339Nano), value.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	return err
+	return upsertPluginModel(ctx, s.orm, pluginFromDomain(value))
 }
 
 func (s *Store) ListPlugins(ctx context.Context) ([]core.PluginInstallation, error) {
@@ -69,18 +67,27 @@ func (s *Store) TrustPluginSigner(ctx context.Context, signer core.TrustedPlugin
 		signer.CreatedAt = now
 	}
 	signer.UpdatedAt = now
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.orm.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO plugin_trusted_signers(fingerprint,key_id,public_key,vendor,source,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(fingerprint) DO UPDATE SET key_id=excluded.key_id,public_key=excluded.public_key,vendor=CASE WHEN excluded.vendor='' THEN plugin_trusted_signers.vendor ELSE excluded.vendor END,source=excluded.source,updated_at=excluded.updated_at`, signer.Fingerprint, signer.KeyID, signer.PublicKey, signer.Vendor, signer.Source, signer.CreatedAt.Format(time.RFC3339Nano), signer.UpdatedAt.Format(time.RFC3339Nano))
+	model := &trustedPluginSignerModel{Fingerprint: signer.Fingerprint, KeyID: signer.KeyID, PublicKey: signer.PublicKey, Vendor: signer.Vendor, Source: signer.Source, CreatedAt: timestamp(signer.CreatedAt), UpdatedAt: timestamp(signer.UpdatedAt)}
+	query := tx.NewUpdate().Model(model).Column("key_id", "public_key", "source", "updated_at").WherePK()
+	if signer.Vendor != "" {
+		query = query.Column("vendor")
+	}
+	result, err := query.Exec(ctx)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE plugins SET verified=1,trust_state=CASE WHEN official=1 THEN 'official' ELSE 'trusted' END,updated_at=? WHERE signer_fingerprint=?`, now.Format(time.RFC3339Nano), signer.Fingerprint)
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		if _, err = tx.NewInsert().Model(model).Ignore().Exec(ctx); err != nil {
+			return err
+		}
+	}
+	_, err = tx.NewUpdate().Model((*pluginModel)(nil)).Set("verified = ?", true).Set("trust_state = CASE WHEN official = ? THEN ? ELSE ? END", true, "official", "trusted").Set("updated_at = ?", timestamp(now)).Where("signer_fingerprint = ?", signer.Fingerprint).Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -140,7 +147,15 @@ func (s *Store) SaveDescriptorSnapshot(ctx context.Context, descriptor core.Modu
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO module_descriptor_snapshots(module_type,module_version,descriptor_json,created_at) VALUES(?,?,?,?) ON CONFLICT(module_type,module_version) DO UPDATE SET descriptor_json=excluded.descriptor_json`, descriptor.Type, descriptor.Version, string(data), time.Now().UTC().Format(time.RFC3339Nano))
+	model := &moduleDescriptorSnapshotModel{ModuleType: descriptor.Type, ModuleVersion: descriptor.Version, DescriptorJSON: string(data), CreatedAt: timestamp(time.Now())}
+	result, err := s.orm.NewUpdate().Model(model).Column("descriptor_json").WherePK().Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return nil
+	}
+	_, err = s.orm.NewInsert().Model(model).Ignore().Exec(ctx)
 	return err
 }
 func (s *Store) GetDescriptorSnapshot(ctx context.Context, moduleType, version string) (core.ModuleDescriptor, error) {
@@ -207,3 +222,33 @@ func (s *Store) MigrateMonitorConfigs(ctx context.Context, targets map[string]Mo
 	return tx.Commit()
 }
 func (s *Store) IsNotFound(err error) bool { return err == sql.ErrNoRows }
+
+func pluginFromDomain(value core.PluginInstallation) *pluginModel {
+	return &pluginModel{
+		ID: value.ID, Version: value.Version, Name: value.Name, Vendor: value.Vendor, Description: value.Description, URL: value.URL,
+		Enabled: value.Enabled, Verified: value.Verified, Official: value.Official, TrustState: value.TrustState,
+		SignerKeyID: value.SignerKeyID, SignerFingerprint: value.SignerFingerprint, SignerPublicKey: value.SignerPublicKey,
+		Status: value.Status, Error: value.Error, PackagePath: value.PackagePath, BinaryPath: value.BinaryPath,
+		PackageName: value.PackageName, PackageSHA256: value.PackageSHA256, Readme: value.Readme,
+		ManifestJSON: string(value.Manifest), ModulesJSON: jsonString(value.Modules), CreatedAt: timestamp(value.CreatedAt), UpdatedAt: timestamp(value.UpdatedAt),
+	}
+}
+
+func upsertPluginModel(ctx context.Context, db bun.IDB, model *pluginModel) error {
+	columns := []string{"name", "vendor", "desp", "url", "enabled", "verified", "official", "trust_state", "signer_key_id", "signer_fingerprint", "signer_public_key", "status", "error", "package_path", "binary_path", "package_name", "package_sha256", "readme", "manifest_json", "modules_json", "updated_at"}
+	result, err := db.NewUpdate().Model(model).Column(columns...).WherePK().Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return nil
+	}
+	if _, err := db.NewInsert().Model(model).Exec(ctx); err != nil {
+		// A concurrent insert may win between UPDATE and INSERT.
+		if _, retryErr := db.NewUpdate().Model(model).Column(columns...).WherePK().Exec(ctx); retryErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}

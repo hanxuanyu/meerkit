@@ -46,12 +46,12 @@ type Sources struct {
 }
 
 type Service struct {
-	store   *store.Store
+	store   store.StatusBoardServiceRepository
 	modules *monitor.Registry
 	hub     *Hub
 }
 
-func NewService(database *store.Store, modules *monitor.Registry, hub *Hub) *Service {
+func NewService(database store.StatusBoardServiceRepository, modules *monitor.Registry, hub *Hub) *Service {
 	return &Service{store: database, modules: modules, hub: hub}
 }
 

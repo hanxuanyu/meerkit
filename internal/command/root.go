@@ -46,7 +46,10 @@ func NewRoot(dependencies Dependencies) *cobra.Command {
 	root.SetOut(dependencies.Stdout)
 	root.SetErr(dependencies.Stderr)
 	root.PersistentFlags().String("config", "", "path to config.yaml")
-	root.PersistentFlags().String("data-dir", "", "SQLite and runtime data directory")
+	root.PersistentFlags().String("data-dir", "", "runtime data directory and default SQLite location")
+	root.PersistentFlags().String("database-type", "", "database type: sqlite or mysql")
+	root.PersistentFlags().String("database-dsn", "", "database DSN; omit for the default SQLite file")
+	root.PersistentFlags().Bool("database-auto-migrate", true, "automatically apply database schema migrations")
 	load := func(command *cobra.Command, create bool) (app.Config, error) {
 		return app.LoadConfigWithOptions(configOptions(command, create))
 	}
@@ -75,6 +78,25 @@ func configOptions(command *cobra.Command, create bool) app.ConfigOptions {
 		value, _ := command.Flags().GetString("data-dir")
 		options.Overrides["storage.data_dir"] = value
 		options.ChangedFlags["data-dir"] = true
+	}
+	databaseMappings := map[string]string{
+		"database-type":         "storage.database.type",
+		"database-dsn":          "storage.database.dsn",
+		"database-auto-migrate": "storage.database.auto_migrate",
+	}
+	for name, path := range databaseMappings {
+		flag := command.Flags().Lookup(name)
+		if flag == nil || !flag.Changed {
+			continue
+		}
+		options.ChangedFlags[name] = true
+		if flag.Value.Type() == "bool" {
+			value, _ := command.Flags().GetBool(name)
+			options.Overrides[path] = value
+		} else {
+			value, _ := command.Flags().GetString(name)
+			options.Overrides[path] = value
+		}
 	}
 	mappings := map[string]string{"log-dir": "logging.file.directory", "log-filename": "logging.file.filename", "access-log-filename": "logging.file.access.filename"}
 	for name, path := range mappings {
