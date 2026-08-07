@@ -68,6 +68,17 @@ func TestRunPersistsComposedExecutionSummary(t *testing.T) {
 	}
 }
 
+func TestExecutionLogSummaryUsesOnlyFirstMeaningfulLine(t *testing.T) {
+	summary := "\nHTTP 请求：GET https://example.test/health\n响应状态：200 OK\n\n执行结果：成功"
+	if got := executionLogSummary(summary); got != "HTTP 请求：GET https://example.test/health" {
+		t.Fatalf("executionLogSummary() = %q", got)
+	}
+	long := strings.Repeat("界", 200)
+	if got := executionLogSummary(long); len([]rune(got)) != 160 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("long summary was not safely truncated: %q", got)
+	}
+}
+
 type summaryTestModule struct{}
 
 func (summaryTestModule) Descriptor() core.ModuleDescriptor {

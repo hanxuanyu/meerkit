@@ -24,6 +24,7 @@ const (
 	defaultTimeoutSeconds = 30
 	defaultMaxBodyBytes   = 262144
 	defaultMaxRedirects   = 10
+	resultSchemaVersion   = "1"
 )
 
 var supportedMethods = []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"}
@@ -41,7 +42,7 @@ func New() *Module { return &Module{} }
 
 func (m *Module) Descriptor() sdk.ModuleDescriptor {
 	return sdk.ModuleDescriptor{
-		Type: "http", Version: "2", Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应内容变化。",
+		Type: "http", Version: "2", ConfigVersion: "1", ResultSchemaVersion: resultSchemaVersion, Name: "HTTP", Description: "请求 HTTP/HTTPS 接口并观察响应内容变化。",
 		ListSummary: &sdk.ModuleListSummaryDescriptor{Fields: []string{"url"}},
 		ConfigSchema: map[string]any{
 			"type":     "object",
@@ -84,12 +85,12 @@ func (m *Module) Descriptor() sdk.ModuleDescriptor {
 			{Key: "max_redirects", Label: "最大重定向次数", Type: sdk.ParameterInteger, Default: defaultMaxRedirects, Minimum: sdk.Float64(1), Maximum: sdk.Float64(50), Order: 320, VisibleWhen: equalsCondition("follow_redirects", true)},
 		},
 		ResultSchema: map[string]any{"type": "object", "properties": map[string]any{
-			"success": map[string]any{"type": "boolean"}, "status_code": map[string]any{"type": "integer"}, "duration_ms": map[string]any{"type": "number"}, "response_headers": map[string]any{"type": "object"},
+			"success": map[string]any{"type": "boolean"}, "status_code": map[string]any{"type": "string"}, "duration_ms": map[string]any{"type": "number"}, "response_headers": map[string]any{"type": "object"},
 			"body_text": map[string]any{"type": "string"}, "body_json": map[string]any{}, "body_hash": map[string]any{"type": "string"}, "body_size": map[string]any{"type": "integer"}, "truncated": map[string]any{"type": "boolean"},
 		}},
 		Fields: []sdk.FieldDescriptor{
 			{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false"}},
-			{Name: "status_code", Label: "状态码", Type: "number", Operators: []string{"equals", "not_equals", "gt", "gte", "lt", "lte", "changed"}},
+			{Name: "status_code", Label: "状态码", Type: "string", Operators: []string{"equals", "not_equals", "contains", "regex", "changed"}},
 			{Name: "duration_ms", Label: "响应耗时(ms)", Type: "number", Operators: []string{"gt", "gte", "lt", "lte", "changed"}},
 			{Name: "body_text", Label: "响应文本", Type: "string", Operators: []string{"equals", "not_equals", "contains", "not_contains", "regex", "changed"}},
 			{Name: "body_json", Label: "响应 JSON", Type: "json", Path: true, Operators: []string{"equals", "not_equals", "contains", "gt", "gte", "lt", "lte", "changed"}},
@@ -98,7 +99,7 @@ func (m *Module) Descriptor() sdk.ModuleDescriptor {
 		ResultSets: []sdk.ResultSetDescriptor{{
 			Key: "response", Label: "HTTP 响应", Description: "本次 HTTP 请求得到的响应与解析结果。", Fields: []sdk.ResultFieldDescriptor{
 				{Name: "success", Label: "请求成功", Type: "boolean", Operators: []string{"is_true", "is_false", "changed"}},
-				{Name: "status_code", Label: "状态码", Type: "number", Operators: []string{"equals", "not_equals", "gt", "gte", "lt", "lte", "changed"}},
+				{Name: "status_code", Label: "状态码", Description: "HTTP 响应状态码字符串，例如 200。", Type: "string", Operators: []string{"equals", "not_equals", "contains", "regex", "changed"}},
 				{Name: "duration_ms", Label: "响应耗时", Description: "请求完成所需的毫秒数。", Type: "number", Unit: "ms", Operators: []string{"equals", "gt", "gte", "lt", "lte", "changed"}},
 				{Name: "response_headers", Label: "响应头", Type: "map", Operators: []string{"exists", "contains", "changed"}},
 				{Name: "body_text", Label: "响应文本", Type: "text", Operators: []string{"equals", "not_equals", "contains", "not_contains", "regex", "changed"}},
@@ -230,8 +231,8 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 		duration := time.Since(started).Milliseconds()
 		err = safeRequestError(err, target)
 		m.logger().ErrorContext(ctx, "http request failed", "method", request.Method, "target", target, "duration_ms", duration, "error", err)
-		result := map[string]any{"success": false, "status_code": 0, "duration_ms": duration}
-		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
+		result := map[string]any{"success": false, "status_code": "", "duration_ms": duration}
+		return sdk.Observation{Success: false, SchemaVersion: resultSchemaVersion, Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: requestFailureSummary(request, result["duration_ms"])}, err
 	}
 	defer response.Body.Close()
 	maxBytes := int64(valueInt(config, "max_body_bytes", defaultMaxBodyBytes))
@@ -239,15 +240,15 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 	if readErr != nil {
 		duration := time.Since(started).Milliseconds()
 		m.logger().ErrorContext(ctx, "http response read failed", "method", request.Method, "target", target, "status_code", response.StatusCode, "duration_ms", duration, "error", readErr)
-		result := map[string]any{"success": false, "status_code": response.StatusCode, "duration_ms": duration}
-		return sdk.Observation{Success: false, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
+		result := map[string]any{"success": false, "status_code": fmt.Sprintf("%d", response.StatusCode), "duration_ms": duration}
+		return sdk.Observation{Success: false, SchemaVersion: resultSchemaVersion, Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseFailureSummary(request, response, result)}, readErr
 	}
 	truncated := int64(len(data)) > maxBytes
 	if truncated {
 		data = data[:maxBytes]
 	}
 	bodyText := normalize(string(data), valueString(config, "normalize", "trim"))
-	result := map[string]any{"success": true, "status_code": response.StatusCode, "duration_ms": time.Since(started).Milliseconds(), "response_headers": flatten(response.Header), "body_text": bodyText, "body_hash": hash(bodyText), "body_size": len(data), "truncated": truncated}
+	result := map[string]any{"success": true, "status_code": fmt.Sprintf("%d", response.StatusCode), "duration_ms": time.Since(started).Milliseconds(), "response_headers": flatten(response.Header), "body_text": bodyText, "body_hash": hash(bodyText), "body_size": len(data), "truncated": truncated}
 	mode := strings.ToLower(valueString(config, "response_mode", "auto"))
 	parsedJSON := false
 	if mode == "json" || (mode == "auto" && strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "json")) {
@@ -258,7 +259,7 @@ func (m *Module) Execute(ctx context.Context, raw json.RawMessage) (sdk.Observat
 		}
 	}
 	m.logger().InfoContext(ctx, "http response processed", "method", request.Method, "target", target, "status_code", response.StatusCode, "duration_ms", result["duration_ms"], "content_type", response.Header.Get("Content-Type"), "body_size", len(data), "truncated", truncated, "json_parsed", parsedJSON, "body_hash", result["body_hash"])
-	return sdk.Observation{Success: true, SchemaVersion: "1", Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
+	return sdk.Observation{Success: true, SchemaVersion: resultSchemaVersion, Result: result, ResultSets: map[string]map[string]any{"response": copyMap(result)}, Summary: responseSummary(request, response, result)}, nil
 }
 
 func (m *Module) logger() *slog.Logger {
@@ -439,7 +440,7 @@ func contains(values []string, value string) bool {
 }
 
 func failedObservation() sdk.Observation {
-	return sdk.Observation{Success: false, SchemaVersion: "1", Result: map[string]any{"success": false}, Summary: "HTTP 请求未执行"}
+	return sdk.Observation{Success: false, SchemaVersion: resultSchemaVersion, Result: map[string]any{"success": false}, Summary: "HTTP 请求未执行"}
 }
 
 func responseSummary(request *http.Request, response *http.Response, result map[string]any) string {

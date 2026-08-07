@@ -26,8 +26,11 @@ func TestExecuteCapturesJSONResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
-	if observation.Result["status_code"] != 200 {
+	if observation.Result["status_code"] != "200" {
 		t.Fatalf("unexpected status: %#v", observation.Result["status_code"])
+	}
+	if observation.SchemaVersion != resultSchemaVersion {
+		t.Fatalf("schema version = %q, want %q", observation.SchemaVersion, resultSchemaVersion)
 	}
 	body, ok := observation.Result["body_json"].(map[string]any)
 	if !ok || body["data"].(map[string]any)["version"] != float64(2) {
@@ -302,6 +305,43 @@ func TestDescriptorDeclaresMethodDependentBodyParameters(t *testing.T) {
 	if len(bodyMode.OptionsWhen) != 1 || len(bodyMode.OptionsWhen[0].Options) != len(supportedBodyModes) {
 		t.Fatalf("body_mode options should be dynamic: %#v", bodyMode.OptionsWhen)
 	}
+}
+
+func TestDescriptorDeclaresStatusCodeAsString(t *testing.T) {
+	descriptor := (&Module{}).Descriptor()
+	if descriptor.ResultSchemaVersion != resultSchemaVersion {
+		t.Fatalf("result schema version = %q, want %q", descriptor.ResultSchemaVersion, resultSchemaVersion)
+	}
+	properties, ok := descriptor.ResultSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("result schema properties are missing: %#v", descriptor.ResultSchema)
+	}
+	statusSchema, ok := properties["status_code"].(map[string]any)
+	if !ok || statusSchema["type"] != "string" {
+		t.Fatalf("status_code schema = %#v, want string", properties["status_code"])
+	}
+	for _, field := range descriptor.Fields {
+		if field.Name == "status_code" && field.Type != "string" {
+			t.Fatalf("legacy status_code field type = %q, want string", field.Type)
+		}
+	}
+	if len(descriptor.ResultSets) != 1 {
+		t.Fatalf("result sets = %#v, want one response set", descriptor.ResultSets)
+	}
+	for _, field := range descriptor.ResultSets[0].Fields {
+		if field.Name == "status_code" {
+			if field.Type != "string" {
+				t.Fatalf("status_code result field type = %q, want string", field.Type)
+			}
+			for _, operator := range field.Operators {
+				if operator == "gt" || operator == "gte" || operator == "lt" || operator == "lte" {
+					t.Fatalf("status_code should not expose numeric operator %q", operator)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("status_code result field is missing")
 }
 
 func captureModule(capture func(*http.Request)) *Module {

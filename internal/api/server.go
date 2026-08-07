@@ -101,6 +101,8 @@ func (a *APIServer) Router() http.Handler {
 			"timezone": runtime.Scheduler.Timezone,
 		})
 	})
+	api.GET("/system/logs", a.systemLogs)
+	api.GET("/system/logs/stream", a.streamSystemLogs)
 	api.GET("/system/config", func(c *gin.Context) {
 		a.systemConfig(c)
 	})

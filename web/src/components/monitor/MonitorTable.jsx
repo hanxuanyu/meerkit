@@ -1,12 +1,13 @@
 import React from "react";
-import { Edit3, Eye, Play, Radio, Trash2 } from "lucide-react";
+import { Copy, Edit3, Eye, Play, Radio, Trash2 } from "lucide-react";
 import { formatDate } from "../../lib/formatters";
+import { ActionMenu } from "../ui/ActionMenu";
 import { Badge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
 import { Switch } from "../ui/Switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/Table";
 
-export function MonitorTable({ monitors, modules = [], onRun, onEdit, onDelete, onViewRecords, onToggleEnabled, togglingMonitorId }) {
+export function MonitorTable({ monitors, modules = [], onRun, onEdit, onDuplicate, onDelete, onViewRecords, onToggleEnabled, togglingMonitorId }) {
   return <Table className="monitor-table">
     <colgroup className="monitor-table-columns"><col /><col className="monitor-col-module" /><col className="monitor-col-schedule" /><col className="monitor-col-next-run" /><col className="monitor-col-status" /><col className="monitor-col-toggle" /><col className="monitor-col-actions" /></colgroup>
     <TableHeader><TableRow><TableHead>监控项</TableHead><TableHead>模块</TableHead><TableHead>调度</TableHead><TableHead>下次执行</TableHead><TableHead>状态</TableHead><TableHead className="toggle-cell">启用</TableHead><TableHead className="action-cell">操作</TableHead></TableRow></TableHeader>
@@ -31,7 +32,7 @@ export function MonitorTable({ monitors, modules = [], onRun, onEdit, onDelete, 
         <TableCell className="monitor-next-run-cell" data-label="下次执行"><span className="last-run">{formatDate(monitor.next_run_at, !monitor.enabled ? "已停用" : moduleUnavailable ? "调度暂停" : "暂无计划")}</span></TableCell>
         <TableCell className="monitor-status-cell" data-label="状态"><StatusBadge monitor={monitor} /></TableCell>
         <TableCell className="toggle-cell monitor-toggle-cell" data-label="启用"><span className="monitor-switch" title={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"}><Switch checked={monitor.enabled} disabled={moduleUnavailable || !onToggleEnabled || togglingMonitorId === monitor.id} aria-label={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"} onCheckedChange={() => onToggleEnabled?.(monitor)} /></span></TableCell>
-        <TableCell className="action-cell monitor-action-cell" data-label="操作"><div className="row-actions">{onViewRecords && <IconButton size="sm" title="打开监控详情" aria-label="打开监控详情" onClick={() => onViewRecords(monitor)}><Eye size={15} /></IconButton>}<IconButton size="sm" title={moduleUnavailable ? "对应插件不可用，调度已暂停" : "立即执行"} aria-label={moduleUnavailable ? "对应插件不可用，无法执行" : "立即执行"} disabled={moduleUnavailable} onClick={() => onRun(monitor)}><Play size={15} /></IconButton>{onEdit && <IconButton size="sm" title={moduleUnavailable ? "对应插件不可用，无法编辑监控" : "编辑"} aria-label={moduleUnavailable ? "对应插件不可用，无法编辑监控" : "编辑"} disabled={moduleUnavailable} onClick={() => onEdit(monitor)}><Edit3 size={15} /></IconButton>}{onDelete && <IconButton size="sm" title="删除" aria-label="删除" onClick={() => onDelete(monitor)}><Trash2 size={15} /></IconButton>}</div></TableCell>
+        <TableCell className="action-cell monitor-action-cell" data-label="操作"><div className="row-actions">{onViewRecords && <IconButton size="sm" title="打开监控详情" aria-label="打开监控详情" onClick={() => onViewRecords(monitor)}><Eye size={15} /></IconButton>}<IconButton size="sm" title={moduleUnavailable ? "对应插件不可用，调度已暂停" : "立即执行"} aria-label={moduleUnavailable ? "对应插件不可用，无法执行" : "立即执行"} disabled={moduleUnavailable} onClick={() => onRun(monitor)}><Play size={15} /></IconButton><ActionMenu label={`${monitor.name} 操作`} items={[onEdit && { label: "编辑", icon: Edit3, disabled: moduleUnavailable, onSelect: () => onEdit(monitor) }, onDuplicate && { label: "复制", icon: Copy, disabled: moduleUnavailable, onSelect: () => onDuplicate(monitor) }, onDelete && { label: "删除", icon: Trash2, destructive: true, onSelect: () => onDelete(monitor) }]} /></div></TableCell>
       </TableRow>;
     })}</TableBody>
   </Table>;

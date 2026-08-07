@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, Bell, ChartNoAxesColumnIncreasing, ChevronsRight, CircleX, History, Inbox, Layers3, RefreshCw, Settings2, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesColumnIncreasing, ChevronsRight, CircleX, History, Inbox, Layers3, PackageOpen, RefreshCw, ScrollText, Settings2, X } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/ContextMenu";
 import { IconButton } from "../ui/IconButton";
 
@@ -9,6 +9,8 @@ const tabDefinitions = {
   statusBoard: { title: "状态看板", icon: ChartNoAxesColumnIncreasing, closable: true },
   notifications: { title: "通知渠道", icon: Bell, closable: true },
   inbox: { title: "通知中心", icon: Inbox, closable: true },
+  plugins: { title: "监控插件", icon: PackageOpen, closable: true },
+  logs: { title: "日志", icon: ScrollText, closable: true },
   settings: { title: "系统设置", icon: Settings2, closable: true }
 };
 

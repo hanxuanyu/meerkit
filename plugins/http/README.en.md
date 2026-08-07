@@ -55,7 +55,7 @@ The plugin supplies the appropriate `Content-Type` for form and raw modes unless
 The `response` result set contains:
 
 - `success`: whether the network request and response read completed. It does not mean the status was 2xx.
-- `status_code`: HTTP response status.
+- `status_code`: HTTP response status code as a string, for example `"200"`.
 - `duration_ms`: request duration in milliseconds.
 - `response_headers`: flattened response headers.
 - `body_text`: response text after normalization.

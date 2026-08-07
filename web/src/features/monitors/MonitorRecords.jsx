@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Edit3, ExternalLink, LoaderCircle, Play, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Copy, Edit3, ExternalLink, LoaderCircle, Play, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDate } from "../../lib/formatters";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Badge } from "../../components/ui/Badge";
+import { ActionMenu } from "../../components/ui/ActionMenu";
 import { Card } from "../../components/ui/Card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../../components/ui/Dialog";
 import { DeleteConfirmDialog } from "../../components/ui/DeleteConfirmDialog";
@@ -23,7 +24,7 @@ export function MonitorRecordsDialog({ monitor, descriptor, channels = [], onClo
   return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="modal-wide"><DialogHeader><div><span className="eyebrow">EXECUTION HISTORY</span><DialogTitle>{monitor.name} · 执行记录</DialogTitle><DialogDescription>查看监控内容、每次采集结果、条件状态和通知结果。</DialogDescription></div><IconButton className="records-open-tab" size="default" title="在页签中打开" aria-label="在页签中打开" onClick={() => onOpenTab(monitor)}><ExternalLink size={16} /></IconButton></DialogHeader><div className="modal-body records-modal-body"><MonitorSummary monitor={monitor} descriptor={descriptor} /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} channels={channels} onRecordsDeleted={onRecordsDeleted} /></div></DialogContent></Dialog>;
 }
 
-export function MonitorRecordsPage({ monitor, descriptor, channels = [], initialRecordID = "", onRecordRouteChange, onRecordsDeleted, onEdit, onRun, onDelete, onToggleEnabled, togglingMonitorId = "" }) {
+export function MonitorRecordsPage({ monitor, descriptor, channels = [], initialRecordID = "", onRecordRouteChange, onRecordsDeleted, onEdit, onDuplicate, onRun, onDelete, onToggleEnabled, togglingMonitorId = "" }) {
   const [running, setRunning] = useState(false);
   const [recordsRefreshVersion, setRecordsRefreshVersion] = useState(0);
   const moduleUnavailable = monitor.module_available === false;
@@ -37,7 +38,7 @@ export function MonitorRecordsPage({ monitor, descriptor, channels = [], initial
       setRunning(false);
     }
   };
-  const actions = <div className="monitor-detail-actions"><div className="monitor-detail-enabled" title={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"}><Switch checked={monitor.enabled} disabled={moduleUnavailable || !onToggleEnabled || togglingMonitorId === monitor.id} aria-label={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"} onCheckedChange={() => onToggleEnabled?.(monitor)} /><span>{monitor.enabled ? "已启用" : "已停用"}</span></div><Button variant="outline" className="monitor-detail-command" title={moduleUnavailable ? "对应插件不可用，调度已暂停" : running ? "正在执行" : "立即执行"} aria-label={moduleUnavailable ? "对应插件不可用，无法执行" : running ? "正在执行" : "立即执行"} disabled={running || moduleUnavailable} onClick={() => void run()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}<span>{moduleUnavailable ? "插件不可用" : running ? "执行中..." : "立即执行"}</span></Button><Button variant="outline" className="monitor-detail-command" title={moduleUnavailable ? "对应插件不可用，无法编辑监控" : "编辑监控"} aria-label={moduleUnavailable ? "对应插件不可用，无法编辑监控" : "编辑监控"} disabled={moduleUnavailable} onClick={() => onEdit?.(monitor)}><Edit3 size={15} /><span>编辑</span></Button><Button variant="outline" className="monitor-detail-command destructive-outline" title="删除监控" aria-label="删除监控" onClick={() => onDelete?.(monitor)}><Trash2 size={15} /><span>删除</span></Button></div>;
+  const actions = <div className="monitor-detail-actions"><div className="monitor-detail-enabled" title={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"}><Switch checked={monitor.enabled} disabled={moduleUnavailable || !onToggleEnabled || togglingMonitorId === monitor.id} aria-label={moduleUnavailable ? "对应插件不可用，无法切换监控状态" : monitor.enabled ? "停用监控" : "启用监控"} onCheckedChange={() => onToggleEnabled?.(monitor)} /><span>{monitor.enabled ? "已启用" : "已停用"}</span></div><Button variant="outline" className="monitor-detail-command" title={moduleUnavailable ? "对应插件不可用，调度已暂停" : running ? "正在执行" : "立即执行"} aria-label={moduleUnavailable ? "对应插件不可用，无法执行" : running ? "正在执行" : "立即执行"} disabled={running || moduleUnavailable} onClick={() => void run()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}<span>{moduleUnavailable ? "插件不可用" : running ? "执行中..." : "立即执行"}</span></Button><ActionMenu triggerVariant="outline" label={`${monitor.name} 操作`} items={[onEdit && { label: "编辑", icon: Edit3, disabled: moduleUnavailable, onSelect: () => onEdit(monitor) }, onDuplicate && { label: "复制", icon: Copy, disabled: moduleUnavailable, onSelect: () => onDuplicate(monitor) }, onDelete && { label: "删除", icon: Trash2, destructive: true, onSelect: () => onDelete(monitor) }]} /></div>;
   return <div className="page-stack"><PageHeader className="monitor-detail-heading" eyebrow="MONITOR DETAIL" title={monitor.name} description={moduleUnavailable ? "对应插件当前不可用，定时调度已暂停；插件恢复后将自动继续。" : "查看监控配置、执行计划、触发条件和历史记录。"} actions={actions} /><Card className="section-card monitor-detail-card"><MonitorConfigurationDetails monitor={monitor} descriptor={descriptor} channels={channels} /><div className="records-section-divider" /><MonitorRecordsPanel monitor={monitor} descriptor={descriptor} channels={channels} initialRecordID={initialRecordID} onRecordRouteChange={onRecordRouteChange} onRecordsDeleted={onRecordsDeleted} refreshVersion={recordsRefreshVersion} /></Card></div>;
 }
 

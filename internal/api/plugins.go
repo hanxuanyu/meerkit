@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"meerkit/internal/core"
@@ -227,46 +226,7 @@ func (a *APIServer) pluginLogs(c *gin.Context) {
 }
 
 func (a *APIServer) streamPluginLogs(c *gin.Context) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	first := true
-	hasSnapshot := false
-	lastSnapshot := ""
-	lastError := ""
-	lastHeartbeat := time.Now()
-	c.Stream(func(_ io.Writer) bool {
-		if first {
-			first = false
-		} else {
-			select {
-			case <-c.Request.Context().Done():
-				return false
-			case <-ticker.C:
-			}
-		}
-		if time.Since(lastHeartbeat) >= 15*time.Second {
-			c.SSEvent("heartbeat", map[string]int64{"timestamp": time.Now().Unix()})
-			lastHeartbeat = time.Now()
-		}
-		data, err := a.plugins.Logs(c.Param("id"), c.Param("version"), 128<<10)
-		if err != nil {
-			if message := err.Error(); message != lastError {
-				c.SSEvent("log-error", map[string]string{"message": message})
-				lastError = message
-			}
-			return true
-		}
-		lastError = ""
-		snapshot := string(data)
-		if !hasSnapshot || snapshot != lastSnapshot {
-			c.SSEvent("snapshot", snapshot)
-			lastSnapshot = snapshot
-			hasSnapshot = true
-		}
-		return true
+	streamLogSnapshots(c, func() ([]byte, error) {
+		return a.plugins.Logs(c.Param("id"), c.Param("version"), maximumLogSnapshotBytes)
 	})
 }

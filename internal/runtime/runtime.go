@@ -234,12 +234,35 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 		r.board.Publish(boardStream)
 	}
 	if r.logger != nil {
-		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", executionSummary, "error_code", record.ErrorCode)
+		attributes := []any{"monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "summary", executionLogSummary(executionSummary)}
+		if record.EventType != "none" {
+			attributes = append(attributes, "event_type", record.EventType)
+		}
+		if record.ErrorCode != "" {
+			attributes = append(attributes, "error_code", record.ErrorCode)
+		}
+		r.logger.Info("monitor execution completed", attributes...)
 	}
 	if len(pending) > 0 {
 		go r.sendNotificationEvents(context.Background(), record.ID, pending, record.NotificationEvents)
 	}
 	return record, nil
+}
+
+func executionLogSummary(summary string) string {
+	for _, line := range strings.Split(summary, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		const maximum = 160
+		runes := []rune(line)
+		if len(runes) > maximum {
+			return string(runes[:maximum-3]) + "..."
+		}
+		return line
+	}
+	return "-"
 }
 
 func pendingRecordEvents(pending []statusboard.PendingNotification) []core.RecordNotificationEvent {

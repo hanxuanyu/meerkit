@@ -5,6 +5,7 @@ import { Sidebar } from "../components/layout/Sidebar";
 import { Topbar } from "../components/layout/Topbar";
 import { WorkspaceTabs } from "../components/layout/WorkspaceTabs";
 import { api } from "../lib/api";
+import { duplicateChannelDraft, duplicateMonitorDraft } from "../lib/duplicates";
 import { disableBrowserNotifications, enableBrowserNotifications } from "../features/notifications/browserNotifications";
 import { NotificationBell } from "../features/notifications/NotificationBell";
 import { NotificationCenterPage } from "../features/notifications/InAppNotifications";
@@ -15,6 +16,7 @@ import { OverviewPage } from "../pages/OverviewPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { StatusBoardPage } from "../pages/StatusBoardPage";
 import { PluginsPage } from "../pages/PluginsPage";
+import { SystemLogsPage } from "../pages/SystemLogsPage";
 import { AppOverlays } from "./AppOverlays";
 import { pathForRoute, routeFromPath } from "./routes";
 import { useMobileShell } from "./useMobileShell";
@@ -249,6 +251,7 @@ export function App() {
 
   const openCreateMonitor = () => { setSelectedMonitor(null); setShowMonitorDialog(true); };
   const openEditMonitor = (monitor) => { if (monitor.module_available === false) return; setSelectedMonitor(monitor); setShowMonitorDialog(true); };
+  const openDuplicateMonitor = (monitor) => { if (monitor.module_available === false) return; setSelectedMonitor(duplicateMonitorDraft(monitor)); setShowMonitorDialog(true); };
   const deleteMonitor = (monitor) => setDeleteTarget(monitor);
   const confirmDeleteMonitor = async (event) => {
     event.preventDefault();
@@ -272,6 +275,7 @@ export function App() {
   };
   const openCreateChannel = useCallback(() => { setSelectedChannel(null); setShowChannelDialog(true); }, []);
   const openEditChannel = useCallback((channel) => { if (!channel.built_in) { setSelectedChannel(channel); setShowChannelDialog(true); } }, []);
+  const openDuplicateChannel = useCallback((channel) => { if (!channel.built_in) { setSelectedChannel(duplicateChannelDraft(channel)); setShowChannelDialog(true); } }, []);
   const toggleChannelEnabled = useCallback(async (channel) => {
     if (togglingChannelId) return;
     setTogglingChannelId(channel.id);
@@ -283,25 +287,27 @@ export function App() {
   const page = activePage === "overview"
     ? <OverviewPage monitors={monitors} modules={modules} channels={channels} recentNotifications={recentNotifications} unreadCount={unreadCount} loading={loading} onCreate={openCreateMonitor} onOpenMonitor={openRecords} onOpenMonitors={() => navigate("monitors")} onOpenInbox={() => navigate("inbox")} onOpenNotification={openNotification} />
     : activePage === "monitors"
-      ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
+      ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onDuplicate={openDuplicateMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
       : activePage === "statusBoard"
         ? <StatusBoardPage monitors={monitors} channels={channels} refreshVersion={refreshVersion} onOpenExecution={openExecution} notify={notify} />
       : activePage === "inbox"
         ? <NotificationCenterPage refreshVersion={inboxVersion} initialNotificationID={routeNotificationID} onNotificationRouteChange={changeNotificationRoute} onOpenExecution={openExecution} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onNotificationsDeleted={handleNotificationsDeleted} unreadCount={unreadCount} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />
         : activePage === "notifications"
-          ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
+          ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onDuplicate={openDuplicateChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
           : activePage === "plugins"
             ? <PluginsPage notify={notify} onChanged={refresh} />
+          : activePage === "logs"
+            ? <SystemLogsPage />
           : activePage.startsWith("monitor-details:")
-            ? recordTabs[activePage] ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} channels={channels} initialRecordID={routeRecordID} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
+            ? recordTabs[activePage] ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} channels={channels} initialRecordID={routeRecordID} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onDuplicate={openDuplicateMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
             : <SettingsPage />;
 
   const notificationBell = <NotificationBell items={recentNotifications} unreadCount={unreadCount} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onOpenCenter={() => navigate("inbox")} onOpenNotification={openNotification} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />;
   const overlays = <AppOverlays
-    monitorDialog={{ open: showMonitorDialog, monitor: selectedMonitor, modules, channels, onClose: () => setShowMonitorDialog(false), onSaved: () => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testMonitor }}
+    monitorDialog={{ open: showMonitorDialog, monitor: selectedMonitor, modules, channels, onClose: () => setShowMonitorDialog(false), onSaved: () => { setShowMonitorDialog(false); notify(selectedMonitor?.id ? "监控已更新" : selectedMonitor?.__duplicate ? "监控副本已创建" : "监控已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testMonitor }}
     recordsDialog={{ context: recordsMonitor, channels, onClose: () => setRecordsMonitor(null), onOpenTab: openRecordsTab, onRecordsDeleted: handleRecordsDeleted }}
     executionDetailDialog={{ state: executionDetail, channels, onClose: closeExecution }}
-    channelDialog={{ open: showChannelDialog, channel: selectedChannel, notifiers, monitors, modules, onClose: () => setShowChannelDialog(false), onSaved: () => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testNotification }}
+    channelDialog={{ open: showChannelDialog, channel: selectedChannel, notifiers, monitors, modules, onClose: () => setShowChannelDialog(false), onSaved: () => { setShowChannelDialog(false); notify(selectedChannel?.id ? "通知渠道已更新" : selectedChannel?.__duplicate ? "通知渠道副本已创建" : "通知渠道已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testNotification }}
     deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
   />;
 

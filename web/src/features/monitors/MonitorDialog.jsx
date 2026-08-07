@@ -15,6 +15,8 @@ import { previewSchedule } from "../../lib/schedules";
 import { CronScheduleRow } from "./CronScheduleRow";
 
 export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, onError, onTest }) {
+  const isEditing = Boolean(monitor?.id);
+  const isDuplicate = Boolean(monitor?.__duplicate);
   const [moduleType, setModuleType] = useState(monitor?.module_type || modules[0]?.type || "");
   const descriptor = modules.find((item) => item.type === moduleType);
   const parameters = getParameters(descriptor);
@@ -55,8 +57,8 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
     try {
       const normalizedSchedules = schedules.map((schedule) => schedule.trim());
       await Promise.all(normalizedSchedules.map(previewSchedule));
-      const payload = { name, module_type: moduleType, schedules: normalizedSchedules, module_config: sanitizeValues(parameters, config), condition_config: conditionConfig, notification_channel_ids: channelIDs };
-      await api(monitor ? `/api/v1/monitors/${monitor.id}` : "/api/v1/monitors", { method: monitor ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      const payload = { name, module_type: moduleType, schedules: normalizedSchedules, enabled: monitor?.enabled ?? true, module_config: sanitizeValues(parameters, config), condition_config: conditionConfig, notification_channel_ids: channelIDs };
+      await api(isEditing ? `/api/v1/monitors/${monitor.id}` : "/api/v1/monitors", { method: isEditing ? "PATCH" : "POST", body: JSON.stringify(payload) });
       onSaved();
     } catch (error) {
       onError(error.message);
@@ -78,7 +80,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
   return <Dialog open onOpenChange={(open) => !open && onClose()}>
     <DialogContent className="modal-wide">
       <DialogHeader>
-        <div><span className="eyebrow">{monitor ? "EDIT MONITOR" : "NEW MONITOR"}</span><DialogTitle>{monitor ? "编辑监控项" : "创建监控项"}</DialogTitle><DialogDescription>使用采集模块定期获取结果并评估触发条件。</DialogDescription></div>
+        <div><span className="eyebrow">{isEditing ? "EDIT MONITOR" : isDuplicate ? "DUPLICATE MONITOR" : "NEW MONITOR"}</span><DialogTitle>{isEditing ? "编辑监控项" : isDuplicate ? "复制监控项" : "创建监控项"}</DialogTitle><DialogDescription>{isDuplicate ? "基于现有监控配置创建副本，可在保存前调整差异。" : "使用采集模块定期获取结果并评估触发条件。"}</DialogDescription></div>
       </DialogHeader>
       <form onSubmit={submit}>
         <div className="modal-body">
@@ -98,7 +100,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
           <div className="form-section"><div className="form-section-title"><div><h3>触发条件</h3><p>第一次执行只建立变化检测基线。</p></div><IconButton className="section-add" size="sm" title="添加条件" aria-label="添加条件" onClick={addRule}><Plus size={14} /></IconButton></div><ConditionEditor descriptor={descriptor} value={conditionConfig} onChange={setConditionConfig} /></div>
           <div className="form-section"><div className="form-section-title"><div><h3>通知渠道</h3><p>可选择多个渠道，触发和恢复时异步发送。</p></div><Bell size={17} /></div><div className="channel-checks">{channels.length ? channels.map((channel) => { const unsupported = findUnsupportedPlaceholders(channel.config, descriptor); return <label key={channel.id} className={`check-card${unsupported.length ? " check-card-warning" : ""}`}><Checkbox checked={channelIDs.includes(channel.id)} onCheckedChange={(checked) => setChannelIDs((current) => checked ? [...new Set([...current, channel.id])] : current.filter((id) => id !== channel.id))} /><span><strong>{channel.name}</strong><small>{channel.notifier_type.toUpperCase()}</small>{unsupported.length > 0 && <em title={unsupported.join(", ")}>包含当前模块无法提供的占位符：{unsupported.join(", ")}</em>}</span></label>; }) : <span className="muted-text">暂无通知渠道，可稍后在通知渠道页面添加。</span>}</div></div>
         </div>
-        <DialogFooter className="dialog-footer-split dialog-footer-compact-mobile"><Button className="dialog-test-button" type="button" variant="outline" onClick={test} disabled={saving || testing}>{testing ? "测试中..." : <><PlayCircle size={15} />测试调用</>}</Button><IconButton className="dialog-test-icon" type="button" variant="outline" size="default" title={testing ? "正在测试调用" : "测试调用"} aria-label={testing ? "正在测试调用" : "测试调用"} onClick={test} disabled={saving || testing}>{testing ? <LoaderCircle className="spin" size={15} /> : <PlayCircle size={15} />}</IconButton><div className="dialog-footer-actions"><Button type="button" variant="ghost" onClick={onClose}>取消</Button><Button type="submit" disabled={saving || testing}>{saving ? "保存中..." : <><Check size={15} />保存监控</>}</Button></div></DialogFooter>
+        <DialogFooter className="dialog-footer-split dialog-footer-compact-mobile"><Button className="dialog-test-button" type="button" variant="outline" onClick={test} disabled={saving || testing}>{testing ? "测试中..." : <><PlayCircle size={15} />测试调用</>}</Button><IconButton className="dialog-test-icon" type="button" variant="outline" size="default" title={testing ? "正在测试调用" : "测试调用"} aria-label={testing ? "正在测试调用" : "测试调用"} onClick={test} disabled={saving || testing}>{testing ? <LoaderCircle className="spin" size={15} /> : <PlayCircle size={15} />}</IconButton><div className="dialog-footer-actions"><Button type="button" variant="ghost" onClick={onClose}>取消</Button><Button type="submit" disabled={saving || testing}>{saving ? "保存中..." : <><Check size={15} />{isDuplicate ? "创建副本" : "保存监控"}</>}</Button></div></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;

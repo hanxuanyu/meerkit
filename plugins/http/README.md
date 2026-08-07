@@ -55,7 +55,7 @@ URL 中原有的查询参数会被保留，再与 `query` 中配置的参数合�
 结果集 `response` 表示本次 HTTP 响应，包含：
 
 - `success`：请求是否完成。该字段表示网络请求和响应读取是否成功，不代表状态码一定是 2xx。
-- `status_code`：HTTP 状态码。
+- `status_code`：HTTP 状态码字符串，例如 `"200"`。
 - `duration_ms`：请求耗时，单位毫秒。
 - `response_headers`：响应头的键值集合。
 - `body_text`：按 `normalize` 处理后的响应文本。
