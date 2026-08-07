@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "../components/layout/AppShell";
 import { Sidebar } from "../components/layout/Sidebar";
@@ -45,6 +45,8 @@ export function App() {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [togglingMonitorId, setTogglingMonitorId] = useState("");
   const [togglingChannelId, setTogglingChannelId] = useState("");
+  const [executionDetail, setExecutionDetail] = useState(null);
+  const executionDetailRequest = useRef(0);
 
   const notify = useCallback((message, tone = "success") => {
     if (tone === "error") toast.error(message);
@@ -128,14 +130,23 @@ export function App() {
     setRecordsMonitor(null);
     activateRoute(tabID, { recordID });
   }, [activateRoute, monitorContext]);
+  const closeExecution = useCallback(() => {
+    executionDetailRequest.current += 1;
+    setExecutionDetail(null);
+  }, []);
   const openExecution = useCallback(async (monitorID, recordID) => {
+    const requestID = executionDetailRequest.current + 1;
+    executionDetailRequest.current = requestID;
+    setExecutionDetail({ loading: true, error: "", record: null });
     try {
-      const monitor = monitors.find((item) => item.id === monitorID) || await api(`/api/v1/monitors/${monitorID}`);
-      openMonitorTab(monitor, recordID);
+      const record = await api(`/api/v1/monitors/${monitorID}/records/${recordID}`);
+      if (executionDetailRequest.current !== requestID) return;
+      setExecutionDetail({ loading: false, error: "", record });
     } catch (error) {
-      notify(error.message, "error");
+      if (executionDetailRequest.current !== requestID) return;
+      setExecutionDetail({ loading: false, error: error.message, record: null });
     }
-  }, [monitors, notify, openMonitorTab]);
+  }, []);
   const openRecords = openMonitorTab;
   const openRecordsTab = openMonitorTab;
 
@@ -289,6 +300,7 @@ export function App() {
   const overlays = <AppOverlays
     monitorDialog={{ open: showMonitorDialog, monitor: selectedMonitor, modules, channels, onClose: () => setShowMonitorDialog(false), onSaved: () => { setShowMonitorDialog(false); notify(selectedMonitor ? "监控已更新" : "监控已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testMonitor }}
     recordsDialog={{ context: recordsMonitor, channels, onClose: () => setRecordsMonitor(null), onOpenTab: openRecordsTab, onRecordsDeleted: handleRecordsDeleted }}
+    executionDetailDialog={{ state: executionDetail, channels, onClose: closeExecution }}
     channelDialog={{ open: showChannelDialog, channel: selectedChannel, notifiers, monitors, modules, onClose: () => setShowChannelDialog(false), onSaved: () => { setShowChannelDialog(false); notify(selectedChannel ? "通知渠道已更新" : "通知渠道已创建"); void refresh(); }, onError: (message) => notify(message, "error"), onTest: testNotification }}
     deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
   />;

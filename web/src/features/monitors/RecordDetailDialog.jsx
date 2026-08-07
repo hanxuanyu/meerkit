@@ -7,11 +7,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { NotificationDeliveryResults } from "./NotificationDeliveryResults";
 import { conditionMeta, eventMeta, recordEventType } from "./recordPresentation";
 
-export function RecordDetailDialog({ record, descriptor, channels = [], onClose }) {
+export function RecordDetailDialog({ record, descriptor, channels = [], loading = false, error = "", onClose }) {
   return <Dialog open onOpenChange={(open) => !open && onClose()}>
     <DialogContent className="modal-wide record-detail-dialog">
-      <DialogHeader><div><span className="eyebrow">RECORD DETAIL</span><DialogTitle>执行详情</DialogTitle><DialogDescription>{formatDate(record.started_at)} · {record.duration_ms} ms</DialogDescription></div></DialogHeader>
-      <div className="modal-body record-detail-body"><RecordDetailContent record={record} descriptor={descriptor} channels={channels} /></div>
+      <DialogHeader><div><span className="eyebrow">RECORD DETAIL</span><DialogTitle>执行详情</DialogTitle><DialogDescription>{record ? `${formatDate(record.started_at)} · ${record.duration_ms} ms` : loading ? "正在加载执行记录..." : "无法加载执行记录"}</DialogDescription></div></DialogHeader>
+      <div className="modal-body record-detail-body">{loading ? <div className="records-empty">正在加载执行详情...</div> : error ? <div className="records-empty field-error">{error}</div> : record ? <RecordDetailContent record={record} descriptor={descriptor} channels={channels} /> : null}</div>
     </DialogContent>
   </Dialog>;
 }
