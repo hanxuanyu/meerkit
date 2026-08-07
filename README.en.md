@@ -2,11 +2,44 @@
 
 Meerkit is a monitoring service with independently managed monitor plugins and Webhook, SMTP, and in-app notifications. HTTP and TCP are distributed as official plugins rather than linked into the host process.
 
+## Development
+
+Local development requires Go, Node.js, npm, and Make. Install dependencies after the initial checkout:
+
+```bash
+make deps
+```
+
+Start the Go backend and Vite frontend together:
+
+```bash
+make dev
+```
+
+The frontend development server runs at `http://127.0.0.1:5173` and proxies API and WebSocket requests to `http://127.0.0.1:8080`. Pressing `Ctrl+C` stops both processes. You can also run them separately and pass additional options through variables:
+
+```bash
+make dev-frontend FRONTEND_ARGS="--host 0.0.0.0"
+make dev-backend BACKEND_ARGS="--config config.yaml --listen 0.0.0.0:8080"
+```
+
+The backend embeds built frontend files. `make dev` and `make dev-backend` build them once when `web/dist` is missing. Run `make frontend-build` to build production frontend assets explicitly. `make help` lists the common targets and overridable variables.
+
+### Clean and reset
+
+`make clean` removes only reproducible build artifacts: `dist/`, `web/dist/`, `.gocache/`, and the root-level `meerkit`/`meerkit.exe` binaries. To restart the project from an empty runtime state, run:
+
+```bash
+make reset
+```
+
+`make reset` runs `clean`, then removes the default `data/`, `logs/`, and `config.yaml`, plus root-level `*.db`, `*.db-shm`, and `*.db-wal` SQLite files. This permanently deletes local runtime data and configuration. It preserves `keys/`, `web/node_modules/`, and other installed dependencies.
+
 ## Run
 
 ```bash
-npm --prefix web run build
-go run . serve --config config.yaml
+make frontend-build
+make dev-backend BACKEND_ARGS="--config config.yaml"
 ```
 
 The default UI is available at `http://127.0.0.1:8080`. On first access, set an administrator access key. All management APIs and notification streams then require an authenticated session. Local recovery is available with:
@@ -49,8 +82,10 @@ Plugin archives can be uploaded from the management page, imported with `meerkit
 Official plugins are signed with an Ed25519 key. Run the following command from the repository root; its argument is the output path prefix:
 
 ```bash
-scripts/package-plugins.sh --generate-key ./keys/meerkit-official
+make generate-key KEY_PREFIX=./keys/meerkit-official
 ```
+
+This target uses the existing `scripts/package-plugins.sh --generate-key` flow.
 
 The command creates two Base64-encoded files and refuses to overwrite existing keys:
 
@@ -61,22 +96,23 @@ Never commit the private key, copy it into `dist/`, or include it in a release a
 
 ### Package official plugins
 
-Set the private-key path and key ID, then run the batch script without `--plugin`. It packages every publishable manifest under `plugins/`, currently HTTP and TCP, while automatically excluding the `plugins/template` source scaffold:
+Set the private-key path and key ID, then run the batch target. It packages every publishable manifest under `plugins/`, currently HTTP and TCP, while automatically excluding the `plugins/template` source scaffold:
 
 ```bash
-MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
-MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
-scripts/package-plugins.sh dist/plugins linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+make package-plugins \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026 \
+  TARGETS=linux/amd64,linux/arm64,windows/amd64,darwin/arm64
 ```
 
 The script creates one plugin package per platform: `.zip` for Windows and `.tar.gz` for other platforms. The signature covers the manifest and its artifact hashes, plus packaged README and LICENSE files. To package only one official plugin, pass the signing arguments directly:
 
 ```bash
-scripts/package-plugins.sh \
-  --plugin ./plugins/http \
-  --targets linux/amd64 \
-  --sign-key ./keys/meerkit-official.private.key \
-  --key-id meerkit-official-2026
+make package-plugin \
+  PLUGIN=./plugins/http \
+  TARGETS=linux/amd64 \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026
 ```
 
 ### Build a complete official release
@@ -84,11 +120,14 @@ scripts/package-plugins.sh \
 `scripts/package.sh` builds the frontend, host executable, and every official plugin for each target. It forwards the signing environment variables to the internal plugin packaging step, so all official plugins in a release use the same key:
 
 ```bash
-MEERKIT_VERSION=v0.1.0 \
-MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
-MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
-scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+make package-release \
+  VERSION=v0.1.0 \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026 \
+  TARGETS=linux/amd64,linux/arm64,windows/amd64,darwin/arm64
 ```
+
+The default output directories are `dist/plugins` and `dist/releases`; override them with `PLUGIN_OUTPUT` and `RELEASE_OUTPUT`. `TARGETS` defaults to the current platform. Omitting both `SIGN_KEY` and `KEY_ID` creates unsigned packages; when signing, both variables are required. The Make targets still delegate the actual work to `scripts/package-plugins.sh` and `scripts/package.sh`, so the scripts remain available directly for finer-grained options.
 
 Inside each generated release archive, official plugins are stored in the `plugins/` directory next to the host executable. On the first start with an empty data directory, the host scans that directory, verifies and enables the packages, and records their signing fingerprint as an official publisher. Later versions or plugins signed by the same key are verified automatically when imported manually. Official status is established by this first-run release bootstrap; the public key does not also need to be added to `plugins.trusted_keys`. A plugin manifest cannot declare itself official, so importing a separately generated signed package into an installation that has not bootstrapped official trust still requires the user to verify and confirm its public-key fingerprint like any third-party signed package.
 
@@ -120,6 +159,7 @@ Back up and retain the private key for the lifetime of the release line. Replaci
 ## Layout
 
 ```text
+Makefile          development, packaging, and key-generation shortcuts
 main.go
 internal/         host application packages
 internal/runtimeconfig/ runtime configuration defaults, validation, and hot application

@@ -2,11 +2,44 @@
 
 Meerkit 是一套支持独立监控插件的监控服务，并内置 Webhook、SMTP 和站内通知能力。HTTP 与 TCP 以官方插件形式发布，不再链接到宿主进程中。
 
+## 开发
+
+本地开发需要 Go、Node.js、npm 和 Make。首次拉取代码后安装依赖：
+
+```bash
+make deps
+```
+
+同时启动 Go 后端和 Vite 前端：
+
+```bash
+make dev
+```
+
+前端开发服务器地址为 `http://127.0.0.1:5173`，并将 API 和 WebSocket 请求代理到 `http://127.0.0.1:8080`。按 `Ctrl+C` 会同时停止两个进程。也可以分别启动，并通过参数变量透传额外选项：
+
+```bash
+make dev-frontend FRONTEND_ARGS="--host 0.0.0.0"
+make dev-backend BACKEND_ARGS="--config config.yaml --listen 0.0.0.0:8080"
+```
+
+后端需要嵌入已构建的前端文件；`make dev` 和 `make dev-backend` 会在 `web/dist` 不存在时先构建一次。单独生成生产前端资源可执行 `make frontend-build`。使用 `make help` 可查看所有常用目标和可覆盖变量。
+
+### 清理与重置
+
+`make clean` 仅清理可重新生成的构建产物，包括 `dist/`、`web/dist/`、`.gocache/` 和根目录下的 `meerkit`/`meerkit.exe`。需要从空白运行状态重新启动项目时执行：
+
+```bash
+make reset
+```
+
+`make reset` 会先执行 `clean`，再删除默认的 `data/`、`logs/`、`config.yaml`，以及根目录下的 `*.db`、`*.db-shm` 和 `*.db-wal` SQLite 文件。该操作会永久删除本地运行数据和配置；`keys/`、`web/node_modules/` 及其他已安装依赖不会被删除。
+
 ## 运行
 
 ```bash
-npm --prefix web run build
-go run . serve --config config.yaml
+make frontend-build
+make dev-backend BACKEND_ARGS="--config config.yaml"
 ```
 
 默认管理界面地址为 `http://127.0.0.1:8080`。首次访问时需要设置管理员访问密钥，后续所有管理 API 和通知流都要求有效会话。本地重置命令：
@@ -49,8 +82,10 @@ storage:
 官方插件使用 Ed25519 密钥签名。以下命令必须在仓库根目录执行，参数是输出文件的路径前缀：
 
 ```bash
-scripts/package-plugins.sh --generate-key ./keys/meerkit-official
+make generate-key KEY_PREFIX=./keys/meerkit-official
 ```
+
+该目标调用现有的 `scripts/package-plugins.sh --generate-key` 流程。
 
 命令会创建两个 Base64 编码的文件，并拒绝覆盖已有密钥：
 
@@ -61,22 +96,23 @@ scripts/package-plugins.sh --generate-key ./keys/meerkit-official
 
 ### 打包官方插件
 
-设置私钥路径和 key ID 后，不带 `--plugin` 调用批量脚本。脚本会打包 `plugins/` 下所有包含清单的正式插件，目前包括 HTTP 和 TCP，并自动排除源码模板 `plugins/template`：
+设置私钥路径和 key ID 后执行批量目标。它会打包 `plugins/` 下所有包含清单的正式插件，目前包括 HTTP 和 TCP，并自动排除源码模板 `plugins/template`：
 
 ```bash
-MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
-MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
-scripts/package-plugins.sh dist/plugins linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+make package-plugins \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026 \
+  TARGETS=linux/amd64,linux/arm64,windows/amd64,darwin/arm64
 ```
 
 每个平台生成独立插件包，Windows 使用 `.zip`，其他平台使用 `.tar.gz`。签名覆盖插件清单及其中记录的制品哈希，同时覆盖包内的 README 和 LICENSE。仅打包单个官方插件时，可直接传递签名参数：
 
 ```bash
-scripts/package-plugins.sh \
-  --plugin ./plugins/http \
-  --targets linux/amd64 \
-  --sign-key ./keys/meerkit-official.private.key \
-  --key-id meerkit-official-2026
+make package-plugin \
+  PLUGIN=./plugins/http \
+  TARGETS=linux/amd64 \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026
 ```
 
 ### 生成完整官方发布包
@@ -84,11 +120,14 @@ scripts/package-plugins.sh \
 `scripts/package.sh` 会构建前端、宿主程序和目标平台的全部官方插件。签名环境变量会传递给内部插件打包步骤，因此同一发布包内的所有官方插件会使用同一密钥：
 
 ```bash
-MEERKIT_VERSION=v0.1.0 \
-MEERKIT_PLUGIN_SIGN_KEY=./keys/meerkit-official.private.key \
-MEERKIT_PLUGIN_KEY_ID=meerkit-official-2026 \
-scripts/package.sh dist/releases linux/amd64,linux/arm64,windows/amd64,darwin/arm64
+make package-release \
+  VERSION=v0.1.0 \
+  SIGN_KEY=./keys/meerkit-official.private.key \
+  KEY_ID=meerkit-official-2026 \
+  TARGETS=linux/amd64,linux/arm64,windows/amd64,darwin/arm64
 ```
+
+默认输出目录分别为 `dist/plugins` 和 `dist/releases`，可通过 `PLUGIN_OUTPUT` 和 `RELEASE_OUTPUT` 覆盖。`TARGETS` 默认为当前平台；不设置 `SIGN_KEY` 和 `KEY_ID` 时会生成未签名包，这两个变量用于签名时必须同时设置。Make 目标仍由 `scripts/package-plugins.sh` 和 `scripts/package.sh` 执行实际打包，因此也可以直接调用脚本处理更细粒度的参数。
 
 生成的发布压缩包中，官方插件位于宿主可执行文件同级的 `plugins/` 目录。使用空数据目录首次启动时，宿主会扫描该目录、验证签名、启用插件，并将其公钥指纹登记为官方发布者；之后手工导入由同一密钥签名的新版本或其他插件时会自动验证。官方状态来自这次随发行包进行的首次引导，不需要把公钥另外写入 `plugins.trusted_keys`。插件清单中不存在可自行声明的“官方”字段，因此将单独生成的签名包导入尚未建立官方信任的环境时，仍需要像第三方签名包一样核对并确认公钥指纹。
 
@@ -120,6 +159,7 @@ $env:MEERKIT_PLUGIN_KEY_ID = "meerkit-official-2026"
 ## 目录
 
 ```text
+Makefile          开发、打包和密钥生成快捷入口
 main.go
 internal/
   api/           HTTP API 与嵌入式前端处理
