@@ -18,6 +18,7 @@ import (
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
+	"meerkit/internal/statusboard"
 	"meerkit/internal/store"
 )
 
@@ -30,13 +31,18 @@ type Runner struct {
 	store     *store.Store
 	modules   *monitor.Registry
 	notifiers *notification.Registry
+	board     *statusboard.Service
 	locksMu   sync.Mutex
 	locks     map[string]*sync.Mutex
 	logger    *slog.Logger
 }
 
-func NewRunner(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, logger *slog.Logger) *Runner {
-	return &Runner{store: store, modules: modules, notifiers: notifiers, locks: make(map[string]*sync.Mutex), logger: logger}
+func NewRunner(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, logger *slog.Logger, boards ...*statusboard.Service) *Runner {
+	var board *statusboard.Service
+	if len(boards) > 0 {
+		board = boards[0]
+	}
+	return &Runner{store: store, modules: modules, notifiers: notifiers, board: board, locks: make(map[string]*sync.Mutex), logger: logger}
 }
 
 func (r *Runner) lockFor(id string) *sync.Mutex {
@@ -188,104 +194,129 @@ func (r *Runner) runLocked(ctx context.Context, id string) (core.MonitorRecord, 
 		ModuleType: monitor.ModuleType, ModuleVersion: descriptor.Version,
 		Success: observation.Success && executeErr == nil, DurationMS: duration.Milliseconds(), ResultSchemaVersion: observation.SchemaVersion,
 		Result: current, ResultHash: resultHash, ConditionState: evaluation.State, EventType: eventType,
-		NotificationResult: map[string]any{}, ErrorCode: observation.ErrorCode, ErrorMessage: observation.ErrorMessage,
+		NotificationEvents: []core.RecordNotificationEvent{}, ErrorCode: observation.ErrorCode, ErrorMessage: observation.ErrorMessage,
 	}
 	if record.ResultSchemaVersion == "" {
 		record.ResultSchemaVersion = descriptor.Version
-	}
-	if err := r.store.AddRecord(ctx, record); err != nil {
-		return record, err
 	}
 	state.ConditionActive = active
 	state.LastRecordID = record.ID
 	state.LastRunAt = finished
 	state.LastSuccess = record.Success
 	state.LastSummary = executionSummary
-	if err := r.store.UpdateRuntimeState(ctx, monitor.ID, state); err != nil {
+	pending := make([]statusboard.PendingNotification, 0, 1)
+	if eventType != "none" {
+		event := core.NotificationEvent{ID: core.NewID(), Source: "monitor_condition", EventType: eventType, MonitorID: monitor.ID, RecordID: record.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: executionSummary, CurrentResult: current, ConditionDetail: evaluation.Details}
+		if previousErr == nil {
+			event.PreviousResult = previous.Result
+		}
+		pending = append(pending, statusboard.PendingNotification{Event: event, ChannelIDs: append([]string(nil), monitor.NotificationChannelIDs...)})
+	}
+	itemStates := map[string]core.StatusItemRuntimeState{}
+	var boardStream statusboard.StreamEvent
+	if r.board != nil {
+		boardEvaluation, boardErr := r.board.EvaluateExecution(ctx, monitor, record)
+		if boardErr != nil {
+			if r.logger != nil {
+				r.logger.Error("status board evaluation failed", "monitor_id", monitor.ID, "record_id", record.ID, "error", boardErr)
+			}
+		} else {
+			itemStates = boardEvaluation.ItemStates
+			pending = append(pending, boardEvaluation.Events...)
+			boardStream = boardEvaluation.Stream
+		}
+	}
+	record.NotificationEvents = pendingRecordEvents(pending)
+	if err := r.store.CommitMonitorExecution(ctx, record, monitor.ID, state, itemStates); err != nil {
 		return record, err
+	}
+	if r.board != nil && boardStream.Type != "" {
+		r.board.Publish(boardStream)
 	}
 	if r.logger != nil {
 		r.logger.Info("monitor execution completed", "monitor_id", monitor.ID, "monitor_name", monitor.Name, "module_type", monitor.ModuleType, "success", record.Success, "duration_ms", record.DurationMS, "condition_state", record.ConditionState, "event_type", record.EventType, "summary", executionSummary, "error_code", record.ErrorCode)
 	}
-	if eventType != "none" {
-		event := core.NotificationEvent{EventType: eventType, MonitorID: monitor.ID, RecordID: record.ID, MonitorName: monitor.Name, ModuleType: monitor.ModuleType, TriggeredAt: finished, ConditionState: evaluation.State, Summary: executionSummary, CurrentResult: current, ConditionDetail: evaluation.Details}
-		if previousErr == nil {
-			event.PreviousResult = previous.Result
-		}
-		channelIDs := append([]string(nil), monitor.NotificationChannelIDs...)
-		if len(channelIDs) > 0 {
-			if r.logger != nil {
-				r.logger.Info("monitor condition event queued", "monitor_id", monitor.ID, "record_id", record.ID, "event_type", eventType, "channel_count", len(channelIDs))
-			}
-			go r.sendNotifications(context.Background(), record.ID, channelIDs, event)
-		} else if r.logger != nil {
-			r.logger.Info("monitor condition event has no notification channels", "monitor_id", monitor.ID, "record_id", record.ID, "event_type", eventType)
-		}
+	if len(pending) > 0 {
+		go r.sendNotificationEvents(context.Background(), record.ID, pending, record.NotificationEvents)
 	}
 	return record, nil
 }
 
-func (r *Runner) sendNotifications(ctx context.Context, recordID string, channelIDs []string, event core.NotificationEvent) {
-	results := make(map[string]any, len(channelIDs))
+func pendingRecordEvents(pending []statusboard.PendingNotification) []core.RecordNotificationEvent {
+	events := make([]core.RecordNotificationEvent, 0, len(pending))
+	for _, value := range pending {
+		deliveries := make(map[string]core.NotificationDelivery, len(value.ChannelIDs))
+		for _, channelID := range value.ChannelIDs {
+			deliveries[channelID] = core.NotificationDelivery{Status: "pending"}
+		}
+		events = append(events, core.RecordNotificationEvent{ID: value.Event.ID, Source: value.Event.Source, EventType: value.Event.EventType, StatusItemID: value.Event.StatusItemID, StatusItemName: value.Event.StatusItemName, TrendRuleID: value.Event.TrendRuleID, TrendRuleName: value.Event.TrendRuleName, Summary: value.Event.Summary, Deliveries: deliveries})
+	}
+	return events
+}
+
+func (r *Runner) sendNotificationEvents(ctx context.Context, recordID string, pending []statusboard.PendingNotification, events []core.RecordNotificationEvent) {
+	for eventIndex, value := range pending {
+		for _, channelID := range value.ChannelIDs {
+			delivery := r.sendNotification(ctx, recordID, channelID, value.Event)
+			events[eventIndex].Deliveries[channelID] = delivery
+		}
+	}
+	if err := r.store.UpdateRecordNotificationEvents(ctx, recordID, events); err != nil && r.logger != nil {
+		r.logger.Error("update notification events failed", "record_id", recordID, "error", err)
+	}
+}
+
+func (r *Runner) sendNotification(ctx context.Context, recordID, channelID string, event core.NotificationEvent) core.NotificationDelivery {
 	if r.logger != nil {
-		r.logger.Debug("notification delivery started", "record_id", recordID, "event_type", event.EventType, "channel_count", len(channelIDs))
+		r.logger.Debug("notification delivery started", "record_id", recordID, "event_type", event.EventType, "channel_id", channelID)
 	}
-	for _, channelID := range channelIDs {
-		channel, err := r.store.GetChannel(ctx, channelID)
-		if err != nil {
-			results[channelID] = map[string]any{"status": "error", "message": err.Error()}
-			if r.logger != nil {
-				r.logger.Error("load notification channel failed", "record_id", recordID, "channel_id", channelID, "error", err)
-			}
-			continue
+	channel, err := r.store.GetChannel(ctx, channelID)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Error("load notification channel failed", "record_id", recordID, "channel_id", channelID, "error", err)
 		}
-		if !channel.Enabled {
-			results[channelID] = map[string]any{"status": "skipped", "message": "channel disabled"}
-			if r.logger != nil {
-				r.logger.Info("notification channel skipped", "record_id", recordID, "channel_id", channelID, "reason", "disabled")
-			}
-			continue
+		return core.NotificationDelivery{Status: "error", Message: err.Error()}
+	}
+	if !channel.Enabled {
+		if r.logger != nil {
+			r.logger.Info("notification channel skipped", "record_id", recordID, "channel_id", channelID, "reason", "disabled")
 		}
-		notifier, ok := r.notifiers.Get(channel.NotifierType)
-		if !ok {
-			results[channelID] = map[string]any{"status": "error", "message": "unknown notifier type"}
-			if r.logger != nil {
-				r.logger.Error("notification notifier not found", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType)
-			}
-			continue
+		return core.NotificationDelivery{Status: "skipped", Message: "channel disabled"}
+	}
+	notifier, ok := r.notifiers.Get(channel.NotifierType)
+	if !ok {
+		if r.logger != nil {
+			r.logger.Error("notification notifier not found", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType)
 		}
-		var sendErr error
-		for attempt := 1; attempt <= 3; attempt++ {
-			if r.logger != nil {
-				r.logger.Debug("notification delivery attempt", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempt", attempt)
-			}
-			sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			sendErr = notifier.Send(sendCtx, channel.Config, event)
-			cancel()
-			if sendErr == nil {
-				break
-			}
-			if attempt < 3 {
-				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-			}
+		return core.NotificationDelivery{Status: "error", Message: "unknown notifier type"}
+	}
+	var sendErr error
+	attempts := 0
+	for attempt := 1; attempt <= 3; attempt++ {
+		attempts = attempt
+		if r.logger != nil {
+			r.logger.Debug("notification delivery attempt", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempt", attempt)
 		}
-		if sendErr != nil {
-			results[channelID] = map[string]any{"status": "error", "message": sendErr.Error(), "attempts": 3}
-			if r.logger != nil {
-				r.logger.Error("notification delivery failed", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempts", 3, "error", sendErr)
-			}
-		} else {
-			results[channelID] = map[string]any{"status": "sent", "attempts": 1}
-			if r.logger != nil {
-				r.logger.Info("notification delivered", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "event_type", event.EventType)
-			}
+		sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		sendErr = notifier.Send(sendCtx, channel.Config, event)
+		cancel()
+		if sendErr == nil {
+			break
+		}
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 		}
 	}
-	if r.logger != nil {
-		r.logger.Debug("notification delivery completed", "record_id", recordID, "event_type", event.EventType)
-	}
-	if err := r.store.UpdateRecordNotifications(ctx, recordID, results); err != nil && r.logger != nil {
-		r.logger.Error("update notification result failed", "record_id", recordID, "error", err)
+	if sendErr != nil {
+		if r.logger != nil {
+			r.logger.Error("notification delivery failed", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "attempts", 3, "error", sendErr)
+		}
+		return core.NotificationDelivery{Status: "error", Message: sendErr.Error(), Attempts: attempts}
+	} else {
+		if r.logger != nil {
+			r.logger.Info("notification delivered", "record_id", recordID, "channel_id", channelID, "notifier_type", channel.NotifierType, "event_type", event.EventType)
+		}
+		return core.NotificationDelivery{Status: "sent", Attempts: attempts}
 	}
 }
 

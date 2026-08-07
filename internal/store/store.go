@@ -56,7 +56,7 @@ func OpenStore(dataDir string) (*Store, error) {
 	if err := ensureDir(dataDir); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s/meerkit.db?_pragma=busy_timeout(5000)", strings.TrimRight(dataDir, "/")))
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s/meerkit.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", strings.TrimRight(dataDir, "/")))
 	if err != nil {
 		return nil, err
 	}
@@ -103,12 +103,29 @@ CREATE TABLE IF NOT EXISTS monitor_records (
   result_hash TEXT NOT NULL,
   condition_state TEXT NOT NULL,
   event_type TEXT NOT NULL,
-  notification_result_json TEXT NOT NULL DEFAULT '{}',
+  notification_events_json TEXT NOT NULL DEFAULT '[]',
   error_code TEXT NOT NULL DEFAULT '',
   error_message TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_monitor_records_monitor_time ON monitor_records(monitor_id, started_at DESC);
+CREATE TABLE IF NOT EXISTS status_board_items (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  monitor_id TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  source_json TEXT NOT NULL,
+  invert INTEGER NOT NULL DEFAULT 0,
+  thresholds_json TEXT NOT NULL DEFAULT '[]',
+  history_limit INTEGER NOT NULL DEFAULT 60,
+  trend_rules_json TEXT NOT NULL DEFAULT '[]',
+  notification_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+  runtime_state_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_status_board_items_monitor_created ON status_board_items(monitor_id, created_at);
 CREATE TABLE IF NOT EXISTS notification_channels (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -352,13 +369,13 @@ func scanMonitor(scanner interface{ Scan(...any) error }) (core.Monitor, error) 
 
 func (s *Store) AddRecord(ctx context.Context, record core.MonitorRecord) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_records
-(id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.MonitorID, record.ModuleType, record.ModuleVersion, record.StartedAt.UTC().Format(time.RFC3339Nano), record.FinishedAt.UTC().Format(time.RFC3339Nano), boolInt(record.Success), record.DurationMS, record.ResultSchemaVersion, jsonString(record.Result), record.ResultHash, record.ConditionState, record.EventType, jsonString(record.NotificationResult), record.ErrorCode, record.ErrorMessage)
+(id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.MonitorID, record.ModuleType, record.ModuleVersion, record.StartedAt.UTC().Format(time.RFC3339Nano), record.FinishedAt.UTC().Format(time.RFC3339Nano), boolInt(record.Success), record.DurationMS, record.ResultSchemaVersion, jsonString(record.Result), record.ResultHash, record.ConditionState, record.EventType, jsonString(record.NotificationEvents), record.ErrorCode, record.ErrorMessage)
 	return err
 }
 
-func (s *Store) UpdateRecordNotifications(ctx context.Context, id string, result map[string]any) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE monitor_records SET notification_result_json=? WHERE id=?`, jsonString(result), id)
+func (s *Store) UpdateRecordNotificationEvents(ctx context.Context, id string, events []core.RecordNotificationEvent) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE monitor_records SET notification_events_json=? WHERE id=?`, jsonString(events), id)
 	return err
 }
 
@@ -368,7 +385,7 @@ func (s *Store) ListRecords(ctx context.Context, monitorID string, limit int) ([
 }
 
 func (s *Store) GetRecord(ctx context.Context, monitorID, recordID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
+	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND id=?`, monitorID, recordID)
 	return scanRecord(row)
 }
 
@@ -388,8 +405,15 @@ func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options R
 		where = append(where, "success=0")
 	}
 	if eventType := strings.TrimSpace(options.EventType); eventType != "" && eventType != "all" {
-		where = append(where, "event_type=?")
-		args = append(args, eventType)
+		if eventType == "trend_triggered" || eventType == "trend_recovered" {
+			where = append(where, "EXISTS (SELECT 1 FROM json_each(notification_events_json) WHERE json_extract(json_each.value, '$.event_type')=?)")
+			args = append(args, eventType)
+		} else if eventType == "none" {
+			where = append(where, "event_type='none' AND json_array_length(notification_events_json)=0")
+		} else {
+			where = append(where, "event_type=?")
+			args = append(args, eventType)
+		}
 	}
 
 	clause := strings.Join(where, " AND ")
@@ -399,7 +423,7 @@ func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options R
 	}
 	result := PageResult[core.MonitorRecord]{Page: page, PageSize: pageSize, Total: total, TotalPages: totalPages(total, pageSize), Items: []core.MonitorRecord{}}
 	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE `+clause+` ORDER BY started_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return PageResult[core.MonitorRecord]{}, err
 	}
@@ -415,7 +439,7 @@ func (s *Store) ListRecordsPage(ctx context.Context, monitorID string, options R
 }
 
 func (s *Store) LatestSuccessfulRecord(ctx context.Context, monitorID string) (core.MonitorRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_result_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND success=1 ORDER BY started_at DESC LIMIT 1`, monitorID)
+	row := s.db.QueryRowContext(ctx, `SELECT id,monitor_id,module_type,module_version,started_at,finished_at,success,duration_ms,result_schema_version,result_json,result_hash,condition_state,event_type,notification_events_json,error_code,error_message FROM monitor_records WHERE monitor_id=? AND success=1 ORDER BY started_at DESC LIMIT 1`, monitorID)
 	return scanRecord(row)
 }
 
@@ -429,7 +453,7 @@ func scanRecord(scanner interface{ Scan(...any) error }) (core.MonitorRecord, er
 	}
 	record.Success = success == 1
 	_ = json.Unmarshal([]byte(resultJSON), &record.Result)
-	_ = json.Unmarshal([]byte(notificationJSON), &record.NotificationResult)
+	_ = json.Unmarshal([]byte(notificationJSON), &record.NotificationEvents)
 	record.StartedAt, _ = time.Parse(time.RFC3339Nano, startedAt)
 	record.FinishedAt, _ = time.Parse(time.RFC3339Nano, finishedAt)
 	return record, nil

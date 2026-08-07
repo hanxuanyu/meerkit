@@ -22,6 +22,7 @@ import (
 	pluginruntime "meerkit/internal/plugin"
 	runtimeapp "meerkit/internal/runtime"
 	"meerkit/internal/runtimeconfig"
+	"meerkit/internal/statusboard"
 	"meerkit/internal/store"
 )
 
@@ -120,12 +121,20 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	logger.Info("plugin activation summary", "installed", len(installations), "active", activePlugins)
 	inAppHub := inapp.NewHub()
 	notifiers := notification.NewRegistry(database, inAppHub)
-	runner := runtimeapp.NewRunner(database, modules, notifiers, logger)
+	statusBoardHub := statusboard.NewHub()
+	statusBoardService := statusboard.NewService(database, modules, statusBoardHub)
+	runner := runtimeapp.NewRunner(database, modules, notifiers, logger, statusBoardService)
 	scheduler := runtimeapp.NewScheduler(runner, database, runtimeManager.Snapshot, logger, runtimeManager.Subscribe())
 	cleaner := runtimeapp.NewCleanupWorker(database, runtimeManager.Snapshot, logger, func(unreadCount int) { inAppHub.Publish(inapp.StreamEvent{Type: "pruned", UnreadCount: unreadCount}) }, runtimeManager.Subscribe())
+	cleaner.SetRecordsPruned(func(deleted int) {
+		if deleted > 0 {
+			statusBoardService.Publish(statusboard.StreamEvent{Type: "records_pruned"})
+		}
+	})
 	logger.Info("Meerkit background workers configured", "scheduler", true, "cleanup", true, "max_concurrency", runtimeSnapshot.Scheduler.MaxConcurrency, "cleanup_interval", runtimeSnapshot.Storage.CleanupInterval)
 	authService := auth.NewService(database, runtimeSnapshot.SessionTTLDuration())
 	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger, runtimeManager)
+	apiServer.SetStatusBoard(statusBoardService)
 	runtimeManager.SetApply(func(applyCtx context.Context, oldConfig, newConfig app.RuntimeConfig) error {
 		if oldConfig.Logging != newConfig.Logging {
 			if err := loggingController.Apply(newConfig.Logging); err != nil {

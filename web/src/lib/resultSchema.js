@@ -9,6 +9,11 @@ const commonPlaceholders = [
   { key: "event.condition_state", label: "条件状态", type: "string" },
   { key: "event.summary", label: "执行摘要", type: "string" },
   { key: "event.triggered_at", label: "触发时间", type: "datetime" },
+  { key: "status.item_id", label: "状态看板项 ID", type: "string" },
+  { key: "status.item_name", label: "状态看板项名称", type: "string" },
+  { key: "trend.rule_id", label: "趋势规则 ID", type: "string" },
+  { key: "trend.rule_name", label: "趋势规则名称", type: "string" },
+  { key: "trend.detail", label: "趋势计算详情", type: "json" },
   { key: "result", label: "完整结果 JSON", type: "json" },
   { key: "previous", label: "上一次结果 JSON", type: "json" }
 ];

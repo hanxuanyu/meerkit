@@ -17,7 +17,7 @@ export function ConditionEditor({ descriptor, value, onChange }) {
 
   return <>
     <div className="condition-toolbar"><span>满足</span><Select value={value.logic || "ALL"} onValueChange={(logic) => onChange({ ...value, logic })}><SelectTrigger className="condition-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">全部条件</SelectItem><SelectItem value="ANY">任一条件</SelectItem></SelectContent></Select><span>时触发通知</span><span>通知策略</span><Select value={notificationPolicy} onValueChange={(notification_policy) => onChange({ ...value, notification_policy })}><SelectTrigger className="condition-policy-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="once">同一场景仅通知一次</SelectItem><SelectItem value="every">每次满足条件都通知</SelectItem></SelectContent></Select></div>
-    <div className="condition-list">{rules.length ? rules.map((rule, index) => <ConditionRow key={`${rule.source || "current"}-${rule.field}-${index}`} rule={rule} fieldGroups={fieldGroups} fields={fields} onChange={(patch) => updateRule(index, patch)} onRemove={() => removeRule(index)} />) : <div className="condition-empty">点击右上角 + 添加触发条件</div>}</div>
+    <div className="condition-list">{rules.length ? rules.map((rule, index) => <ConditionRow key={rule.id || `${rule.source || "current"}-${rule.field}-${index}`} rule={rule} fieldGroups={fieldGroups} fields={fields} onChange={(patch) => updateRule(index, patch)} onRemove={() => removeRule(index)} />) : <div className="condition-empty">点击右上角 + 添加触发条件</div>}</div>
   </>;
 }
 

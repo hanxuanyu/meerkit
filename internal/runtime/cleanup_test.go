@@ -28,7 +28,7 @@ func TestCleanupWorkerPrunesExpiredData(t *testing.T) {
 		id       string
 		finished time.Time
 	}{{"old-record", now.Add(-2 * time.Hour)}, {"new-record", now.Add(-30 * time.Minute)}} {
-		record := core.MonitorRecord{ID: item.id, MonitorID: monitor.ID, StartedAt: item.finished.Add(-time.Second), FinishedAt: item.finished, Success: true, ResultSchemaVersion: "1", Result: map[string]any{}, ResultHash: item.id, ConditionState: "false", EventType: "none", NotificationResult: map[string]any{}}
+		record := core.MonitorRecord{ID: item.id, MonitorID: monitor.ID, StartedAt: item.finished.Add(-time.Second), FinishedAt: item.finished, Success: true, ResultSchemaVersion: "1", Result: map[string]any{}, ResultHash: item.id, ConditionState: "false", EventType: "none", NotificationEvents: []core.RecordNotificationEvent{}}
 		if err := database.AddRecord(ctx, record); err != nil {
 			t.Fatal(err)
 		}

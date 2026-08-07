@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Activity, Bell, Inbox, Layers3, PackageOpen, Settings2, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesColumnIncreasing, Inbox, Layers3, PackageOpen, Settings2, X } from "lucide-react";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/Tooltip";
 
 const navigationGroups = [
-  { label: "监控", items: [{ id: "overview", label: "总览", icon: Activity }, { id: "monitors", label: "监控项", icon: Layers3 }] },
+  { label: "监控", items: [{ id: "overview", label: "总览", icon: Activity }, { id: "monitors", label: "监控项", icon: Layers3 }, { id: "statusBoard", label: "状态看板", icon: ChartNoAxesColumnIncreasing }] },
   { label: "通知", items: [{ id: "inbox", label: "通知中心", icon: Inbox }, { id: "notifications", label: "通知渠道", icon: Bell }] },
   { label: "系统", items: [{ id: "plugins", label: "监控插件", icon: PackageOpen }, { id: "settings", label: "系统设置", icon: Settings2 }] }
 ];

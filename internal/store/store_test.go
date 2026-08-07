@@ -85,7 +85,7 @@ func TestListRecordsPageFiltersAndPaginates(t *testing.T) {
 		{false, "triggered"},
 		{true, "recovered"},
 	} {
-		record := core.MonitorRecord{ID: "record-" + string(rune('1'+index)), MonitorID: monitor.ID, StartedAt: now.Add(time.Duration(index) * time.Minute), FinishedAt: now.Add(time.Duration(index)*time.Minute + time.Second), Success: item.success, DurationMS: int64(index + 1), ResultSchemaVersion: "1", Result: map[string]any{"body": "response-" + string(rune('1'+index))}, ResultHash: "hash-" + string(rune('1'+index)), ConditionState: "false", EventType: item.event, NotificationResult: map[string]any{}, ErrorMessage: ""}
+		record := core.MonitorRecord{ID: "record-" + string(rune('1'+index)), MonitorID: monitor.ID, StartedAt: now.Add(time.Duration(index) * time.Minute), FinishedAt: now.Add(time.Duration(index)*time.Minute + time.Second), Success: item.success, DurationMS: int64(index + 1), ResultSchemaVersion: "1", Result: map[string]any{"body": "response-" + string(rune('1'+index))}, ResultHash: "hash-" + string(rune('1'+index)), ConditionState: "false", EventType: item.event, NotificationEvents: []core.RecordNotificationEvent{}, ErrorMessage: ""}
 		if err := database.AddRecord(ctx, record); err != nil {
 			t.Fatal(err)
 		}
@@ -105,6 +105,14 @@ func TestListRecordsPageFiltersAndPaginates(t *testing.T) {
 	}
 	if failed.Total != 1 || failed.Items[0].EventType != "triggered" {
 		t.Fatalf("unexpected failed records: %+v", failed)
+	}
+	trendEvents := []core.RecordNotificationEvent{{ID: "trend-event", Source: "status_trend", EventType: "trend_triggered", Deliveries: map[string]core.NotificationDelivery{}}}
+	if err := database.UpdateRecordNotificationEvents(ctx, "record-1", trendEvents); err != nil {
+		t.Fatal(err)
+	}
+	trends, err := database.ListRecordsPage(ctx, monitor.ID, RecordListOptions{PageSize: 20, EventType: "trend_triggered"})
+	if err != nil || trends.Total != 1 || trends.Items[0].ID != "record-1" {
+		t.Fatalf("unexpected trend records: %+v err=%v", trends, err)
 	}
 
 	search, err := database.ListRecordsPage(ctx, monitor.ID, RecordListOptions{PageSize: 20, Search: "response-3"})

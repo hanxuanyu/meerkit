@@ -1,4 +1,4 @@
-const staticPaths = { overview: "/", monitors: "/monitors", inbox: "/notifications", notifications: "/notification-channels", plugins: "/plugins", settings: "/settings" };
+const staticPaths = { overview: "/", monitors: "/monitors", statusBoard: "/status-board", inbox: "/notifications", notifications: "/notification-channels", plugins: "/plugins", settings: "/settings" };
 
 function decodePathPart(value) {
   try { return decodeURIComponent(value); } catch { return value; }

@@ -5,29 +5,31 @@ import { Badge } from "../../components/ui/Badge";
 
 const builtInChannelID = "builtin-inapp";
 
-export function NotificationDeliveryResults({ result = {}, eventType = "none", channels = [], expandedTextKey = "", onToggleText = () => {} }) {
-  const deliveries = Object.entries(result || {});
-  if (!deliveries.length) {
-    const notified = eventType === "triggered" || eventType === "recovered";
-    return <div className="notification-delivery-empty"><CircleDashed size={17} /><div><strong>{notified ? "暂无投递结果" : "本次执行无需发送通知"}</strong><span>{notified ? "通知可能仍在发送，刷新执行记录后可查看最新状态。" : "只有触发或恢复事件才会执行通知渠道。"}</span></div></div>;
-  }
-
+export function NotificationDeliveryResults({ events = [], channels = [], expandedTextKey = "", onToggleText = () => {} }) {
+  if (!events.length) return <div className="notification-delivery-empty"><CircleDashed size={17} /><div><strong>本次执行无需发送通知</strong><span>没有条件或趋势规则产生触发、恢复事件。</span></div></div>;
   const channelMap = new Map(channels.map((channel) => [channel.id, channel]));
-  return <div className="notification-delivery-list">{deliveries.map(([channelID, raw]) => {
-    const channel = channelMap.get(channelID);
+  return <div className="notification-event-list">{events.map((event) => {
+    const deliveries = Object.entries(event.deliveries || {});
+    return <section className="notification-event-group" key={event.id}><header><div><strong>{event.source === "status_trend" ? event.status_item_name || "状态趋势" : "监控条件"}</strong><span>{notificationEventLabel(event.event_type)}{event.trend_rule_name ? ` · ${event.trend_rule_name}` : ""}</span></div><Badge tone={event.event_type.includes("recovered") ? "success" : "warning"}>{notificationEventLabel(event.event_type)}</Badge></header><p>{event.summary}</p>{deliveries.length ? <div className="notification-delivery-list">{deliveries.map(([channelID, raw]) => {
+		const channel = channelMap.get(channelID);
     const delivery = normalizeDelivery(raw);
     const status = deliveryStatus(delivery.status);
     const channelType = channel?.notifier_type || (channelID === builtInChannelID ? "inapp" : "");
     const ChannelIcon = channelIcon(channelType);
     const StatusIcon = status.icon;
     const channelName = channel?.name || (channelID === builtInChannelID ? "站内通知" : channelID);
-    return <div className="notification-delivery-row" key={channelID}>
+		return <div className="notification-delivery-row" key={`${event.id}:${channelID}`}>
       <span className="notification-delivery-icon"><ChannelIcon size={16} /></span>
       <div className="notification-delivery-main"><strong>{channelName}</strong><span>{channelType ? channelType.toUpperCase() : "未知渠道"} · {channelID}</span></div>
       <div className="notification-delivery-status"><Badge tone={status.tone}><StatusIcon size={11} />{status.label}</Badge>{delivery.attempts > 0 && <span>尝试 {delivery.attempts} 次</span>}</div>
-      {delivery.message && <CollapsibleText className="notification-delivery-message" label="投递信息" value={deliveryMessage(delivery.message)} expanded={expandedTextKey === `delivery:${channelID}`} onToggle={() => onToggleText(`delivery:${channelID}`)} />}
-    </div>;
+			{delivery.message && <CollapsibleText className="notification-delivery-message" label="投递信息" value={deliveryMessage(delivery.message)} expanded={expandedTextKey === `delivery:${event.id}:${channelID}`} onToggle={() => onToggleText(`delivery:${event.id}:${channelID}`)} />}
+		</div>;
+	})}</div> : <div className="notification-delivery-empty compact"><MinusCircle size={15} /><div><strong>未选择通知渠道</strong><span>事件已记录，但没有需要投递的渠道。</span></div></div>}</section>;
   })}</div>;
+}
+
+function notificationEventLabel(type) {
+  return ({ triggered: "条件触发", recovered: "条件恢复", trend_triggered: "趋势触发", trend_recovered: "趋势恢复" })[type] || type;
 }
 
 function normalizeDelivery(value) {

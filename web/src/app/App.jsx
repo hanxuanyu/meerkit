@@ -13,6 +13,7 @@ import { MonitorsPage } from "../pages/MonitorsPage";
 import { NotificationsPage } from "../pages/NotificationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { StatusBoardPage } from "../pages/StatusBoardPage";
 import { PluginsPage } from "../pages/PluginsPage";
 import { AppOverlays } from "./AppOverlays";
 import { pathForRoute, routeFromPath } from "./routes";
@@ -272,6 +273,8 @@ export function App() {
     ? <OverviewPage monitors={monitors} modules={modules} channels={channels} recentNotifications={recentNotifications} unreadCount={unreadCount} loading={loading} onCreate={openCreateMonitor} onOpenMonitor={openRecords} onOpenMonitors={() => navigate("monitors")} onOpenInbox={() => navigate("inbox")} onOpenNotification={openNotification} />
     : activePage === "monitors"
       ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
+      : activePage === "statusBoard"
+        ? <StatusBoardPage monitors={monitors} channels={channels} refreshVersion={refreshVersion} onOpenExecution={openExecution} notify={notify} />
       : activePage === "inbox"
         ? <NotificationCenterPage refreshVersion={inboxVersion} initialNotificationID={routeNotificationID} onNotificationRouteChange={changeNotificationRoute} onOpenExecution={openExecution} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onNotificationsDeleted={handleNotificationsDeleted} unreadCount={unreadCount} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />
         : activePage === "notifications"

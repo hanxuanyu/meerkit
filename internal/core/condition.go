@@ -28,6 +28,7 @@ func NormalizeNotificationPolicy(policy string) string {
 }
 
 type ConditionRule struct {
+	ID          string `json:"id"`
 	Field       string `json:"field"`
 	Source      string `json:"source,omitempty"`
 	Path        string `json:"path,omitempty"`
@@ -39,6 +40,7 @@ type ConditionRule struct {
 }
 
 type RuleResult struct {
+	ID          string `json:"id"`
 	Field       string `json:"field"`
 	Source      string `json:"source,omitempty"`
 	Path        string `json:"path,omitempty"`
@@ -102,7 +104,7 @@ func evaluateRule(rule ConditionRule, current, previous map[string]any) RuleResu
 	source := normalizeSource(rule.Source)
 	field := normalizeField(rule.Field)
 	valueSource := normalizeValueSource(rule.ValueSource)
-	result := RuleResult{Field: field, Source: source, Path: rule.Path, Operator: rule.Operator, ValueSource: valueSource, ValueField: normalizeField(rule.ValueField)}
+	result := RuleResult{ID: rule.ID, Field: field, Source: source, Path: rule.Path, Operator: rule.Operator, ValueSource: valueSource, ValueField: normalizeField(rule.ValueField)}
 	value, ok := lookupSourceValue(source, current, previous, field, rule.Path)
 	if ok {
 		result.Actual = value
@@ -346,6 +348,11 @@ func lookupValue(root map[string]any, field, path string) (any, bool) {
 	return value, true
 }
 
+// LookupResultValue resolves a declared result field and optional object path.
+func LookupResultValue(root map[string]any, field, path string) (any, bool) {
+	return lookupValue(root, normalizeField(field), path)
+}
+
 func valuesEqual(left, right any) bool {
 	if leftNumber, err := numberValue(left); err == nil {
 		if rightNumber, rightErr := numberValue(right); rightErr == nil {
@@ -373,6 +380,8 @@ func numberValue(value any) (float64, error) {
 		return 0, fmt.Errorf("%T is not numeric", value)
 	}
 }
+
+func NumberValue(value any) (float64, error) { return numberValue(value) }
 
 func boolState(value bool) string {
 	if value {

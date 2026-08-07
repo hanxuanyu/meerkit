@@ -24,6 +24,7 @@ import (
 	pluginruntime "meerkit/internal/plugin"
 	runtimeapp "meerkit/internal/runtime"
 	"meerkit/internal/runtimeconfig"
+	"meerkit/internal/statusboard"
 	"meerkit/internal/store"
 )
 
@@ -40,7 +41,10 @@ type APIServer struct {
 	auth         *auth.Service
 	runtime      *runtimeconfig.Manager
 	loginLimiter *loginLimiter
+	statusBoard  *statusboard.Service
 }
+
+func (a *APIServer) SetStatusBoard(service *statusboard.Service) { a.statusBoard = service }
 
 func NewAPIServer(store *store.Store, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
 	var runtimeManager *runtimeconfig.Manager
@@ -135,6 +139,13 @@ func (a *APIServer) Router() http.Handler {
 		a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "records", c.Param("record_id")})
 	})
 	api.GET("/monitors/:id/next-runs", func(c *gin.Context) { a.handleMonitors(c.Writer, c.Request, []string{c.Param("id"), "next-runs"}) })
+	api.GET("/status-board", a.getStatusBoard)
+	api.GET("/status-board/sources", a.getStatusBoardSources)
+	api.POST("/status-board/items", a.createStatusBoardItem)
+	api.GET("/status-board/items/:id", a.getStatusBoardItem)
+	api.PATCH("/status-board/items/:id", a.updateStatusBoardItem)
+	api.DELETE("/status-board/items/:id", a.deleteStatusBoardItem)
+	api.GET("/status-board/ws", a.handleStatusBoardStream)
 
 	router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
@@ -571,6 +582,10 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 				if a.logger != nil {
 					a.logger.Info("monitor records deleted", "monitor_id", id, "deleted", deleted)
 				}
+				if a.statusBoard != nil {
+					_ = a.store.ResetStatusBoardRuntimeByMonitor(r.Context(), id, time.Now().UTC())
+					a.statusBoard.Publish(statusboard.StreamEvent{Type: "records_cleared", MonitorID: id})
+				}
 				writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 				return
 			}
@@ -644,6 +659,9 @@ func (a *APIServer) handleMonitors(w http.ResponseWriter, r *http.Request, parts
 		}
 		if a.logger != nil {
 			a.logger.Info("monitor deleted", "monitor_id", id, "monitor_name", monitor.Name, "module_type", monitor.ModuleType)
+		}
+		if a.statusBoard != nil {
+			a.statusBoard.Publish(statusboard.StreamEvent{Type: "monitor_deleted", MonitorID: id})
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -807,6 +825,7 @@ func (a *APIServer) createMonitor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_condition_config", "notification_policy must be once or every")
 		return
 	}
+	conditionConfig = normalizedConditionConfig(conditions)
 	enabled := true
 	if payload.Enabled != nil {
 		enabled = *payload.Enabled
@@ -874,7 +893,7 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 			writeError(w, http.StatusBadRequest, "invalid_condition_config", "notification_policy must be once or every")
 			return
 		}
-		current.ConditionConfig = payload.ConditionConfig
+		current.ConditionConfig = normalizedConditionConfig(conditions)
 	}
 	if payload.NotificationChannelIDs != nil {
 		current.NotificationChannelIDs = payload.NotificationChannelIDs
@@ -902,6 +921,16 @@ func (a *APIServer) updateMonitor(w http.ResponseWriter, r *http.Request, curren
 		a.logger.Info("monitor updated", "monitor_id", current.ID, "monitor_name", current.Name, "module_type", current.ModuleType, "schedules", current.Schedules, "enabled", current.Enabled)
 	}
 	writeJSON(w, http.StatusOK, current)
+}
+
+func normalizedConditionConfig(config core.ConditionConfig) json.RawMessage {
+	for index := range config.Rules {
+		if config.Rules[index].ID == "" {
+			config.Rules[index].ID = core.NewID()
+		}
+	}
+	data, _ := json.Marshal(config)
+	return data
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, target any) error {

@@ -14,8 +14,11 @@ type CleanupWorker struct {
 	config                func() app.RuntimeConfig
 	logger                *slog.Logger
 	onNotificationsPruned func(int)
+	onRecordsPruned       func(int)
 	changes               <-chan struct{}
 }
+
+func (w *CleanupWorker) SetRecordsPruned(callback func(int)) { w.onRecordsPruned = callback }
 
 func NewCleanupWorker(database *store.Store, config func() app.RuntimeConfig, logger *slog.Logger, onNotificationsPruned func(int), changes ...<-chan struct{}) *CleanupWorker {
 	var changeChannel <-chan struct{}
@@ -80,6 +83,9 @@ func (w *CleanupWorker) run(ctx context.Context, now time.Time) {
 		}
 	} else if w.logger != nil {
 		w.logger.Info("monitor records pruned", "deleted", recordsDeleted, "before", recordBefore)
+	}
+	if recordsDeleted > 0 && w.onRecordsPruned != nil {
+		w.onRecordsPruned(int(recordsDeleted))
 	}
 
 	notificationBefore := now.Add(-notificationRetention)

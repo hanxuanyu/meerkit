@@ -71,6 +71,17 @@ func TestMonitorListPageAddsNextRun(t *testing.T) {
 	}
 }
 
+func TestNormalizedConditionConfigAssignsStableRuleIDs(t *testing.T) {
+	raw := normalizedConditionConfig(core.ConditionConfig{Logic: "ALL", Rules: []core.ConditionRule{{Field: "summary.success", Operator: "is_true"}, {ID: "existing", Field: "summary.duration_ms", Operator: "gt", Value: 100}}})
+	var config core.ConditionConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Rules[0].ID == "" || config.Rules[1].ID != "existing" || config.Rules[0].ID == config.Rules[1].ID {
+		t.Fatalf("unexpected rule IDs: %#v", config.Rules)
+	}
+}
+
 func TestUpdateMonitorCanDisableUnavailableModule(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenStore(t.TempDir())

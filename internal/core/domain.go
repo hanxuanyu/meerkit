@@ -140,6 +140,8 @@ type NotifierDescriptor struct {
 }
 
 type NotificationEvent struct {
+	ID              string         `json:"id,omitempty"`
+	Source          string         `json:"source,omitempty"`
 	EventType       string         `json:"event_type"`
 	MonitorID       string         `json:"monitor_id"`
 	RecordID        string         `json:"record_id"`
@@ -151,6 +153,29 @@ type NotificationEvent struct {
 	PreviousResult  map[string]any `json:"previous_result,omitempty"`
 	CurrentResult   map[string]any `json:"current_result,omitempty"`
 	ConditionDetail []RuleResult   `json:"condition_detail,omitempty"`
+	StatusItemID    string         `json:"status_item_id,omitempty"`
+	StatusItemName  string         `json:"status_item_name,omitempty"`
+	TrendRuleID     string         `json:"trend_rule_id,omitempty"`
+	TrendRuleName   string         `json:"trend_rule_name,omitempty"`
+	TrendDetail     map[string]any `json:"trend_detail,omitempty"`
+}
+
+type NotificationDelivery struct {
+	Status   string `json:"status"`
+	Attempts int    `json:"attempts,omitempty"`
+	Message  string `json:"message,omitempty"`
+}
+
+type RecordNotificationEvent struct {
+	ID             string                          `json:"id"`
+	Source         string                          `json:"source"`
+	EventType      string                          `json:"event_type"`
+	StatusItemID   string                          `json:"status_item_id,omitempty"`
+	StatusItemName string                          `json:"status_item_name,omitempty"`
+	TrendRuleID    string                          `json:"trend_rule_id,omitempty"`
+	TrendRuleName  string                          `json:"trend_rule_name,omitempty"`
+	Summary        string                          `json:"summary"`
+	Deliveries     map[string]NotificationDelivery `json:"deliveries"`
 }
 
 const BuiltInNotificationChannelID = "builtin-inapp"
@@ -191,22 +216,22 @@ type Monitor struct {
 }
 
 type MonitorRecord struct {
-	ID                  string         `json:"id"`
-	MonitorID           string         `json:"monitor_id"`
-	ModuleType          string         `json:"module_type"`
-	ModuleVersion       string         `json:"module_version"`
-	StartedAt           time.Time      `json:"started_at"`
-	FinishedAt          time.Time      `json:"finished_at"`
-	Success             bool           `json:"success"`
-	DurationMS          int64          `json:"duration_ms"`
-	ResultSchemaVersion string         `json:"result_schema_version"`
-	Result              map[string]any `json:"result"`
-	ResultHash          string         `json:"result_hash"`
-	ConditionState      string         `json:"condition_state"`
-	EventType           string         `json:"event_type"`
-	NotificationResult  map[string]any `json:"notification_result,omitempty"`
-	ErrorCode           string         `json:"error_code,omitempty"`
-	ErrorMessage        string         `json:"error_message,omitempty"`
+	ID                  string                    `json:"id"`
+	MonitorID           string                    `json:"monitor_id"`
+	ModuleType          string                    `json:"module_type"`
+	ModuleVersion       string                    `json:"module_version"`
+	StartedAt           time.Time                 `json:"started_at"`
+	FinishedAt          time.Time                 `json:"finished_at"`
+	Success             bool                      `json:"success"`
+	DurationMS          int64                     `json:"duration_ms"`
+	ResultSchemaVersion string                    `json:"result_schema_version"`
+	Result              map[string]any            `json:"result"`
+	ResultHash          string                    `json:"result_hash"`
+	ConditionState      string                    `json:"condition_state"`
+	EventType           string                    `json:"event_type"`
+	NotificationEvents  []RecordNotificationEvent `json:"notification_events"`
+	ErrorCode           string                    `json:"error_code,omitempty"`
+	ErrorMessage        string                    `json:"error_message,omitempty"`
 }
 
 type NotificationChannel struct {

@@ -19,13 +19,20 @@ type Context struct {
 	Event    map[string]any
 	Result   map[string]any
 	Previous map[string]any
+	Status   map[string]any
+	Trend    map[string]any
 }
 
 func NewContext(event core.NotificationEvent) Context {
 	return Context{
 		Monitor: map[string]any{"id": event.MonitorID, "name": event.MonitorName, "module_type": event.ModuleType},
-		Event:   map[string]any{"type": event.EventType, "event_type": event.EventType, "record_id": event.RecordID, "detail_path": detailPath(event), "condition_state": event.ConditionState, "summary": event.Summary, "triggered_at": event.TriggeredAt.Format(time.RFC3339)},
-		Result:  event.CurrentResult, Previous: event.PreviousResult,
+		Event: map[string]any{
+			"id": event.ID, "source": event.Source, "type": event.EventType, "event_type": event.EventType, "record_id": event.RecordID,
+			"detail_path": detailPath(event), "condition_state": event.ConditionState, "summary": event.Summary, "triggered_at": event.TriggeredAt.Format(time.RFC3339),
+		},
+		Result: event.CurrentResult, Previous: event.PreviousResult,
+		Status: map[string]any{"item_id": event.StatusItemID, "item_name": event.StatusItemName},
+		Trend:  map[string]any{"rule_id": event.TrendRuleID, "rule_name": event.TrendRuleName, "detail": event.TrendDetail},
 	}
 }
 
@@ -140,6 +147,10 @@ func Lookup(key string, context Context) (any, bool) {
 		value = context.Result
 	case "previous":
 		value = context.Previous
+	case "status":
+		value = context.Status
+	case "trend":
+		value = context.Trend
 	default:
 		return nil, false
 	}
