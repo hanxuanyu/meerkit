@@ -12,7 +12,7 @@ export const SelectTrigger = React.forwardRef(function SelectTrigger({ className
 });
 
 export const SelectContent = React.forwardRef(function SelectContent({ className, children, position = "popper", ...props }, ref) {
-  return <SelectPrimitive.Portal><SelectPrimitive.Content ref={ref} className={cn("relative z-50 max-h-96 min-w-32 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md", position === "popper" && "translate-y-1", className)} position={position} {...props}><SelectScrollUpButton /><SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport><SelectScrollDownButton /></SelectPrimitive.Content></SelectPrimitive.Portal>;
+  return <SelectPrimitive.Portal><SelectPrimitive.Content ref={ref} className={cn("relative z-50 max-h-96 min-w-32 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md outline-none", position === "popper" && "translate-y-1", className)} position={position} {...props}><SelectScrollUpButton /><SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport><SelectScrollDownButton /></SelectPrimitive.Content></SelectPrimitive.Portal>;
 });
 
 export function SelectLabel({ children, className }) { return <SelectPrimitive.Label className={cn("px-2 py-1.5 text-sm font-semibold", className)}>{children}</SelectPrimitive.Label>; }

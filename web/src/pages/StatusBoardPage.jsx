@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Activity, ChevronDown, Copy, Edit3, Plus, RadioTower, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { duplicateStatusBoardDraft } from "../lib/duplicates";
@@ -10,6 +10,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { DeleteConfirmDialog } from "../components/ui/DeleteConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
+import { IconButton } from "../components/ui/IconButton";
 import { StatusBoardDialog } from "../features/statusboard/StatusBoardDialog";
 
 const levelLabels = { success: "正常", warning: "警告", failure: "失败", unknown: "未知" };
@@ -92,13 +93,16 @@ export function StatusBoardPage({ monitors, channels, refreshVersion = 0, onOpen
 
 function StatusBoardGroup({ group, onEdit, onDuplicate, onDelete, onOpenExecution }) {
   const [expanded, setExpanded] = useState(true);
-  return <details className="status-board-group" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-    <summary className="status-group-header">
-      <div><span className="status-group-icon"><Activity size={15} /></span><span><strong>{group.monitor.name}</strong><small>{group.monitor.module_type} · {group.items.length} 个看板项</small></span></div>
-      <span className="status-group-controls"><Badge tone={group.monitor.enabled ? "success" : "muted"}>{group.monitor.enabled ? "监控中" : "已停用"}</Badge><ChevronDown className="status-group-chevron" size={16} /></span>
-    </summary>
-    <div className="status-item-list">{group.items.map((item) => <StatusItemRow key={item.id} item={item} monitor={group.monitor} onEdit={() => onEdit(item)} onDuplicate={() => onDuplicate(item)} onDelete={() => onDelete(item)} onOpenExecution={onOpenExecution} />)}</div>
-  </details>;
+  const contentID = useId();
+  return <section className="status-board-group" data-state={expanded ? "open" : "closed"}>
+    <header className="status-group-header">
+      <div className="status-group-identity"><span className="status-group-icon"><Activity size={15} /></span><span><strong>{group.monitor.name}</strong><small>{group.monitor.module_type} · {group.items.length} 个看板项</small></span></div>
+      <div className="status-group-controls"><Badge tone={group.monitor.enabled ? "success" : "muted"}>{group.monitor.enabled ? "监控中" : "已停用"}</Badge><IconButton className="status-group-trigger" size="sm" title={expanded ? "收起分组" : "展开分组"} aria-label={`${expanded ? "收起" : "展开"}${group.monitor.name}`} aria-controls={contentID} aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}><ChevronDown className="status-group-chevron" size={16} /></IconButton></div>
+    </header>
+    <div id={contentID} className="status-group-content" aria-hidden={!expanded} inert={expanded ? undefined : ""}>
+      <div className="status-group-content-inner"><div className="status-item-list">{group.items.map((item) => <StatusItemRow key={item.id} item={item} monitor={group.monitor} onEdit={() => onEdit(item)} onDuplicate={() => onDuplicate(item)} onDelete={() => onDelete(item)} onOpenExecution={onOpenExecution} />)}</div></div>
+    </div>
+  </section>;
 }
 
 function StatusItemRow({ item, monitor, onEdit, onDuplicate, onDelete, onOpenExecution }) {
