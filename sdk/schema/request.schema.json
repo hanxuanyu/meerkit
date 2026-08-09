@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hanxuanyu/meerkit/sdk/schema/request.schema.json",
+  "title": "Meerkit plugin request",
+  "description": "JSON payload carried in google.protobuf.BytesValue. Method-specific required fields are defined in sdk/PROTOCOL.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "module_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "from_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "to_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config": true
+  }
+}

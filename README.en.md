@@ -77,6 +77,8 @@ Retention and cleanup periods, scheduler settings, session TTL, host and plugin 
 
 Plugin archives can be uploaded from the management page, imported with `meerkit plugin import`, or copied to `${data_dir}/plugins/inbox`. Only `.zip` and `.tar.gz` packages are accepted; raw executables are never discovered or executed.
 
+Official plugins use the Go SDK and packager. Third-party plugins may use another language by implementing the stable gRPC + JSON wire contract. See [`sdk/PROTOCOL.en.md`](sdk/PROTOCOL.en.md) for the canonical proto, JSON Schemas, artifact runtime metadata, and general conformance checker.
+
 ### Generate the official signing key
 
 Official plugins are signed with an Ed25519 key. Run the following command from the repository root; its argument is the output path prefix:
@@ -130,6 +132,8 @@ make package-release \
 The default output directories are `dist/plugins` and `dist/releases`; override them with `PLUGIN_OUTPUT` and `RELEASE_OUTPUT`. `TARGETS` defaults to the current platform. Omitting both `SIGN_KEY` and `KEY_ID` creates unsigned packages; when signing, both variables are required. The Make targets still delegate the actual work to `scripts/package-plugins.sh` and `scripts/package.sh`, so the scripts remain available directly for finer-grained options.
 
 Inside each generated release archive, official plugins are stored in the `plugins/` directory next to the host executable. On the first start with an empty data directory, the host scans that directory, verifies and enables the packages, and records their signing fingerprint as an official publisher. Later versions or plugins signed by the same key are verified automatically when imported manually. Official status is established by this first-run release bootstrap; the public key does not also need to be added to `plugins.trusted_keys`. A plugin manifest cannot declare itself official, so importing a separately generated signed package into an installation that has not bootstrapped official trust still requires the user to verify and confirm its public-key fingerprint like any third-party signed package.
+
+Release archives also contain the standalone `meerkit-plugincheck` (`.exe` on Windows). It checks an already-built third-party artifact for protocol conformance; it does not build or package third-party language source code.
 
 ### Run plugin sources in development
 

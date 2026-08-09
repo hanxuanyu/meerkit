@@ -16,11 +16,18 @@ type ProtocolRange struct {
 	Max int `json:"max" yaml:"max"`
 }
 type Artifact struct {
-	GOOS   string `json:"goos" yaml:"goos"`
-	GOARCH string `json:"goarch" yaml:"goarch"`
-	Path   string `json:"path" yaml:"path"`
-	Size   int64  `json:"size" yaml:"size"`
-	SHA256 string `json:"sha256" yaml:"sha256"`
+	GOOS    string           `json:"goos" yaml:"goos"`
+	GOARCH  string           `json:"goarch" yaml:"goarch"`
+	Path    string           `json:"path" yaml:"path"`
+	Size    int64            `json:"size" yaml:"size"`
+	SHA256  string           `json:"sha256" yaml:"sha256"`
+	Runtime *ArtifactRuntime `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+}
+
+type ArtifactRuntime struct {
+	Mode    string   `json:"mode" yaml:"mode"`
+	Command string   `json:"command,omitempty" yaml:"command,omitempty"`
+	Args    []string `json:"args,omitempty" yaml:"args,omitempty"`
 }
 type Manifest struct {
 	SchemaVersion int                 `json:"schema_version" yaml:"schema_version"`
@@ -39,6 +46,7 @@ var identityPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 var artifactTargetPattern = regexp.MustCompile(`^[a-z0-9]+$`)
 var artifactHashPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+var runtimeCommandPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 
 func (m Manifest) Validate(protocolVersion int) error {
 	if m.SchemaVersion != 1 {
@@ -109,7 +117,70 @@ func (a Artifact) Validate() error {
 	if a.Size < 1 || !artifactHashPattern.MatchString(a.SHA256) {
 		return fmt.Errorf("artifact %s has invalid size or SHA-256", a.Path)
 	}
+	if a.Runtime != nil {
+		if err := a.Runtime.Validate(); err != nil {
+			return fmt.Errorf("artifact %s runtime: %w", a.Path, err)
+		}
+	}
 	return nil
+}
+
+func (r ArtifactRuntime) Validate() error {
+	switch r.Mode {
+	case "direct":
+		if r.Command != "" {
+			return fmt.Errorf("direct mode cannot declare command")
+		}
+		if err := validateRuntimeArgs(r.Args); err != nil {
+			return err
+		}
+		for _, argument := range r.Args {
+			if argument == "{artifact}" {
+				return fmt.Errorf("direct mode args cannot contain {artifact}")
+			}
+		}
+	case "interpreter":
+		if !runtimeCommandPattern.MatchString(r.Command) {
+			return fmt.Errorf("interpreter command %q must be a command name resolved from PATH", r.Command)
+		}
+		if len(r.Args) == 0 {
+			return fmt.Errorf("interpreter args must not be empty")
+		}
+		if err := validateRuntimeArgs(r.Args); err != nil {
+			return err
+		}
+		artifactArguments := 0
+		for _, argument := range r.Args {
+			if argument == "{artifact}" {
+				artifactArguments++
+			}
+		}
+		if artifactArguments != 1 {
+			return fmt.Errorf("interpreter args must contain {artifact} exactly once as a standalone argument")
+		}
+	default:
+		return fmt.Errorf("mode must be direct or interpreter")
+	}
+	return nil
+}
+
+func validateRuntimeArgs(arguments []string) error {
+	if len(arguments) > 32 {
+		return fmt.Errorf("runtime args cannot contain more than 32 entries")
+	}
+	for _, argument := range arguments {
+		if argument == "" || len(argument) > 4096 || strings.ContainsRune(argument, '\x00') {
+			return fmt.Errorf("runtime args contain an invalid entry")
+		}
+	}
+	return nil
+}
+
+func (a Artifact) RuntimeConfig() ArtifactRuntime {
+	if a.Runtime == nil {
+		return ArtifactRuntime{Mode: "direct"}
+	}
+	return *a.Runtime
 }
 
 func (m Manifest) CurrentArtifact() (Artifact, error) {

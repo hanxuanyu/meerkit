@@ -77,6 +77,8 @@ storage:
 
 插件包可通过管理页面上传、`meerkit plugin import` 导入，或复制到 `${data_dir}/plugins/inbox` 自动发现。仅支持 `.zip` 和 `.tar.gz`，不会发现或执行裸二进制文件。
 
+官方插件使用 Go SDK 开发和打包；第三方插件可以使用其他语言实现稳定的 gRPC + JSON 线协议。规范 proto、JSON Schema、制品运行配置和通用一致性测试工具见 [`sdk/PROTOCOL.md`](sdk/PROTOCOL.md)。
+
 ### 生成官方签名密钥
 
 官方插件使用 Ed25519 密钥签名。以下命令必须在仓库根目录执行，参数是输出文件的路径前缀：
@@ -130,6 +132,8 @@ make package-release \
 默认输出目录分别为 `dist/plugins` 和 `dist/releases`，可通过 `PLUGIN_OUTPUT` 和 `RELEASE_OUTPUT` 覆盖。`TARGETS` 默认为当前平台；不设置 `SIGN_KEY` 和 `KEY_ID` 时会生成未签名包，这两个变量用于签名时必须同时设置。Make 目标仍由 `scripts/package-plugins.sh` 和 `scripts/package.sh` 执行实际打包，因此也可以直接调用脚本处理更细粒度的参数。
 
 生成的发布压缩包中，官方插件位于宿主可执行文件同级的 `plugins/` 目录。使用空数据目录首次启动时，宿主会扫描该目录、验证签名、启用插件，并将其公钥指纹登记为官方发布者；之后手工导入由同一密钥签名的新版本或其他插件时会自动验证。官方状态来自这次随发行包进行的首次引导，不需要把公钥另外写入 `plugins.trusted_keys`。插件清单中不存在可自行声明的“官方”字段，因此将单独生成的签名包导入尚未建立官方信任的环境时，仍需要像第三方签名包一样核对并确认公钥指纹。
+
+发布压缩包还包含独立的 `meerkit-plugincheck`（Windows 为 `.exe`），用于对已经构建好的第三方插件制品执行协议一致性检查；它不负责构建或打包第三方语言源码。
 
 ### 开发模式直接运行插件源码
 

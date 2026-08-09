@@ -18,6 +18,7 @@ my-plugin/
 ├── go.mod
 ├── go.sum
 ├── main.go
+├── conformance.json
 ├── meerkit-plugin.yaml
 ├── README.md
 ├── README.en.md
@@ -48,6 +49,8 @@ The source manifest must conform to `plugins/manifest.schema.json`. Important fi
 - `protocol.min/max`: supported Meerkit plugin protocol range.
 - `modules`: module types and versions provided by the plugin.
 - `artifacts`: empty in source; the packager writes platform, path, size, and SHA-256 values.
+
+A packaged artifact may include an optional `runtime`. Official Go plugins omit it and execute directly. Third-party single-file scripts, zipapps, or JARs may use interpreter mode. Runtime settings belong to each platform artifact; see `sdk/PROTOCOL.en.md` for constraints.
 
 Package `version`, module `version`, `config_version`, and `result_schema_version` have different roles:
 
@@ -134,6 +137,15 @@ go test ./...
 ```
 
 At minimum, cover descriptor declarations, valid and invalid configuration, successful execution, timeout and cancellation, external failures, serializable results, and prevention of sensitive log output.
+
+After building an artifact, use the included `conformance.json` structure for a black-box wire-protocol check:
+
+```sh
+go run ./cmd/plugincheck \
+  --manifest ./plugins/my-plugin/meerkit-plugin.yaml \
+  --artifact ./build/plugin \
+  --suite ./plugins/my-plugin/conformance.json
+```
 
 ## Packaging
 

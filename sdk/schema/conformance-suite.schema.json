@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hanxuanyu/meerkit/sdk/schema/conformance-suite.schema.json",
+  "title": "Meerkit plugin conformance suite",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cases"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "module_type", "config"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config": true,
+        "expect_validation_error": {
+          "type": "boolean"
+        },
+        "execute": {
+          "$ref": "#/$defs/execute"
+        },
+        "migration": {
+          "$ref": "#/$defs/migration"
+        }
+      }
+    },
+    "execute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expect_error": {
+          "type": "boolean"
+        },
+        "success": {
+          "type": "boolean"
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_version", "to_version"],
+      "properties": {
+        "from_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expect_error": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

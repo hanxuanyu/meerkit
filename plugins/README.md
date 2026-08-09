@@ -1,6 +1,6 @@
 # Meerkit 监控插件
 
-每个插件都是独立 Go 模块，通过公共 SDK 和 HashiCorp go-plugin gRPC 通道与 Meerkit 通信。Meerkit 仅导入 `.zip` 和 `.tar.gz` 插件包，将裸二进制放入运行目录不会触发加载。
+每个插件都是独立子进程，通过 HashiCorp go-plugin gRPC 通道与 Meerkit 通信。官方内置插件使用公共 Go SDK；第三方插件可以使用其他语言实现 [`sdk/PROTOCOL.md`](../sdk/PROTOCOL.md) 定义的线协议。Meerkit 仅导入 `.zip` 和 `.tar.gz` 插件包，将裸制品放入运行目录不会触发加载。
 
 `plugins/` 目录只存放插件清单协议定义、官方插件和示例插件。插件打包与签名工具位于项目根目录的 `cmd/pluginpack`，由 `scripts/package-plugins.sh` 或 `scripts/package-plugins.ps1` 调用。
 
@@ -11,6 +11,16 @@
 3. 使用 `scripts/package-plugins.sh --plugin` 构建压缩包。工具会交叉编译制品，并自动写入平台、大小和 SHA-256。
 4. 正式发布时使用长期保管的 Ed25519 私钥签名；开发期可以生成独立测试密钥。
 5. 用户首次导入该公钥签名的插件时核对指纹并信任发布者，之后相同公钥签名的其他插件会自动验证。
+
+第三方语言实现不需要使用 Go 打包器，但必须生成符合 `manifest.schema.json` 的清单和带哈希的平台制品。解释型单文件制品可在对应 artifact 上声明 `runtime.mode: interpreter`、解释器命令和包含一个 `{artifact}` 的参数数组；宿主从 `PATH` 查找解释器并直接执行 argv，不经过 shell。解释器及其版本由部署环境提供。
+
+发布前应使用通用黑盒工具验证协议：
+
+```sh
+go run ./cmd/plugincheck --manifest ./meerkit-plugin.yaml --artifact ./build/plugin --suite ./conformance.json
+```
+
+规范 proto、JSON Schema、错误语义和测试套件格式见 [`sdk/PROTOCOL.md`](../sdk/PROTOCOL.md)。
 
 ## 信任模型
 

@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package meerkit.sdk;
+
+option go_package = "github.com/hanxuanyu/meerkit/sdk/proto;monitorpb";
+
+import "google/protobuf/wrappers.proto";
+
+// Monitor is the stable Meerkit monitor plugin protocol. BytesValue contains
+// UTF-8 JSON documented by the schemas in sdk/schema.
+service Monitor {
+  rpc ListModules(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc ValidateConfig(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc Execute(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc MigrateConfig(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc Health(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+}

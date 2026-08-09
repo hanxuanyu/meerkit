@@ -1,0 +1,17 @@
+{
+  "$schema": "../../sdk/schema/conformance-suite.schema.json",
+  "cases": [
+    {
+      "name": "example succeeds",
+      "module_type": "example",
+      "config": {},
+      "execute": {
+        "success": true
+      },
+      "migration": {
+        "from_version": "1",
+        "to_version": "1"
+      }
+    }
+  ]
+}

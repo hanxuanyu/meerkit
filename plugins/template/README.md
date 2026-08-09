@@ -18,6 +18,7 @@ my-plugin/
 ├── go.mod
 ├── go.sum
 ├── main.go
+├── conformance.json
 ├── meerkit-plugin.yaml
 ├── README.md
 ├── README.en.md
@@ -48,6 +49,8 @@ func main() {
 - `protocol.min/max`：支持的 Meerkit 插件协议范围。
 - `modules`：插件提供的模块类型及版本。
 - `artifacts`：源码中保持空数组，由打包工具写入平台、路径、大小和 SHA-256。
+
+打包后的 artifact 可以带可选 `runtime`。官方 Go 插件省略该字段并直接执行；第三方单文件脚本、zipapp 或 JAR 可以使用 `interpreter` 模式。该配置按平台附着在 artifact 上，具体约束见 `sdk/PROTOCOL.md`。
 
 `version`、模块 `version`、`config_version` 和 `result_schema_version` 含义不同：
 
@@ -134,6 +137,15 @@ go test ./...
 ```
 
 建议至少覆盖描述器声明、合法和非法配置、成功执行、超时与取消、外部错误、结果可序列化以及日志不泄漏敏感数据。
+
+构建出可执行制品后，使用模板自带的 `conformance.json` 结构进行线协议黑盒测试：
+
+```sh
+go run ./cmd/plugincheck \
+  --manifest ./plugins/my-plugin/meerkit-plugin.yaml \
+  --artifact ./build/plugin \
+  --suite ./plugins/my-plugin/conformance.json
+```
 
 ## 打包发布
 

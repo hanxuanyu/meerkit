@@ -1,6 +1,6 @@
 # Meerkit monitor plugins
 
-Each plugin is an independent Go module and communicates with Meerkit through the public SDK and HashiCorp go-plugin gRPC transport. Meerkit imports only `.zip` and `.tar.gz` packages; copying a raw executable into the runtime directory never loads it.
+Each plugin is an independent child process communicating with Meerkit over HashiCorp go-plugin gRPC. Bundled official plugins use the public Go SDK; third-party plugins may use any language that implements [`sdk/PROTOCOL.en.md`](../sdk/PROTOCOL.en.md). Meerkit imports only `.zip` and `.tar.gz` packages; copying a raw artifact into the runtime directory never loads it.
 
 The `plugins/` directory contains only the plugin manifest protocol definition, official plugins, and example plugins. The packaging and signing tool lives at `cmd/pluginpack` in the repository root and is invoked by `scripts/package-plugins.sh` or `scripts/package-plugins.ps1`.
 
@@ -11,6 +11,16 @@ The `plugins/` directory contains only the plugin manifest protocol definition, 
 3. Build an archive with `scripts/package-plugins.sh --plugin`. The tool cross-compiles artifacts and writes their platform, size, and SHA-256 automatically.
 4. Sign production releases with a long-lived Ed25519 private key. Use a separate test key during development.
 5. Users verify and trust the public-key fingerprint on first import. Later plugins signed by the same key are verified automatically.
+
+Non-Go third-party implementations do not need the Go packager, but must produce a manifest accepted by `manifest.schema.json` and hashed artifacts for each platform. An interpreted single-file artifact may declare `runtime.mode: interpreter`, a command resolved from host `PATH`, and an argv list containing one `{artifact}` entry. Meerkit never invokes a shell; the interpreter and compatible version are deployment prerequisites.
+
+Verify the finished artifact with the language-neutral black-box checker:
+
+```sh
+go run ./cmd/plugincheck --manifest ./meerkit-plugin.yaml --artifact ./build/plugin --suite ./conformance.json
+```
+
+See [`sdk/PROTOCOL.en.md`](../sdk/PROTOCOL.en.md) for the canonical proto, JSON Schemas, error semantics, and suite format.
 
 ## Trust model
 

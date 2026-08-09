@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hanxuanyu/meerkit/sdk/schema/observation.schema.json",
+  "title": "Meerkit observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["success", "schema_version", "result", "summary"],
+  "properties": {
+    "success": {
+      "type": "boolean"
+    },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "object"
+    },
+    "result_sets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "error_code": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "string"
+    }
+  }
+}

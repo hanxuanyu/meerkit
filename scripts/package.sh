@@ -20,8 +20,11 @@ for target in $targets; do
   release_dir="$stage/meerkit-$version-$goos-$goarch"
   mkdir -p "$release_dir/plugins"
   binary="meerkit"
+  plugincheck_binary="meerkit-plugincheck"
   [ "$goos" = "windows" ] && binary="meerkit.exe"
+  [ "$goos" = "windows" ] && plugincheck_binary="meerkit-plugincheck.exe"
   GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$release_dir/$binary" .
+  GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$release_dir/$plugincheck_binary" ./cmd/plugincheck
   scripts/package-plugins.sh "$release_dir/plugins" "$goos/$goarch"
   cp README.md README.en.md config.example.yaml "$release_dir/"
   if [ "$goos" = "windows" ]; then

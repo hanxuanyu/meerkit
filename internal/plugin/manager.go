@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 	"go.yaml.in/yaml/v3"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/store"
@@ -313,7 +314,11 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 	if err != nil {
 		return m.markFailure(ctx, installation, err)
 	}
-	command := exec.Command(installation.BinaryPath)
+	command, err := commandForInstallation(installation)
+	if err != nil {
+		_ = logFile.Close()
+		return m.markFailure(ctx, installation, err)
+	}
 	command.Env = append(os.Environ(),
 		"MEERKIT_PLUGIN_ID="+installation.ID,
 		"MEERKIT_PLUGIN_NAME="+installation.Name,
@@ -330,6 +335,21 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 	}
 	if m.logger != nil {
 		m.logger.Info("plugin process connected", "plugin_id", id, "version", installation.Version)
+	}
+	grpcClient, ok := rpcClient.(*hplugin.GRPCClient)
+	if !ok {
+		cleanupCandidate()
+		return m.markFailure(ctx, installation, fmt.Errorf("plugin negotiated an incompatible RPC protocol"))
+	}
+	standardHealthCtx, standardHealthCancel := context.WithTimeout(ctx, 5*time.Second)
+	standardHealth, err := grpc_health_v1.NewHealthClient(grpcClient.Conn).Check(standardHealthCtx, &grpc_health_v1.HealthCheckRequest{Service: hplugin.GRPCServiceName})
+	standardHealthCancel()
+	if err != nil || standardHealth.Status != grpc_health_v1.HealthCheckResponse_SERVING {
+		cleanupCandidate()
+		if err != nil {
+			return m.markFailure(ctx, installation, fmt.Errorf("standard gRPC health check: %w", err))
+		}
+		return m.markFailure(ctx, installation, fmt.Errorf("standard gRPC health status is %s, want SERVING", standardHealth.Status))
 	}
 	dispensed, err := rpcClient.Dispense("monitor")
 	if err != nil {

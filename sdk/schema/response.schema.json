@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hanxuanyu/meerkit/sdk/schema/response.schema.json",
+  "title": "Meerkit plugin response",
+  "description": "JSON payload carried in google.protobuf.BytesValue. A response with error must not be treated as a successful application result.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "module-descriptor.schema.json"
+      }
+    },
+    "observation": {
+      "$ref": "observation.schema.json"
+    },
+    "config": true,
+    "error": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
