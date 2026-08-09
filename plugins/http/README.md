@@ -1,108 +1,71 @@
-# Meerkit HTTP 监控插件
+# Meerkit HTTP 插件
 
-通过 Meerkit 公共插件 SDK 提供 `http` 监控模块，用于请求 HTTP/HTTPS 服务、采集结构化响应，并基于状态码、耗时、正文或 JSON 字段建立触发条件。
+[English](README.en.md) · [插件总览](../README.md)
 
-## 主要能力
+官方 `meerkit.http` 插件提供 `http` 监控模块，用于发送 HTTP/HTTPS 请求并把响应状态、耗时、响应头、正文和内容哈希作为结构化结果返回。
 
-- 支持 `GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS`、`TRACE` 和 `CONNECT`。
-- 支持查询参数、自定义请求头、HTTP/HTTPS 代理和可配置超时。
-- 支持 URL 编码表单、Multipart 表单、Raw JSON 和 Raw 文本请求体。
-- 支持重定向次数限制、TLS 证书校验和最大响应体限制。
-- 可自动识别 JSON 响应，也可以强制按文本或 JSON 处理。
-- 生成响应正文 SHA-256，适合只关注内容变化而不保存完整比较值的场景。
-- JSON 结果支持使用 `data.status` 形式的路径选择嵌套字段。
+## 当前能力
 
-模块类型为 `http`，模块版本为 `2`，配置版本和结果结构版本均为 `1`。
+- 方法：`GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS`、`TRACE`、`CONNECT`。
+- 查询参数和请求头。
+- URL 编码表单、Multipart 表单、Raw JSON 与 Raw 文本请求体。
+- 可选 HTTP/HTTPS 代理。
+- 可配置请求超时、最大响应体、重定向开关和最大重定向次数。
+- 默认校验 TLS 证书，也可在监控配置中关闭校验。
+- 响应按 `auto`、`text` 或 `json` 解析，并可保留原文、去除首尾空白或规范化 JSON。
+- 为文本与 JSON 内容生成稳定哈希，记录正文是否因大小上限被截断。
 
 ## 配置参数
 
-### 请求目标
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `url` | 必填 | `http://` 或 `https://` 请求地址 |
+| `method` | `GET` | 请求方法 |
+| `timeout_seconds` | `30` | 1 到 300 秒 |
+| `proxy_url` | 空 | 可选 HTTP/HTTPS 代理 |
+| `response_mode` | `auto` | 自动、文本或 JSON |
+| `normalize` | `trim` | 原文、去除首尾空白或规范化 JSON |
+| `max_body_bytes` | `1048576` | 1 KiB 到 1 MiB |
+| `query` | 空 | 查询参数映射 |
+| `headers` | 空 | 请求头映射 |
+| `body_mode` | `none` | 无、URL 编码表单、Multipart、Raw JSON 或 Raw 文本 |
+| `follow_redirects` | `true` | 是否跟随 3xx |
+| `verify_tls` | `true` | 是否校验服务端证书 |
+| `max_redirects` | `10` | 1 到 50，仅跟随重定向时生效 |
 
-- `url`：必填，完整的 `http://` 或 `https://` URL。监控项列表使用该值作为内容摘要。
-- `method`：请求方法，默认 `GET`。
-- `timeout_seconds`：整个请求的超时时间，默认 `30` 秒，范围 `1-300`。
-- `proxy_url`：可选 HTTP/HTTPS 代理地址，例如 `http://127.0.0.1:7890`。
+请求体相关字段会根据方法和 `body_mode` 动态显示。Raw JSON 在执行前必须是合法 JSON。
 
-### 查询参数与请求头
+## 结果
 
-- `query`：键值形式的查询参数。一个键需要多个值时，可以在界面中输入多个值。
-- `headers`：按原样发送的请求头，可用于 `Accept`、`Authorization`、`Cookie` 等字段。
+结果集键为 `response`：
 
-URL 中原有的查询参数会被保留，再与 `query` 中配置的参数合并。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `success` | boolean | 请求和响应读取是否成功 |
+| `status_code` | string | HTTP 状态码，如 `200` |
+| `duration_ms` | number | 请求耗时 |
+| `response_headers` | map | 响应头 |
+| `body_text` | text | 文本响应 |
+| `body_json` | json | 解析后的 JSON，支持路径选择 |
+| `body_hash` | string | 规范化内容的哈希 |
+| `body_size` | number | 已读取响应字节数 |
+| `truncated` | boolean | 是否达到最大响应体限制 |
 
-### 请求体
+模块只负责观察响应，不会把非 2xx 状态自动视为执行错误。需要告警时，请在 Meerkit 条件编辑器中对 `status_code`、正文、耗时或其他字段配置规则。
 
-只有 `POST`、`PUT`、`PATCH`、`DELETE` 和 `OPTIONS` 会显示请求体配置。
+## 开发
 
-- `body_mode`：`none`、`form_urlencoded`、`multipart_form`、`raw_json` 或 `raw_text`，默认 `none`。
-- `form_fields`：表单模式下发送的字段。
-- `json_body`：Raw JSON 模式下发送的 JSON 值，保存前会校验语法。
-- `raw_body`：Raw 文本模式下发送的原始内容。
-
-插件会为表单和 Raw 请求体自动设置合适的 `Content-Type`；显式配置的请求头优先。
-
-### 响应处理
-
-- `response_mode`：默认 `auto`。`auto` 根据响应 `Content-Type` 判断是否解析 JSON；`text` 只保留文本；`json` 尝试解析 JSON。
-- `normalize`：正文哈希和文本结果的规范化方式。`raw` 保留原文，`trim` 去除首尾空白，`json` 将合法 JSON 规范化后再计算结果。
-- `max_body_bytes`：最多读取并保存的响应体大小，默认 `262144` 字节，范围 `1024-1048576`。超出后设置 `truncated=true`。
-- `follow_redirects`：是否跟随 3xx 响应，默认启用。
-- `max_redirects`：最大重定向次数，默认 `10`，范围 `1-50`。
-- `verify_tls`：是否验证 HTTPS 服务端证书，默认启用。关闭会降低连接安全性，只应在明确了解风险时使用。
-
-## 返回结果
-
-结果集 `response` 表示本次 HTTP 响应，包含：
-
-- `success`：请求是否完成。该字段表示网络请求和响应读取是否成功，不代表状态码一定是 2xx。
-- `status_code`：HTTP 状态码字符串，例如 `"200"`。
-- `duration_ms`：请求耗时，单位毫秒。
-- `response_headers`：响应头的键值集合。
-- `body_text`：按 `normalize` 处理后的响应文本。
-- `body_json`：解析成功后的 JSON 值；未解析或解析失败时不存在。
-- `body_hash`：规范化正文的 SHA-256。
-- `body_size`：实际保留的响应字节数。
-- `truncated`：响应是否因 `max_body_bytes` 限制而截断。
-
-Meerkit 还会为所有插件结果补充公共执行摘要结果集。插件详情弹窗中显示的是插件声明的输入参数和结果字段，执行详情则显示本次真实采集值。
-
-## 条件示例
-
-- 服务可用：`当前结果 · HTTP 响应 · 状态码 等于 200`。
-- 延迟告警：`当前结果 · HTTP 响应 · 响应耗时 大于 1000`。
-- JSON 业务状态：选择 `响应 JSON`，路径填写 `data.status`，再与固定值比较。
-- 内容变化：`上次执行 · HTTP 响应 · 内容哈希 不等于 当前`。
-- 正文匹配：使用 `包含`、`不包含` 或正则表达式比较 `响应文本`。
-
-## 执行日志与隐私
-
-插件会记录请求开始、请求失败、响应读取失败和响应处理完成，并包含方法、去除查询参数后的目标地址、状态码、耗时、响应大小、截断状态和内容哈希。日志不会记录请求头、请求体、查询参数值或响应正文。
-
-日志由宿主配置：
-
-插件日志保存在 `${storage.data_dir}/plugins/logs`，也可以在插件管理页面实时查看。
-
-## 开发与测试
-
-在仓库根目录执行：
-
-```sh
-go run .
-```
-
-`dev` 宿主会自动构建并加载 `plugins/http` 源码，构建产物只写入根目录的 `data/plugins`。修改插件后重新启动即可验证，无需先打包和导入。
-
-单独运行插件测试：
-
-```sh
+```bash
 cd plugins/http
 go test ./...
+
+# 从仓库根目录启动开发宿主，自动构建并加载本插件
+cd ../..
+go run . serve
 ```
 
-生成当前平台的可导入插件包：
+源码清单为 [`meerkit-plugin.yaml`](meerkit-plugin.yaml)，实现位于 [`monitor/http.go`](monitor/http.go)。打包命令见 [`scripts/README.md`](../../scripts/README.md)。
 
-```sh
-scripts/package-plugins.sh --plugin ./plugins/http
-```
+## 许可证
 
-发布签名、跨平台目标和信任模型参见上级目录的 `plugins/README.md`。
+本插件随 Meerkit 以 [Apache License 2.0](../../LICENSE) 开源。

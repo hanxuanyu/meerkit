@@ -1,0 +1,51 @@
+:root {
+  --vp-c-brand-1: #137a67;
+  --vp-c-brand-2: #0f6656;
+  --vp-c-brand-3: #0c5146;
+  --vp-c-brand-soft: rgba(19, 122, 103, 0.14);
+  --vp-c-tip-1: #137a67;
+  --vp-c-tip-2: #0f6656;
+  --vp-c-tip-3: #0c5146;
+  --vp-c-tip-soft: rgba(19, 122, 103, 0.14);
+  --vp-c-warning-1: #a45d0a;
+  --vp-c-danger-1: #b9383e;
+  --vp-button-brand-bg: #137a67;
+  --vp-button-brand-hover-bg: #0f6656;
+  --vp-button-brand-active-bg: #0c5146;
+  --vp-home-hero-name-color: #137a67;
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
+}
+
+.dark {
+  --vp-c-brand-1: #5bc6ad;
+  --vp-c-brand-2: #42aa92;
+  --vp-c-brand-3: #31907b;
+  --vp-c-brand-soft: rgba(91, 198, 173, 0.16);
+  --vp-home-hero-name-color: #5bc6ad;
+}
+
+.VPHomeHero .image-bg {
+  display: none;
+}
+
+.VPHomeHero .image-src {
+  max-width: 280px;
+  max-height: 280px;
+}
+
+.VPFeature {
+  border-radius: 8px !important;
+}
+
+.vp-doc table {
+  width: 100%;
+  display: table;
+}
+
+@media (max-width: 640px) {
+  .VPHomeHero .image-src {
+    max-width: 190px;
+    max-height: 190px;
+  }
+}

@@ -5,6 +5,7 @@ GO ?= go
 NPM ?= npm
 
 WEB_DIR ?= web
+DOCS_DIR ?= docs
 PLUGIN_OUTPUT ?= dist/plugins
 RELEASE_OUTPUT ?= dist/releases
 TARGETS ?= $(shell $(GO) env GOOS)/$(shell $(GO) env GOARCH)
@@ -17,6 +18,7 @@ BACKEND_ARGS ?=
 FRONTEND_ARGS ?=
 
 .PHONY: help deps dev dev-backend dev-frontend frontend-build prepare-frontend-assets \
+	docs-dev docs-build docs-preview \
 	package-plugins package-plugin package-release plugins release generate-key keygen clean reset
 
 help:
@@ -28,6 +30,9 @@ help:
 		'  make dev-backend        Start only the Go backend' \
 		'  make dev-frontend       Start only the Vite frontend' \
 		'  make frontend-build     Build frontend production assets' \
+		'  make docs-dev           Start the VitePress documentation site' \
+		'  make docs-build         Build the documentation site' \
+		'  make docs-preview       Preview the built documentation site' \
 		'  make package-plugins    Package all publishable plugins' \
 		'  make package-plugin     Package PLUGIN=<plugin directory>' \
 		'  make package-release    Build complete production archives' \
@@ -43,6 +48,7 @@ help:
 deps:
 	$(GO) mod download
 	$(NPM) --prefix $(WEB_DIR) ci
+	$(NPM) --prefix $(DOCS_DIR) ci
 
 prepare-frontend-assets:
 	@if [ ! -f "$(WEB_DIR)/dist/index.html" ]; then \
@@ -87,6 +93,15 @@ dev-frontend:
 frontend-build:
 	$(NPM) --prefix $(WEB_DIR) run build
 
+docs-dev:
+	$(NPM) --prefix $(DOCS_DIR) run dev
+
+docs-build:
+	$(NPM) --prefix $(DOCS_DIR) run build
+
+docs-preview:
+	$(NPM) --prefix $(DOCS_DIR) run preview
+
 package-plugins:
 	@MEERKIT_PLUGIN_SIGN_KEY="$(SIGN_KEY)" \
 		MEERKIT_PLUGIN_KEY_ID="$(KEY_ID)" \
@@ -117,7 +132,7 @@ generate-key:
 	./scripts/package-plugins.sh --generate-key "$(KEY_PREFIX)"
 
 clean:
-	rm -rf ./dist ./web/dist ./.gocache
+	rm -rf ./dist ./web/dist ./docs/.vitepress/.temp ./docs/.vitepress/cache ./docs/.vitepress/dist ./.gocache
 	rm -f ./meerkit ./meerkit.exe
 
 reset: clean

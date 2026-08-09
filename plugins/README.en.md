@@ -1,64 +1,70 @@
 # Meerkit monitor plugins
 
-Each plugin is an independent child process communicating with Meerkit over HashiCorp go-plugin gRPC. Bundled official plugins use the public Go SDK; third-party plugins may use any language that implements [`sdk/PROTOCOL.en.md`](../sdk/PROTOCOL.en.md). Meerkit imports only `.zip` and `.tar.gz` packages; copying a raw artifact into the runtime directory never loads it.
+[中文](README.md) · [Plugin development](../docs/development/plugin-go.md) · [Language-neutral protocol](../sdk/PROTOCOL.en.md)
 
-The `plugins/` directory contains only the plugin manifest protocol definition, official plugins, and example plugins. The packaging and signing tool lives at `cmd/pluginpack` in the repository root and is invoked by `scripts/package-plugins.sh` or `scripts/package-plugins.ps1`.
+This directory contains the official monitor plugins and a source template. A monitor plugin describes configuration and results, validates configuration, executes probes, and migrates stored configuration. Scheduling, condition evaluation, persistence, and notification delivery remain host responsibilities.
 
-## Plugin development workflow
+## Contents
 
-1. Create an independent Go module from `plugins/template`, implement the SDK `Module` interface, and add contract tests. During repository development, `go run .` builds and runs every source plugin under `plugins` except `template`.
-2. Fill in a unique ID, semantic version, vendor, `desp`, source or release `url`, protocol range, and module versions in `meerkit-plugin.yaml`.
-3. Build an archive with `scripts/package-plugins.sh --plugin`. The tool cross-compiles artifacts and writes their platform, size, and SHA-256 automatically.
-4. Sign production releases with a long-lived Ed25519 private key. Use a separate test key during development.
-5. Users verify and trust the public-key fingerprint on first import. Later plugins signed by the same key are verified automatically.
+| Directory | Module type | Current capability |
+| --- | --- | --- |
+| [`http`](http/README.en.md) | `http` | HTTP/HTTPS requests, proxies, request bodies, redirects, TLS, and text/JSON response parsing |
+| [`tcp`](tcp/README.en.md) | `tcp` | TCP connections, optional writes, one response read, text and Base64 payloads |
+| [`template`](template/README.en.md) | `example` | Minimal Go implementation and a conformance suite |
 
-Non-Go third-party implementations do not need the Go packager, but must produce a manifest accepted by `manifest.schema.json` and hashed artifacts for each platform. An interpreted single-file artifact may declare `runtime.mode: interpreter`, a command resolved from host `PATH`, and an argv list containing one `{artifact}` entry. Meerkit never invokes a shell; the interpreter and compatible version are deployment prerequisites.
+Each plugin is an independent Go module. A development host scans manifests below `plugins.source_dir`, skips `template`, builds the plugin, and runs it from `${storage.data_dir}/plugins/development`. A release host runs installed packages only.
 
-Verify the finished artifact with the language-neutral black-box checker:
+## Lifecycle
 
-```sh
-go run ./cmd/plugincheck --manifest ./meerkit-plugin.yaml --artifact ./build/plugin --suite ./conformance.json
+1. The host validates `meerkit-plugin.yaml` and selects exactly one artifact for the current `GOOS/GOARCH`.
+2. It verifies the artifact size and SHA-256, then verifies `meerkit-plugin.sig` when present.
+3. Enablement enforces the publisher state: official, trusted, untrusted, or unsigned.
+4. The host starts the child process according to `artifacts[].runtime` and completes the go-plugin handshake plus two health checks.
+5. The plugin returns module descriptors, which must agree with manifest types and versions.
+6. The host migrates saved monitor configuration and atomically replaces the modules owned by that plugin.
+
+Only one version of a plugin ID can be active. Disabling a plugin stops its process and removes its modules. Existing monitors remain stored but cannot execute until a compatible module is active again.
+
+## Package format
+
+Meerkit imports `.zip` and `.tar.gz` archives only. It never discovers a raw executable. A package root contains:
+
+```text
+meerkit-plugin.yaml
+meerkit-plugin.sig       # optional Ed25519 signature envelope
+README.md                # optional, shown in plugin details
+README.en.md             # optional
+LICENSE                  # recommended
+bin/<goos>-<goarch>/...  # artifact declared by the manifest
 ```
 
-See [`sdk/PROTOCOL.en.md`](../sdk/PROTOCOL.en.md) for the canonical proto, JSON Schemas, error semantics, and suite format.
+The manifest Schema is [`manifest.schema.json`](manifest.schema.json). A source manifest may use `artifacts: []`; the repository packager fills platform, path, size, and SHA-256 for Go plugins. Other languages build and assemble their own artifacts against the same manifest and wire contracts.
 
 ## Trust model
 
-- Official releases: the release pipeline signs bundled HTTP, TCP, and other official plugins with one stable official key. On a fresh data directory, bundled official plugins bootstrap local official trust, so later manually imported packages signed by that key are trusted without a public key service or configuration changes.
-- Third-party releases: signed packages carry the public key. Meerkit verifies the manifest signature independently, then displays the key ID and SHA-256 public-key fingerprint. A user's confirmation is persisted in the local database.
-- Self-hosting: unsigned packages remain usable when nothing is distributed externally. They require explicit risk confirmation when enabled and cannot prove publisher identity.
-- Preconfigured trust: unattended deployments may configure Base64 Ed25519 public keys under `plugins.trusted_keys`. This is optional for normal interactive imports.
+- Official plugins bootstrapped from a Meerkit release establish `official` trust.
+- A signed plugin from an unknown publisher cannot be enabled until the user verifies and confirms its public-key SHA-256 fingerprint.
+- Later packages signed by the same public key are recognized as trusted.
+- An unsigned package requires an explicit risk confirmation before enablement.
+- `plugins.trusted_keys` can preconfigure Base64 Ed25519 public keys.
 
-A signature proves only that the package came from the private-key holder and was not modified. It does not prove that plugin code is safe. Verify a third-party fingerprint through an independent source or release page before trusting it.
+The signature binds the manifest, artifact hashes recorded by that manifest, and packaged README and LICENSE files. Signature verification identifies the publisher; it does not sandbox the process.
 
-## Packaging
+## Development and testing
 
-Examples for the current platform, multiple platforms, and a combined archive:
+```bash
+(cd plugins/http && go test ./...)
+(cd plugins/tcp && go test ./...)
+(cd plugins/template && go test ./...)
 
-```sh
-scripts/package-plugins.sh --plugin ./plugins/http
-scripts/package-plugins.sh --plugin ./plugins/http --targets linux/amd64,linux/arm64,windows/amd64,darwin/arm64
-scripts/package-plugins.sh --plugin ./plugins/http --targets linux/amd64,windows/amd64 --combined
+# Let the development host build and run HTTP/TCP sources
+go run . serve
 ```
 
-Generate an Ed25519 key pair. The private key is only for package signing and must not be included in a plugin package or committed to the repository:
+Start a Go plugin from [`template`](template/README.en.md). A non-Go implementation should follow [`sdk/PROTOCOL.en.md`](../sdk/PROTOCOL.en.md), [`monitor.proto`](../sdk/proto/monitor.proto), and [`sdk/schema`](../sdk/schema/) without depending on Go interfaces.
 
-```sh
-scripts/package-plugins.sh --generate-key ./keys/meerkit-release
-```
+See [Packaging and releases](../docs/development/releasing.md) and [`scripts/README.en.md`](../scripts/README.en.md) for build and signing commands.
 
-Package the plugin with a stable key ID and private key:
+## License
 
-```sh
-scripts/package-plugins.sh \
-  --plugin ./plugins/http \
-  --targets current \
-  --sign-key ./keys/meerkit-release.private.key \
-  --key-id meerkit-release-2026
-```
-
-Copy packages to `${data_dir}/plugins/inbox` or import them from the management page. Signatures cover the manifest, artifact hashes declared by the manifest, and README/license documents. Unknown keys are marked as pending trust; confirmed, preconfigured, or officially bootstrapped keys are verified automatically. Different content with an existing plugin ID and version is rejected until the old version is uninstalled or the manifest version is incremented.
-
-Source development mode is exempt from that last package rule: a `dev` host replaces same-ID, same-version development binaries on every startup. Build the host with a release version when validating the real package import and signature workflow.
-
-Set `MEERKIT_PLUGIN_SIGN_KEY` and `MEERKIT_PLUGIN_KEY_ID` when running `scripts/package.sh` for an official full release so every bundled plugin uses the same release key. Losing or replacing the key requires existing users to confirm a new fingerprint, so back up the private key and plan key rotations deliberately. Plugin processes have the same OS permissions as Meerkit and are not a security sandbox.
+Official plugins in this repository are licensed with Meerkit under the [Apache License 2.0](../LICENSE). Third-party plugins may use another license and should include it as `LICENSE` in their package.

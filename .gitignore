@@ -10,3 +10,7 @@ config.yaml
 /.gocache/
 /dist/
 /keys/
+/docs/node_modules/
+/docs/.vitepress/.temp/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/

@@ -1,0 +1,79 @@
+# 前端开发
+
+管理界面位于 `web/`，使用 React 18、Vite、Tailwind CSS 4、Radix UI 基础组件和 Lucide 图标。它是单页应用，生产构建由 Go `embed` 编入宿主二进制。
+
+## 启动与构建
+
+```bash
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+Vite 固定在 `5173`，把 `/api`、`/healthz` 和 WebSocket 代理到 `127.0.0.1:8080`。另一个终端运行：
+
+```bash
+go run . serve
+```
+
+生产构建：
+
+```bash
+npm --prefix web run build
+```
+
+输出为 `web/dist`。修改前端后，直接 `go run .` 不会自动重建已存在的 `web/dist`；嵌入式界面测试前应重新执行构建。
+
+## 页面结构
+
+| 路由 | 页面 |
+| --- | --- |
+| `/` | 总览 |
+| `/monitors` | 监控列表 |
+| `/monitors/:id/records/:record?` | 监控记录与深链接 |
+| `/status-board` | 状态看板 |
+| `/notifications/:id?` | 站内通知中心 |
+| `/notification-channels` | 通知渠道 |
+| `/plugins` | 插件管理 |
+| `/logs` | 系统与插件日志 |
+| `/settings` | 启动与运行时配置、管理员密钥 |
+
+后端对非 `/api/` 路径回退到嵌入式 `index.html`，因此刷新深链接仍能加载 SPA。
+
+## 数据访问
+
+所有请求经过 `src/lib/api.js`，自动携带同源 Cookie，并在写请求中附加当前 CSRF Token。收到未授权响应时，应用回到登录流程。
+
+实时数据分两类：
+
+- WebSocket：站内通知、状态看板。
+- HTTP 流：系统日志、插件日志。
+
+新增实时页面时应同时实现初始快照、增量事件和断线重建，不能只依赖内存事件。
+
+## 动态模块表单
+
+监控和通知表单不是为 HTTP/TCP 硬编码的。`DynamicFields` 根据后端描述器渲染参数：类型、默认值、范围、选项、显隐和启用条件均来自插件或通知器。
+
+结果展示、条件编辑和状态看板同样读取 `ResultSets`。新增字段类型时要同步检查：
+
+- `lib/parameterSchema.js`
+- `lib/resultSchema.js`
+- `components/forms/`
+- `components/results/`
+- 状态看板字段类型推断
+
+## 样式与交互
+
+共享基础组件放在 `src/components/ui`，业务组合放在 `features`，页面容器放在 `pages`。保持键盘访问、`aria-label`、工具提示、加载/空/错误状态和移动端布局。
+
+应用支持浅色与深色主题。新增颜色时同时检查两种主题，不要让状态只依赖颜色表达；状态看板仍需保留标签和等级文本。
+
+## 验证
+
+当前 `web/package.json` 没有自动化测试脚本。前端变更至少执行：
+
+```bash
+npm --prefix web run build
+```
+
+然后在开发服务器中手动验证登录、目标页面、移动宽度、深色主题、错误状态和受影响的实时连接。涉及 API 结构时补后端 `httptest`，避免前后端契约只靠人工观察。

@@ -1,64 +1,71 @@
 # Meerkit 监控插件
 
-每个插件都是独立子进程，通过 HashiCorp go-plugin gRPC 通道与 Meerkit 通信。官方内置插件使用公共 Go SDK；第三方插件可以使用其他语言实现 [`sdk/PROTOCOL.md`](../sdk/PROTOCOL.md) 定义的线协议。Meerkit 仅导入 `.zip` 和 `.tar.gz` 插件包，将裸制品放入运行目录不会触发加载。
+[English](README.en.md) · [插件开发文档](../docs/development/plugin-go.md) · [跨语言协议](../sdk/PROTOCOL.md)
 
-`plugins/` 目录只存放插件清单协议定义、官方插件和示例插件。插件打包与签名工具位于项目根目录的 `cmd/pluginpack`，由 `scripts/package-plugins.sh` 或 `scripts/package-plugins.ps1` 调用。
+此目录包含官方监控插件与源码模板。监控插件负责描述配置和结果、校验配置、执行探测以及迁移配置；调度、条件计算、结果持久化和通知仍由宿主负责。
 
-## 插件开发流程
+## 目录内容
 
-1. 从 `plugins/template` 创建独立 Go 模块，实现 SDK `Module` 接口及契约测试。仓库内开发时可直接执行 `go run .`，宿主会构建并运行 `plugins` 下除 `template` 外的源码插件。
-2. 在 `meerkit-plugin.yaml` 中填写唯一 ID、语义化版本、开发者、`desp` 功能描述、`url` 源码或发布地址、协议范围及模块版本。
-3. 使用 `scripts/package-plugins.sh --plugin` 构建压缩包。工具会交叉编译制品，并自动写入平台、大小和 SHA-256。
-4. 正式发布时使用长期保管的 Ed25519 私钥签名；开发期可以生成独立测试密钥。
-5. 用户首次导入该公钥签名的插件时核对指纹并信任发布者，之后相同公钥签名的其他插件会自动验证。
+| 目录 | 模块类型 | 当前能力 |
+| --- | --- | --- |
+| [`http`](http/README.md) | `http` | HTTP/HTTPS 请求、代理、请求体、重定向、TLS、文本/JSON 响应解析 |
+| [`tcp`](tcp/README.md) | `tcp` | TCP 连接、可选数据发送、单次响应读取、文本与 Base64 数据 |
+| [`template`](template/README.md) | `example` | Go 插件最小实现和一致性测试套件 |
 
-第三方语言实现不需要使用 Go 打包器，但必须生成符合 `manifest.schema.json` 的清单和带哈希的平台制品。解释型单文件制品可在对应 artifact 上声明 `runtime.mode: interpreter`、解释器命令和包含一个 `{artifact}` 的参数数组；宿主从 `PATH` 查找解释器并直接执行 argv，不经过 shell。解释器及其版本由部署环境提供。
+每个插件是独立 Go 模块。宿主开发模式会扫描 `plugins.source_dir` 下的清单，跳过 `template`，构建插件并从 `${storage.data_dir}/plugins/development` 运行。正式版本只运行已安装的插件包。
 
-发布前应使用通用黑盒工具验证协议：
+## 生命周期
 
-```sh
-go run ./cmd/plugincheck --manifest ./meerkit-plugin.yaml --artifact ./build/plugin --suite ./conformance.json
+1. 宿主读取并校验 `meerkit-plugin.yaml`，选择当前 `GOOS/GOARCH` 的唯一制品。
+2. 宿主校验制品大小和 SHA-256，并在有签名时校验 `meerkit-plugin.sig`。
+3. 启用前处理发布者信任：官方、已信任、待信任或未签名。
+4. 宿主按 `artifacts[].runtime` 启动子进程，完成 go-plugin 握手和两级健康检查。
+5. 插件返回模块描述器；宿主核对其与清单的类型和版本是否一致。
+6. 宿主迁移已保存的监控配置，并原子替换该插件拥有的监控模块。
+
+同一插件 ID 同时只启用一个版本。禁用插件会停止进程并移除模块；依赖该模块的监控会保留，但在模块恢复前不能执行。
+
+## 包格式
+
+Meerkit 只导入 `.zip` 或 `.tar.gz`，不会扫描裸可执行文件。包根目录包含：
+
+```text
+meerkit-plugin.yaml
+meerkit-plugin.sig       # 可选 Ed25519 签名信封
+README.md                # 可选，显示在插件详情中
+README.en.md             # 可选
+LICENSE                  # 推荐
+bin/<goos>-<goarch>/...  # 清单声明的制品
 ```
 
-规范 proto、JSON Schema、错误语义和测试套件格式见 [`sdk/PROTOCOL.md`](../sdk/PROTOCOL.md)。
+清单 Schema 位于 [`manifest.schema.json`](manifest.schema.json)。源码清单允许 `artifacts: []`；仓库打包器会为 Go 插件写入平台、路径、大小和 SHA-256。第三方语言自行构建制品和组包，格式必须遵循同一清单和线协议。
 
 ## 信任模型
 
-- 官方发布：正式发布流程使用固定官方私钥签名 HTTP、TCP 等内置插件。空数据目录首次启动时，随应用分发的官方插件会建立本地官方信任，因此后续手工导入的同一公钥签名包自动可信，不需要公共密钥服务或修改配置。
-- 第三方发布：签名包携带公钥。Meerkit 先独立验证清单签名，再显示 key ID 和 SHA-256 公钥指纹；用户确认一次后，信任记录保存在本地数据库。
-- 自行部署：不对外分发时可以继续使用未签名包。未签名包可以导入，但每次启用都需要明确确认风险，也无法证明包的发布者身份。
-- 预置信任：无人值守部署可选择在 `plugins.trusted_keys` 中配置 Base64 Ed25519 公钥。该配置不是普通用户导入插件的必要步骤。
+- 随正式 Meerkit 发布包首次引导的官方插件会建立 `official` 信任。
+- 已签名但发布者未知的插件在导入后不能启用；用户必须核对并确认公钥 SHA-256 指纹。
+- 同一公钥后续签名的插件可自动识别为已信任发布者。
+- 未签名插件只能在明确确认风险后启用。
+- `plugins.trusted_keys` 可以把 Base64 Ed25519 公钥预置为可信发布者。
 
-签名只证明“包由持有该私钥的人发布且内容未被修改”，不表示插件代码安全。首次信任第三方公钥时，应从其独立源码或发布页面核对指纹。
+签名覆盖清单、清单内的制品哈希，以及包中的 README 和 LICENSE。签名证明包由相应私钥持有者生成，不代表插件进程受到隔离。
 
-## 打包
+## 开发与测试
 
-当前平台、多个平台和整合包示例：
+```bash
+# 运行所有独立插件模块测试
+(cd plugins/http && go test ./...)
+(cd plugins/tcp && go test ./...)
+(cd plugins/template && go test ./...)
 
-```sh
-scripts/package-plugins.sh --plugin ./plugins/http
-scripts/package-plugins.sh --plugin ./plugins/http --targets linux/amd64,linux/arm64,windows/amd64,darwin/arm64
-scripts/package-plugins.sh --plugin ./plugins/http --targets linux/amd64,windows/amd64 --combined
+# 让开发宿主自动构建并运行 HTTP/TCP 源码插件
+go run . serve
 ```
 
-生成 Ed25519 密钥对。私钥文件仅用于打包签名，不要放入插件包或提交到仓库：
+新 Go 插件从 [`template`](template/README.md) 开始。第三方语言实现以 [`sdk/PROTOCOL.md`](../sdk/PROTOCOL.md)、[`monitor.proto`](../sdk/proto/monitor.proto) 和 [`sdk/schema`](../sdk/schema/) 为准，不应依赖 Go 接口。
 
-```sh
-scripts/package-plugins.sh --generate-key ./keys/meerkit-release
-```
+打包、签名与发布命令见[插件打包与发布](../docs/development/releasing.md)和 [`scripts/README.md`](../scripts/README.md)。
 
-使用长期稳定的 key ID 和私钥打包：
+## 许可证
 
-```sh
-scripts/package-plugins.sh \
-  --plugin ./plugins/http \
-  --targets current \
-  --sign-key ./keys/meerkit-release.private.key \
-  --key-id meerkit-release-2026
-```
-
-插件包可复制到 `${data_dir}/plugins/inbox`，也可以从管理页面导入。签名覆盖清单、清单中的制品哈希以及 README/许可证文档；未知公钥显示为“待信任”，已确认、预配置或由官方包引导的公钥显示为“已验证”。相同插件 ID 和版本如果已有不同内容，需要先卸载旧版本或提升清单版本。
-
-源码开发模式不受最后一项限制：`dev` 宿主会在每次启动时覆盖同 ID、同版本的开发二进制；带正式版本号构建的宿主则只使用发行包，可用于验证真实导入和签名行为。
-
-官方完整发布包应在执行 `scripts/package.sh` 时设置 `MEERKIT_PLUGIN_SIGN_KEY` 和 `MEERKIT_PLUGIN_KEY_ID`，确保所有内置插件使用同一发布密钥。私钥丢失或更换后，现有用户需要重新确认新指纹，因此应备份私钥并制定密钥轮换发布计划。插件进程与 Meerkit 具有相同 OS 用户权限，不属于安全沙箱。
+仓库内官方插件随 Meerkit 以 [Apache License 2.0](../LICENSE) 开源。第三方插件可以采用自己的许可证，并应在包内携带对应 `LICENSE`。

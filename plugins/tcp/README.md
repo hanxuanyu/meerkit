@@ -1,84 +1,62 @@
-# Meerkit TCP 监控插件
+# Meerkit TCP 插件
 
-通过 Meerkit 公共插件 SDK 提供 `tcp` 监控模块，用于检查 TCP 端口连通性，并可选发送探测数据、读取一次服务端响应以及监控响应变化。
+[English](README.en.md) · [插件总览](../README.md)
 
-## 主要能力
+官方 `meerkit.tcp` 插件提供 `tcp` 监控模块，用于建立 TCP 连接，并可选择发送一段数据和读取一次服务端响应。
 
-- 使用主机和端口建立 TCP 连接，支持 IPv4、IPv6 和域名。
-- 分别配置连接超时和响应读取超时。
-- 可发送普通文本，也可将 Base64 内容解码后发送二进制数据。
-- 可读取一次服务端响应，并同时提供文本、Base64、字节数和 SHA-256。
-- 可基于连接状态、连接耗时、响应文本、响应大小或响应哈希建立条件。
+## 当前能力
 
-模块类型为 `tcp`，模块版本、配置版本和结果结构版本均为 `1`。监控项列表使用 `host:port` 作为内容摘要。
+- 使用主机名或 IP 与端口建立 TCP 连接。
+- 配置 1 到 300 秒的连接超时。
+- 连接后发送 UTF-8 文本，或先把输入按 Base64 解码再发送二进制数据。
+- 可选择只探测连接，或读取一次响应。
+- 单独配置 1 到 60 秒的读取超时和最多 1 MiB 的读取上限。
+- 返回远端地址、连接耗时、响应文本、Base64 二进制、响应哈希和字节数。
+
+此插件不实现 TLS 握手、持续会话、协议级重试或多轮收发。需要 HTTP/TLS 响应语义时应使用 HTTP 插件；需要特定应用协议时应实现独立监控插件。
 
 ## 配置参数
 
-### 连接
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `host` | 必填 | 主机名或 IP |
+| `port` | 必填 | 1 到 65535 |
+| `timeout_seconds` | `10` | 连接超时 |
+| `send` | 空 | 连接后发送的内容；留空时只连接 |
+| `send_base64` | `false` | 将 `send` 按 Base64 解码后发送 |
+| `read_response` | `false` | 发送后读取一次响应 |
+| `read_timeout_seconds` | `3` | 读取超时，仅读取响应时生效 |
+| `max_read_bytes` | `65536` | 最大读取字节数，范围 1 到 1048576 |
 
-- `host`：必填，目标主机名或 IP 地址。IPv6 地址不需要手动添加方括号。
-- `port`：必填，目标端口，范围 `1-65535`。
-- `timeout_seconds`：连接超时，默认 `10` 秒，范围 `1-300`。
+## 结果
 
-### 发送数据
+结果集键为 `connection`：
 
-- `send`：可选。留空时只建立连接；填写后会在连接成功后写入一次。
-- `send_base64`：默认关闭。启用后先将 `send` 按标准 Base64 解码，再把得到的字节写入连接。Base64 无效时本次执行失败。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `success` | boolean | 本次执行是否成功 |
+| `connected` | boolean | TCP 连接是否建立 |
+| `duration_ms` | number | 建立连接所需毫秒数 |
+| `remote_addr` | string | 已连接的远端地址 |
+| `response_text` | text | 响应的文本表示 |
+| `response_bytes` | binary | Base64 编码的原始响应 |
+| `response_hash` | string | 原始响应内容哈希 |
+| `bytes_read` | number | 实际读取字节数 |
 
-### 读取响应
+上述字段可以用于连接失败、耗时、响应内容变化或字节数阈值条件。
 
-- `read_response`：默认关闭。启用后在发送完成后读取一次服务端响应。
-- `read_timeout_seconds`：读取超时，默认 `3` 秒，范围 `1-60`。
-- `max_read_bytes`：单次最多读取的字节数，默认 `65536`，范围 `1-1048576`。
+## 开发
 
-当前实现只执行一次 `Read`，适合端口探活、欢迎语、简单请求响应协议和固定长度探测，不负责持续读取流、协议分帧或多轮交互。
-
-## 返回结果
-
-结果集 `connection` 表示本次 TCP 探测，包含：
-
-- `success`：整个探测流程是否成功。
-- `connected`：是否成功建立 TCP 连接。
-- `duration_ms`：建立连接所需时间，单位毫秒。
-- `remote_addr`：连接实际使用的远端地址。
-- `response_text`：读取到的字节按字符串显示的结果。
-- `response_bytes`：响应的标准 Base64 表示，适合非文本协议。
-- `response_hash`：响应字节的 SHA-256，可用于变化检测。
-- `bytes_read`：本次实际读取的字节数。
-
-未启用 `read_response` 时，响应文本和 Base64 为空，`bytes_read` 为 `0`，响应哈希为空内容的 SHA-256。Meerkit 还会为所有插件结果补充公共执行摘要结果集。
-
-## 条件示例
-
-- 端口可用：`当前结果 · TCP 连接 · 连接成功 为真`。
-- 连接变慢：`当前结果 · TCP 连接 · 连接耗时 大于 500`。
-- 欢迎语校验：启用响应读取后，检查 `响应文本 包含 ready`。
-- 二进制响应变化：比较上次和当前的 `响应哈希`。
-- 响应大小异常：检查 `响应字节数` 是否超出预期范围。
-
-## 执行日志与隐私
-
-插件会记录连接开始、连接结果、写入字节数、读取字节数、响应哈希和失败原因。日志不会记录发送内容或响应内容，避免协议凭据和业务数据泄漏。
-
-日志由宿主配置：
-
-插件日志保存在 `${storage.data_dir}/plugins/logs`，也可以在插件管理页面实时查看。
-
-## 开发与测试
-
-在仓库根目录执行 `go run .` 时，`dev` 宿主会自动构建并加载 `plugins/tcp` 源码，产物只写入根目录的 `data/plugins`。
-
-单独运行插件测试：
-
-```sh
+```bash
 cd plugins/tcp
 go test ./...
+
+cd ../..
+go run . serve
 ```
 
-生成当前平台的可导入插件包：
+源码清单为 [`meerkit-plugin.yaml`](meerkit-plugin.yaml)，实现位于 [`monitor/tcp.go`](monitor/tcp.go)。打包命令见 [`scripts/README.md`](../../scripts/README.md)。
 
-```sh
-scripts/package-plugins.sh --plugin ./plugins/tcp
-```
+## 许可证
 
-发布签名、跨平台目标和信任模型参见上级目录的 `plugins/README.md`。
+本插件随 Meerkit 以 [Apache License 2.0](../../LICENSE) 开源。

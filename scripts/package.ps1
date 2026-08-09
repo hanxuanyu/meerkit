@@ -31,7 +31,7 @@ foreach ($target in $Targets.Split(",")) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & ./scripts/package-plugins.ps1 -Output (Join-Path $releaseDir "plugins") -Targets "$goos/$goarch"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  Copy-Item README.md, README.en.md, config.example.yaml -Destination $releaseDir
+  Copy-Item README.md, README.en.md, LICENSE, config.example.yaml -Destination $releaseDir
   Compress-Archive -Path $releaseDir -DestinationPath (Join-Path $Output "$releaseName.zip") -Force
   Remove-Item -Recurse -Force $stage
 }

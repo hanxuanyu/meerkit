@@ -1,84 +1,62 @@
-# Meerkit TCP monitor plugin
+# Meerkit TCP plugin
 
-Provides the `tcp` module through the public Meerkit plugin SDK. It checks TCP port connectivity and can optionally send probe data, read one server response, and monitor response changes.
+[中文](README.md) · [Plugin overview](../README.en.md)
 
-## Capabilities
+The official `meerkit.tcp` plugin provides the `tcp` monitor module. It establishes a TCP connection and can optionally write one payload and read one server response.
 
-- Connects to a host and port using IPv4, IPv6, or DNS names.
-- Configures connection and response-read timeouts independently.
-- Sends plain text or decodes Base64 before sending binary data.
-- Reads one server response and exposes text, Base64, byte count, and SHA-256 representations.
-- Supports conditions on connectivity, connection latency, response text, response size, and response hash.
+## Current capability
 
-The module type is `tcp`; module, configuration, and result schema versions are all `1`. Monitor lists use `host:port` as the content summary.
+- Connect to a hostname or IP and port.
+- Configure a connection timeout from 1 to 300 seconds.
+- Write UTF-8 text or Base64-decode the configured value before writing binary data.
+- Probe the connection only or read one response.
+- Configure a separate 1 to 60 second read timeout and a read limit up to 1 MiB.
+- Return the remote address, connect time, response text, Base64 binary, content hash, and byte count.
+
+The plugin does not implement TLS handshaking, persistent sessions, protocol-level retries, or multi-step exchanges. Use the HTTP plugin for HTTP/TLS response semantics or implement a dedicated monitor plugin for an application protocol.
 
 ## Configuration
 
-### Connection
-
-- `host`: required hostname or IP address. IPv6 values do not need manual brackets.
-- `port`: required target port in the range `1-65535`.
-- `timeout_seconds`: connection timeout; defaults to `10`, range `1-300` seconds.
-
-### Sending data
-
-- `send`: optional. An empty value only opens the connection; otherwise the value is written once after connecting.
-- `send_base64`: disabled by default. When enabled, `send` is decoded as standard Base64 and the resulting bytes are written. Invalid Base64 fails the execution.
-
-### Reading a response
-
-- `read_response`: disabled by default. When enabled, the plugin performs one read after sending.
-- `read_timeout_seconds`: read timeout; defaults to `3`, range `1-60` seconds.
-- `max_read_bytes`: maximum number of bytes read once; defaults to `65536`, range `1-1048576`.
-
-The implementation performs a single `Read`. It is intended for port checks, banners, simple request-response protocols, and fixed probes, not continuous streams, protocol framing, or multi-round conversations.
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `host` | required | Hostname or IP address |
+| `port` | required | 1 to 65535 |
+| `timeout_seconds` | `10` | Connection timeout |
+| `send` | empty | Value written after connecting; empty means connect only |
+| `send_base64` | `false` | Decode `send` from Base64 before writing |
+| `read_response` | `false` | Read one response after writing |
+| `read_timeout_seconds` | `3` | Read timeout when response reading is enabled |
+| `max_read_bytes` | `65536` | Read limit from 1 to 1048576 bytes |
 
 ## Results
 
-The `connection` result set contains:
+The result-set key is `connection`:
 
-- `success`: whether the complete probe succeeded.
-- `connected`: whether a TCP connection was established.
-- `duration_ms`: connection establishment time in milliseconds.
-- `remote_addr`: actual remote endpoint used by the connection.
-- `response_text`: bytes read represented as text.
-- `response_bytes`: standard Base64 representation, suitable for non-text protocols.
-- `response_hash`: SHA-256 of the response bytes.
-- `bytes_read`: number of bytes read.
+| Field | Type | Description |
+| --- | --- | --- |
+| `success` | boolean | The complete execution succeeded |
+| `connected` | boolean | A TCP connection was established |
+| `duration_ms` | number | Connection time in milliseconds |
+| `remote_addr` | string | Connected remote address |
+| `response_text` | text | Text representation of the response |
+| `response_bytes` | binary | Base64-encoded raw response |
+| `response_hash` | string | Raw response content hash |
+| `bytes_read` | number | Number of bytes read |
 
-When `read_response` is disabled, text and Base64 results are empty, `bytes_read` is `0`, and the hash represents empty content. Meerkit also adds its common execution-summary result set.
+These fields can drive connection-failure, latency, content-change, and byte-count conditions.
 
-## Condition examples
+## Development
 
-- Port availability: `Current result / TCP connection / Connected is true`.
-- Slow connection: `Current result / TCP connection / Duration greater than 500`.
-- Banner check: enable response reading and require `Response text contains ready`.
-- Binary response change: compare the previous and current `Response hash`.
-- Size anomaly: verify that `Bytes read` remains within an expected range.
-
-## Logging and privacy
-
-The plugin logs connection start and completion, bytes written and read, response hashes, and failure causes. It never logs sent or received payload content, protecting protocol credentials and application data.
-
-Configure plugin logging through the host:
-
-Logs are stored under `${storage.data_dir}/plugins/logs` and can be followed from the plugin management page.
-
-## Development and testing
-
-Running `go run .` from the repository root makes a `dev` host build and load `plugins/tcp` directly. Artifacts are written only under the root `data/plugins` directory.
-
-Run plugin tests independently:
-
-```sh
+```bash
 cd plugins/tcp
 go test ./...
+
+cd ../..
+go run . serve
 ```
 
-Build an importable package for the current platform:
+The source manifest is [`meerkit-plugin.yaml`](meerkit-plugin.yaml), and the implementation is [`monitor/tcp.go`](monitor/tcp.go). See [`scripts/README.en.md`](../../scripts/README.en.md) for packaging.
 
-```sh
-scripts/package-plugins.sh --plugin ./plugins/tcp
-```
+## License
 
-See `plugins/README.en.md` for signing, cross-platform targets, and the trust model.
+This plugin is licensed with Meerkit under the [Apache License 2.0](../../LICENSE).
