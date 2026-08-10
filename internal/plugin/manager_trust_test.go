@@ -96,10 +96,12 @@ func writeSignedTestPackage(t *testing.T, id, moduleType string, privateKey ed25
 	t.Helper()
 	binary := []byte("test plugin binary")
 	digest := sha256.Sum256(binary)
+	runtimeConfig := ArtifactRuntime{Mode: "direct", Args: []string{}}
 	manifest := Manifest{
 		SchemaVersion: 1, ID: id, Name: id, Version: "1.0.0", Vendor: "Example", Description: "Signed test plugin", URL: "https://example.com/" + id,
 		Protocol:  ProtocolRange{Min: 1, Max: 1},
 		Modules:   []core.PluginModule{{Type: moduleType, Name: moduleType, Version: "1", ConfigVersion: "1", ResultSchemaVersion: "1"}},
+		Runtime:   &runtimeConfig,
 		Artifacts: []Artifact{{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Path: "bin/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin", Size: int64(len(binary)), SHA256: hex.EncodeToString(digest[:])}},
 	}
 	manifestBytes, err := yaml.Marshal(manifest)

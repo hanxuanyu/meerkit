@@ -36,7 +36,7 @@ make package-plugin \
   KEY_ID=meerkit-official-2026
 ```
 
-底层 `cmd/pluginpack` 只执行 `go build`，所以不适合第三方语言。它会把源码清单中的空 `artifacts` 替换为制品路径、大小和 SHA-256，再选择性生成签名信封。
+底层 `cmd/pluginpack` 只执行 `go build`，所以不适合第三方语言。它会保留源码清单的 `runtime` 启动配置，把空 `artifacts` 替换为制品路径、大小和 SHA-256，再选择性生成签名信封。
 
 ## 完整 Meerkit 发布
 

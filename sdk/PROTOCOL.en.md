@@ -34,7 +34,15 @@ Return application errors as a successful gRPC response containing a non-empty J
 
 ## Artifact runtime
 
-An artifact without `runtime` uses `mode: direct`. Direct mode executes the artifact itself and may include up to 32 fixed `args`, such as `args: ["serve"]`. A single-file third-party artifact may instead declare a host interpreter:
+The manifest must declare a top-level `runtime` as the startup default for source builds and all artifacts. An `artifacts` entry may override it for a specific platform. Direct mode executes the artifact itself, does not allow `command`, and requires `args`; use an empty array when no arguments are needed:
+
+```yaml
+runtime:
+  mode: direct
+  args: []
+```
+
+A single-file third-party artifact may instead declare a host interpreter:
 
 ```yaml
 runtime:

@@ -54,7 +54,7 @@ go run . serve --listen 127.0.0.1:8080
 - 机器可读契约：[Proto](sdk/proto/monitor.proto) 与 [JSON Schema](sdk/schema/)
 - 黑盒检查：`go run ./cmd/plugincheck --manifest ... --artifact ... --suite ...`
 
-Meerkit 的打包器只构建仓库内的 Go 插件。第三方语言维护者自行构建制品，并在清单的 `artifacts[].runtime` 中选择直接执行或宿主解释器启动。
+Meerkit 的打包器只构建仓库内的 Go 插件。第三方语言维护者自行构建制品，并通过清单级 `runtime` 选择直接执行或宿主解释器启动；单个平台可以用 `artifacts[].runtime` 覆盖。
 
 ## 常用命令
 

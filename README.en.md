@@ -54,7 +54,7 @@ Official plugins continue to use the Go SDK. A third-party plugin may use any la
 - Machine-readable contract: [Proto](sdk/proto/monitor.proto) and [JSON Schemas](sdk/schema/)
 - Black-box check: `go run ./cmd/plugincheck --manifest ... --artifact ... --suite ...`
 
-Meerkit's packager builds only the Go plugins in this repository. Third-party maintainers build their own artifacts and select direct execution or a host interpreter through `artifacts[].runtime` in the manifest.
+Meerkit's packager builds only the Go plugins in this repository. Third-party maintainers build their own artifacts and select direct execution or a host interpreter through manifest-level `runtime`; a platform may override it through `artifacts[].runtime`.
 
 ## Common commands
 

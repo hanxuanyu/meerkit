@@ -148,7 +148,7 @@ func writeDevelopmentPlugin(t *testing.T, directory, id, moduleType string) {
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	manifest := "schema_version: 1\nid: " + id + "\nname: Development plugin\nversion: 1.0.0\nvendor: Meerkit\ndesp: Development plugin used by tests.\nurl: https://example.com/plugin\nprotocol: {min: 1, max: 1}\nmodules:\n  - {type: " + moduleType + ", name: Test, version: \"1\", config_version: \"1\", result_schema_version: \"1\"}\nartifacts: []\n"
+	manifest := "schema_version: 1\nid: " + id + "\nname: Development plugin\nversion: 1.0.0\nvendor: Meerkit\ndesp: Development plugin used by tests.\nurl: https://example.com/plugin\nprotocol: {min: 1, max: 1}\nmodules:\n  - {type: " + moduleType + ", name: Test, version: \"1\", config_version: \"1\", result_schema_version: \"1\"}\nruntime:\n  mode: direct\n  args: []\nartifacts: []\n"
 	for name, contents := range map[string]string{"meerkit-plugin.yaml": manifest, "go.mod": "module example.com/test-plugin\n\ngo 1.26\n", "README.md": "# Development plugin\n"} {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o600); err != nil {
 			t.Fatal(err)

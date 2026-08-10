@@ -38,7 +38,8 @@ func TestNewArtifactCommandSubstitutesInterpreterArtifact(t *testing.T) {
 }
 
 func TestCommandForInstallationUsesCurrentArtifactRuntime(t *testing.T) {
-	manifest := Manifest{Artifacts: []Artifact{{
+	defaultRuntime := ArtifactRuntime{Mode: "direct", Args: []string{}}
+	manifest := Manifest{Runtime: &defaultRuntime, Artifacts: []Artifact{{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Path: "plugin", Size: 1, SHA256: strings.Repeat("0", 64),
 		Runtime: &ArtifactRuntime{Mode: "interpreter", Command: "go", Args: []string{"run", "{artifact}"}},
 	}}}
@@ -53,6 +54,27 @@ func TestCommandForInstallationUsesCurrentArtifactRuntime(t *testing.T) {
 	}
 	if command.Args[len(command.Args)-1] != artifact {
 		t.Fatalf("artifact was not substituted: %q", command.Args)
+	}
+}
+
+func TestCommandForInstallationUsesManifestRuntimeDefault(t *testing.T) {
+	manifest := Manifest{
+		Runtime: &ArtifactRuntime{Mode: "direct", Args: []string{"serve"}},
+		Artifacts: []Artifact{{
+			GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Path: "plugin", Size: 1, SHA256: strings.Repeat("0", 64),
+		}},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "plugin")
+	command, err := commandForInstallation(core.PluginInstallation{BinaryPath: artifact, Manifest: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(command.Args) != 2 || command.Args[0] != artifact || command.Args[1] != "serve" {
+		t.Fatalf("manifest runtime default was not applied: %q", command.Args)
 	}
 }
 

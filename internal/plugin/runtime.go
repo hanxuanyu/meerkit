@@ -30,19 +30,24 @@ func NewArtifactCommand(artifactPath string, runtimeConfig ArtifactRuntime) (*ex
 }
 
 func commandForInstallation(installation core.PluginInstallation) (*exec.Cmd, error) {
-	runtimeConfig := ArtifactRuntime{Mode: "direct"}
-	if len(installation.Manifest) != 0 {
-		var manifest Manifest
-		if err := json.Unmarshal(installation.Manifest, &manifest); err != nil {
-			return nil, fmt.Errorf("decode installed plugin manifest: %w", err)
+	if len(installation.Manifest) == 0 {
+		return nil, fmt.Errorf("installed plugin manifest is required")
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(installation.Manifest, &manifest); err != nil {
+		return nil, fmt.Errorf("decode installed plugin manifest: %w", err)
+	}
+	var artifact *Artifact
+	if len(manifest.Artifacts) != 0 {
+		current, err := manifest.CurrentArtifact()
+		if err != nil {
+			return nil, err
 		}
-		if len(manifest.Artifacts) != 0 {
-			artifact, err := manifest.CurrentArtifact()
-			if err != nil {
-				return nil, err
-			}
-			runtimeConfig = artifact.RuntimeConfig()
-		}
+		artifact = &current
+	}
+	runtimeConfig, err := manifest.ResolveRuntime(artifact)
+	if err != nil {
+		return nil, err
 	}
 	return NewArtifactCommand(installation.BinaryPath, runtimeConfig)
 }

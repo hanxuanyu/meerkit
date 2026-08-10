@@ -22,6 +22,9 @@ modules:
     version: "1"
     config_version: "1"
     result_schema_version: "1"
+runtime:
+  mode: direct
+  args: []
 artifacts: []
 ```
 
@@ -40,6 +43,7 @@ artifacts: []
 | `url` | 绝对 HTTP/HTTPS URL | 源码或可信发布页面 |
 | `protocol.min/max` | 正整数范围 | 支持的 Meerkit 应用协议 |
 | `modules` | 至少一个，类型不重复 | 插件提供的监控模块 |
+| `runtime` | 必填 | 源码构建和全部制品的默认启动配置 |
 | `artifacts` | 目标不重复、路径不重复 | 可运行制品 |
 
 ## 模块字段
@@ -65,6 +69,7 @@ artifacts:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     runtime:
       mode: direct
+      args: []
 ```
 
 | 字段 | 约束 |
@@ -73,7 +78,9 @@ artifacts:
 | `path` | 包内相对规范路径，无反斜杠、绝对路径或 `..` |
 | `size` | 正整数，精确字节数 |
 | `sha256` | 64 位十六进制 |
-| `runtime` | 可选；省略等同 `direct` |
+| `runtime` | 可选；覆盖清单级默认启动配置 |
+
+宿主优先使用 `artifacts[].runtime`，未配置制品级覆盖时使用必填的清单级 `runtime`。源码构建、黑盒测试和发布包因此使用同一启动契约；仅在某个平台需要不同解释器或参数时填写制品级覆盖。
 
 宿主要求当前运行平台恰好匹配一个制品。制品最终安装为数据目录中的 `plugin` 或 `plugin.exe`，清单路径仍用于导入校验。
 
@@ -85,7 +92,7 @@ runtime:
   args: ["serve"]
 ```
 
-`command` 必须省略或为空。`args` 最多 32 项，每项非空、最长 4096 字节，不能包含 NUL，也不能使用 `{artifact}`。
+`direct` 固定执行宿主解析出的当前平台制品，因此不能声明 `command`。`args` 必填；没有参数时写 `[]`。参数最多 32 项，每项非空、最长 4096 字节，不能包含 NUL，也不能使用 `{artifact}`。
 
 ## 解释器执行
 

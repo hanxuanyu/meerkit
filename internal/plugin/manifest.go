@@ -27,7 +27,7 @@ type Artifact struct {
 type ArtifactRuntime struct {
 	Mode    string   `json:"mode" yaml:"mode"`
 	Command string   `json:"command,omitempty" yaml:"command,omitempty"`
-	Args    []string `json:"args,omitempty" yaml:"args,omitempty"`
+	Args    []string `json:"args" yaml:"args"`
 }
 type Manifest struct {
 	SchemaVersion int                 `json:"schema_version" yaml:"schema_version"`
@@ -39,6 +39,7 @@ type Manifest struct {
 	URL           string              `json:"url" yaml:"url"`
 	Protocol      ProtocolRange       `json:"protocol" yaml:"protocol"`
 	Modules       []core.PluginModule `json:"modules" yaml:"modules"`
+	Runtime       *ArtifactRuntime    `json:"runtime" yaml:"runtime"`
 	Artifacts     []Artifact          `json:"artifacts" yaml:"artifacts"`
 }
 
@@ -87,6 +88,12 @@ func (m Manifest) Validate(protocolVersion int) error {
 			return fmt.Errorf("module %s name and versions are required", module.Type)
 		}
 	}
+	if m.Runtime == nil {
+		return fmt.Errorf("plugin runtime is required")
+	}
+	if err := m.Runtime.Validate(); err != nil {
+		return fmt.Errorf("plugin runtime: %w", err)
+	}
 	seenTargets := map[string]struct{}{}
 	seenPaths := map[string]struct{}{}
 	for _, artifact := range m.Artifacts {
@@ -130,6 +137,9 @@ func (r ArtifactRuntime) Validate() error {
 	case "direct":
 		if r.Command != "" {
 			return fmt.Errorf("direct mode cannot declare command")
+		}
+		if r.Args == nil {
+			return fmt.Errorf("direct mode args are required; use an empty array when no arguments are needed")
 		}
 		if err := validateRuntimeArgs(r.Args); err != nil {
 			return err
@@ -176,11 +186,15 @@ func validateRuntimeArgs(arguments []string) error {
 	return nil
 }
 
-func (a Artifact) RuntimeConfig() ArtifactRuntime {
-	if a.Runtime == nil {
-		return ArtifactRuntime{Mode: "direct"}
+// ResolveRuntime applies an artifact override before the manifest-wide default.
+func (m Manifest) ResolveRuntime(artifact *Artifact) (ArtifactRuntime, error) {
+	if artifact != nil && artifact.Runtime != nil {
+		return *artifact.Runtime, nil
 	}
-	return *a.Runtime
+	if m.Runtime != nil {
+		return *m.Runtime, nil
+	}
+	return ArtifactRuntime{}, fmt.Errorf("plugin runtime is required")
 }
 
 func (m Manifest) CurrentArtifact() (Artifact, error) {

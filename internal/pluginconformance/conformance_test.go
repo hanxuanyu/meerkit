@@ -40,6 +40,30 @@ func TestObservationSchemaRejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestModuleDescriptorSchemaAcceptsIntegerOrder(t *testing.T) {
+	all, err := loadValidators()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := sdk.ModuleDescriptor{
+		Type: "example", Version: "1", ConfigVersion: "1", ResultSchemaVersion: "1", Name: "Example",
+		Parameters:   []sdk.ParameterDescriptor{{Key: "target", Label: "Target", Type: sdk.ParameterString, Order: 10}},
+		ConfigSchema: map[string]any{"type": "object"}, ResultSchema: map[string]any{"type": "object"},
+		Fields: []sdk.FieldDescriptor{},
+	}
+	data, err := json.Marshal(map[string]any{"modules": []sdk.ModuleDescriptor{descriptor}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := decodeJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := all.response.Validate(value); err != nil {
+		t.Fatalf("module descriptor with integer order: %v", err)
+	}
+}
+
 func TestCompareModulesChecksManifestIdentityAndVersion(t *testing.T) {
 	manifest := plugin.Manifest{Modules: []core.PluginModule{{Type: "http", Version: "1"}}}
 	if err := compareModules(manifest, []sdk.ModuleDescriptor{{Type: "http", Version: "1"}}); err != nil {

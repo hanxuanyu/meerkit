@@ -19,7 +19,7 @@
 1. 宿主读取并校验 `meerkit-plugin.yaml`，选择当前 `GOOS/GOARCH` 的唯一制品。
 2. 宿主校验制品大小和 SHA-256，并在有签名时校验 `meerkit-plugin.sig`。
 3. 启用前处理发布者信任：官方、已信任、待信任或未签名。
-4. 宿主按 `artifacts[].runtime` 启动子进程，完成 go-plugin 握手和两级健康检查。
+4. 宿主按清单级 `runtime` 和可选的 `artifacts[].runtime` 覆盖启动子进程，完成 go-plugin 握手和两级健康检查。
 5. 插件返回模块描述器；宿主核对其与清单的类型和版本是否一致。
 6. 宿主迁移已保存的监控配置，并原子替换该插件拥有的监控模块。
 
@@ -38,7 +38,7 @@ LICENSE                  # 推荐
 bin/<goos>-<goarch>/...  # 清单声明的制品
 ```
 
-清单 Schema 位于 [`manifest.schema.json`](manifest.schema.json)。源码清单允许 `artifacts: []`；仓库打包器会为 Go 插件写入平台、路径、大小和 SHA-256。第三方语言自行构建制品和组包，格式必须遵循同一清单和线协议。
+清单 Schema 位于 [`manifest.schema.json`](manifest.schema.json)。源码清单必须声明顶层 `runtime`，并允许 `artifacts: []`；仓库打包器会保留启动配置并为 Go 插件写入平台、路径、大小和 SHA-256。第三方语言自行构建制品和组包，格式必须遵循同一清单和线协议。
 
 ## 信任模型
 

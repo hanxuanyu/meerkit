@@ -114,13 +114,17 @@ func Check(ctx context.Context, options Options) (Report, error) {
 	if !info.Mode().IsRegular() {
 		return Report{}, fmt.Errorf("artifact %s is not a regular file", artifact)
 	}
-	runtimeConfig := plugin.ArtifactRuntime{Mode: "direct"}
+	var currentArtifact *plugin.Artifact
 	if len(options.Manifest.Artifacts) != 0 {
 		current, currentErr := options.Manifest.CurrentArtifact()
 		if currentErr != nil {
 			return Report{}, currentErr
 		}
-		runtimeConfig = current.RuntimeConfig()
+		currentArtifact = &current
+	}
+	runtimeConfig, err := options.Manifest.ResolveRuntime(currentArtifact)
+	if err != nil {
+		return Report{}, err
 	}
 	command, err := plugin.NewArtifactCommand(artifact, runtimeConfig)
 	if err != nil {
@@ -380,7 +384,6 @@ func loadValidators() (validators, error) {
 
 func decodeJSON(data []byte) (any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, err

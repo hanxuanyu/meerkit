@@ -41,13 +41,17 @@
 
 ## 制品运行方式
 
-每个 `artifacts` 条目可选声明 `runtime`。省略时等同于：
+清单必须声明顶层 `runtime`，作为源码构建和全部制品的默认启动配置。每个 `artifacts` 条目可以声明自己的 `runtime` 进行平台级覆盖。
+
+直接执行配置为：
 
 ```yaml
-runtime: {mode: direct}
+runtime:
+  mode: direct
+  args: []
 ```
 
-`direct` 以 artifact 本身作为可执行文件，也可以声明最多 32 个固定 `args`，例如 `args: ["serve"]`。
+`direct` 固定以 artifact 本身作为可执行文件，不能声明 `command`。`args` 必填，可以声明最多 32 个固定参数，例如 `args: ["serve"]`。
 
 第三方单文件制品可以交给宿主环境中的解释器启动：
 

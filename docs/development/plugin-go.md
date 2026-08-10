@@ -11,7 +11,7 @@ cp -R plugins/template plugins/dns
 随后修改：
 
 - `go.mod`：独立模块路径和 SDK 依赖。
-- `meerkit-plugin.yaml`：插件与模块身份。
+- `meerkit-plugin.yaml`：插件与模块身份，以及明确的进程启动方式、命令和参数。
 - `main.go`：模块描述器与实现，复杂实现应拆到 `monitor/`。
 - `conformance.json`：有效、无效、执行和迁移用例。
 - README 与许可证。

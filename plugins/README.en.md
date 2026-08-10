@@ -19,7 +19,7 @@ Each plugin is an independent Go module. A development host scans manifests belo
 1. The host validates `meerkit-plugin.yaml` and selects exactly one artifact for the current `GOOS/GOARCH`.
 2. It verifies the artifact size and SHA-256, then verifies `meerkit-plugin.sig` when present.
 3. Enablement enforces the publisher state: official, trusted, untrusted, or unsigned.
-4. The host starts the child process according to `artifacts[].runtime` and completes the go-plugin handshake plus two health checks.
+4. The host starts the child process using the manifest-level `runtime` and any `artifacts[].runtime` override, then completes the go-plugin handshake plus two health checks.
 5. The plugin returns module descriptors, which must agree with manifest types and versions.
 6. The host migrates saved monitor configuration and atomically replaces the modules owned by that plugin.
 
@@ -38,7 +38,7 @@ LICENSE                  # recommended
 bin/<goos>-<goarch>/...  # artifact declared by the manifest
 ```
 
-The manifest Schema is [`manifest.schema.json`](manifest.schema.json). A source manifest may use `artifacts: []`; the repository packager fills platform, path, size, and SHA-256 for Go plugins. Other languages build and assemble their own artifacts against the same manifest and wire contracts.
+The manifest Schema is [`manifest.schema.json`](manifest.schema.json). A source manifest must declare top-level `runtime` and may use `artifacts: []`; the repository packager preserves the startup configuration and fills platform, path, size, and SHA-256 for Go plugins. Other languages build and assemble their own artifacts against the same manifest and wire contracts.
 
 ## Trust model
 

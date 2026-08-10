@@ -15,6 +15,7 @@
     "url",
     "protocol",
     "modules",
+    "runtime",
     "artifacts"
   ],
   "properties": {
@@ -59,6 +60,10 @@
       "items": {
         "$ref": "#/$defs/module"
       }
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime",
+      "description": "Default process startup configuration for source builds and packaged artifacts. An artifact-level runtime overrides this value."
     },
     "artifacts": {
       "type": "array",
@@ -129,7 +134,14 @@
         },
         "path": {
           "type": "string",
-          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+          "pattern": "^[^/\\\\](.*[^/\\\\])?$",
+          "not": {
+            "anyOf": [
+              {"pattern": "(^|/)\\.{1,2}(/|$)"},
+              {"pattern": "//"},
+              {"pattern": "\\\\"}
+            ]
+          }
         },
         "size": {
           "type": "integer",
@@ -149,13 +161,10 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mode"],
+          "required": ["mode", "args"],
           "properties": {
             "mode": {
               "const": "direct"
-            },
-            "command": {
-              "const": ""
             },
             "args": {
               "type": "array",

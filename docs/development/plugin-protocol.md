@@ -85,6 +85,8 @@ runtime:
   args: ["serve"]
 ```
 
+清单级 `runtime` 是所有制品的默认启动配置；`artifacts[].runtime` 可以针对单个平台覆盖。`direct` 固定执行当前平台制品，不能声明 `command`；只有解释器模式需要明确启动命令。
+
 解释器执行：
 
 ```yaml
