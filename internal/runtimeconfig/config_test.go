@@ -139,3 +139,54 @@ func TestAuthRowPreservesKeyAcrossRuntimeUpdatesAndReset(t *testing.T) {
 		t.Fatal("auth row does not contain administrator key hash")
 	}
 }
+
+func TestManagerImportAppliesAndPublishesCompleteRuntimeConfig(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	manager, err := New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changes := manager.Subscribe()
+	applyCalls := 0
+	manager.SetApply(func(_ context.Context, oldConfig, newConfig app.RuntimeConfig) error {
+		applyCalls++
+		if oldConfig.Scheduler.MaxConcurrency == newConfig.Scheduler.MaxConcurrency {
+			t.Fatal("apply did not receive changed config")
+		}
+		return nil
+	})
+	candidate := manager.Snapshot()
+	candidate.Scheduler.MaxConcurrency = 7
+	candidate.Storage.Retention = "14d"
+	_, err = manager.Import(ctx, candidate, func(ctx context.Context, domains map[string]json.RawMessage) (map[string]int, error) {
+		result, err := database.ImportConfiguration(ctx, store.ConfigurationImport{Runtime: domains})
+		return result.Versions, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applyCalls != 1 {
+		t.Fatalf("apply calls = %d, want 1", applyCalls)
+	}
+	if got := manager.Snapshot(); got.Scheduler.MaxConcurrency != 7 || got.Storage.Retention != "14d" {
+		t.Fatalf("unexpected imported snapshot: %+v", got)
+	}
+	select {
+	case <-changes:
+	default:
+		t.Fatal("runtime import did not notify subscribers")
+	}
+	reloaded, err := New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Snapshot(); got.Scheduler.MaxConcurrency != 7 || got.Storage.Retention != "14d" {
+		t.Fatalf("runtime import was not persisted: %+v", got)
+	}
+}

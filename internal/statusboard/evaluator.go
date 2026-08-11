@@ -3,6 +3,7 @@ package statusboard
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -10,15 +11,16 @@ import (
 )
 
 func BuildSamples(item core.StatusBoardItem, records []core.MonitorRecord) []core.StatusSample {
+	textMatchers := compileTextValueMappings(item.Source.ValueMappings)
 	samples := make([]core.StatusSample, 0, len(records))
 	for _, record := range records {
-		samples = append(samples, buildSample(item, record))
+		samples = append(samples, buildSample(item, record, textMatchers))
 	}
 	scaleNumericSamples(samples)
 	return samples
 }
 
-func buildSample(item core.StatusBoardItem, record core.MonitorRecord) core.StatusSample {
+func buildSample(item core.StatusBoardItem, record core.MonitorRecord, textMatchers []textValueMatcher) core.StatusSample {
 	sample := core.StatusSample{RecordID: record.ID, StartedAt: record.StartedAt, Level: core.StatusLevelUnknown, State: core.StatusLevelUnknown, Display: "未知", Height: 28}
 	value, ok := extractValue(item.Source, record)
 	if !ok {
@@ -66,7 +68,7 @@ func buildSample(item core.StatusBoardItem, record core.MonitorRecord) core.Stat
 		if strings.TrimSpace(text) == "" {
 			sample.Display = "空"
 		}
-		if mapping := matchTextValueMapping(item.Source.ValueMappings, text); mapping != nil {
+		if mapping := matchTextValueMapping(textMatchers, text); mapping != nil {
 			applySampleLevel(&sample, mapping.Level, mapping.Label, mapping.Color)
 		} else {
 			level, label := item.Source.DefaultLevel, item.Source.DefaultLabel
@@ -92,10 +94,31 @@ func matchNumericValueMapping(mappings []core.StatusValueMapping, value float64)
 	return nil
 }
 
-func matchTextValueMapping(mappings []core.StatusValueMapping, value string) *core.StatusValueMapping {
-	for index := range mappings {
-		if mappings[index].Value == value {
-			return &mappings[index]
+type textValueMatcher struct {
+	mapping core.StatusValueMapping
+	regex   *regexp.Regexp
+}
+
+func compileTextValueMappings(mappings []core.StatusValueMapping) []textValueMatcher {
+	matchers := make([]textValueMatcher, 0, len(mappings))
+	for _, mapping := range mappings {
+		matcher := textValueMatcher{mapping: mapping}
+		if mapping.MatchType == core.StatusMatchRegex {
+			matcher.regex, _ = regexp.Compile(mapping.Value)
+		}
+		matchers = append(matchers, matcher)
+	}
+	return matchers
+}
+
+func matchTextValueMapping(matchers []textValueMatcher, value string) *core.StatusValueMapping {
+	for index := range matchers {
+		matcher := &matchers[index]
+		if matcher.regex != nil && matcher.regex.MatchString(value) {
+			return &matcher.mapping
+		}
+		if matcher.mapping.MatchType != core.StatusMatchRegex && matcher.mapping.Value == value {
+			return &matcher.mapping
 		}
 	}
 	return nil

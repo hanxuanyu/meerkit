@@ -10,6 +10,8 @@ const (
 	StatusValueBoolean = "boolean"
 	StatusValueNumber  = "number"
 	StatusValueText    = "text"
+	StatusMatchExact   = "exact"
+	StatusMatchRegex   = "regex"
 
 	StatusLevelSuccess = "success"
 	StatusLevelWarning = "warning"
@@ -31,10 +33,11 @@ type StatusItemSource struct {
 }
 
 type StatusValueMapping struct {
-	Value string `json:"value"`
-	Level string `json:"level"`
-	Label string `json:"label"`
-	Color string `json:"color,omitempty"`
+	Value     string `json:"value"`
+	MatchType string `json:"match_type,omitempty"`
+	Level     string `json:"level"`
+	Label     string `json:"label"`
+	Color     string `json:"color,omitempty"`
 }
 
 type StatusThreshold struct {

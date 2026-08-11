@@ -52,6 +52,49 @@ func TestBuildSamplesSupportsExactValueColorsAndTextDefault(t *testing.T) {
 	}
 }
 
+func TestBuildSamplesSupportsOrderedTextRegexMappings(t *testing.T) {
+	now := time.Now().UTC()
+	item := core.StatusBoardItem{Source: core.StatusItemSource{
+		Kind:         core.StatusSourceResultField,
+		ResultSet:    "response",
+		Field:        "state",
+		ValueType:    core.StatusValueText,
+		DefaultLevel: core.StatusLevelSuccess,
+		DefaultLabel: "其他状态",
+		ValueMappings: []core.StatusValueMapping{
+			{Value: `^ERROR_`, MatchType: core.StatusMatchRegex, Level: core.StatusLevelWarning, Label: "错误前缀"},
+			{Value: "ERROR_TIMEOUT", Level: core.StatusLevelFailure, Label: "超时"},
+			{Value: `^DOWN$`, MatchType: core.StatusMatchRegex, Level: core.StatusLevelFailure, Label: "离线"},
+		},
+	}}
+	records := []core.MonitorRecord{
+		{ID: "ordered", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": "ERROR_TIMEOUT"}}},
+		{ID: "regex", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": "DOWN"}}},
+		{ID: "default", StartedAt: now, Result: map[string]any{"response": map[string]any{"state": "UP"}}},
+	}
+	samples := BuildSamples(item, records)
+	if samples[0].Level != core.StatusLevelWarning || samples[0].Label != "错误前缀" {
+		t.Fatalf("first matching rule did not win: %#v", samples[0])
+	}
+	if samples[1].Level != core.StatusLevelFailure || samples[1].Label != "离线" {
+		t.Fatalf("regex rule did not match: %#v", samples[1])
+	}
+	if samples[2].Level != core.StatusLevelSuccess || samples[2].Label != "其他状态" {
+		t.Fatalf("unmatched text did not use default: %#v", samples[2])
+	}
+}
+
+func TestValidateValueMappingsRejectsInvalidRegexAndNumericRegex(t *testing.T) {
+	invalidRegex := core.StatusItemSource{ValueType: core.StatusValueText, ValueMappings: []core.StatusValueMapping{{Value: "[", MatchType: core.StatusMatchRegex, Level: core.StatusLevelFailure}}}
+	if err := normalizeAndValidateValueMappings(&invalidRegex); err == nil {
+		t.Fatal("invalid text regex was accepted")
+	}
+	numericRegex := core.StatusItemSource{ValueType: core.StatusValueNumber, ValueMappings: []core.StatusValueMapping{{Value: "1", MatchType: core.StatusMatchRegex, Level: core.StatusLevelFailure}}}
+	if err := normalizeAndValidateValueMappings(&numericRegex); err == nil {
+		t.Fatal("numeric regex mapping was accepted")
+	}
+}
+
 func TestStatusColorPresetsAreIndependentFromSemanticLevel(t *testing.T) {
 	maximum := 10.0
 	thresholds := []core.StatusThreshold{{Maximum: &maximum, Level: core.StatusLevelFailure, Label: "异常", Color: "green"}, {Level: core.StatusLevelSuccess, Label: "正常", Color: "red"}}

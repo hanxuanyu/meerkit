@@ -109,6 +109,9 @@ func (a *APIServer) Router() http.Handler {
 	api.PATCH("/system/config/runtime/:type", func(c *gin.Context) { a.updateSystemConfig(c, c.Param("type")) })
 	api.POST("/system/config/runtime/:type/reset", func(c *gin.Context) { a.resetSystemConfig(c, c.Param("type")) })
 	api.POST("/system/config/runtime/reset", a.resetAllSystemConfigs)
+	api.POST("/system/config/transfer/export", a.exportConfiguration)
+	api.POST("/system/config/transfer/import/preview", a.previewConfigurationImport)
+	api.POST("/system/config/transfer/import", a.importConfiguration)
 
 	api.GET("/notification-channels", legacyParts(a.handleChannels))
 	api.POST("/notification-channels", legacyParts(a.handleChannels))

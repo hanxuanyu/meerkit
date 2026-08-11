@@ -12,7 +12,7 @@ export default defineConfig({
   ],
   themeConfig: {
     logo: "/brand-mark.png",
-    siteTitle: "Meerkit 文档",
+    siteTitle: "Meerkit Docs",
     nav: [
       { text: "使用指南", link: "/guide/getting-started" },
       { text: "运维", link: "/operations/configuration" },

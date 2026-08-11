@@ -272,7 +272,7 @@ func pendingRecordEvents(pending []statusboard.PendingNotification) []core.Recor
 		for _, channelID := range value.ChannelIDs {
 			deliveries[channelID] = core.NotificationDelivery{Status: "pending"}
 		}
-		events = append(events, core.RecordNotificationEvent{ID: value.Event.ID, Source: value.Event.Source, EventType: value.Event.EventType, StatusItemID: value.Event.StatusItemID, StatusItemName: value.Event.StatusItemName, TrendRuleID: value.Event.TrendRuleID, TrendRuleName: value.Event.TrendRuleName, Summary: value.Event.Summary, Deliveries: deliveries})
+		events = append(events, core.RecordNotificationEvent{ID: value.Event.ID, Source: value.Event.Source, EventType: value.Event.EventType, StatusItemID: value.Event.StatusItemID, StatusItemName: value.Event.StatusItemName, TrendRuleID: value.Event.TrendRuleID, TrendRuleName: value.Event.TrendRuleName, TrendDetail: value.Event.TrendDetail, Summary: value.Event.Summary, Deliveries: deliveries})
 	}
 	return events
 }

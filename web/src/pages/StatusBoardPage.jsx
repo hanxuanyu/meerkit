@@ -16,6 +16,8 @@ import { StatusBoardDialog } from "../features/statusboard/StatusBoardDialog";
 const levelLabels = { success: "正常", warning: "警告", failure: "失败", unknown: "未知" };
 const STATUS_BAR_WIDTH = 5;
 const STATUS_BAR_GAP = 3;
+const STATUS_BAR_MIN_HEIGHT = 10;
+const STATUS_BAR_HEADROOM = 1.08;
 
 export function StatusBoardPage({ monitors, channels, refreshVersion = 0, onOpenExecution, notify }) {
   const [snapshot, setSnapshot] = useState({ groups: [] });
@@ -125,6 +127,7 @@ function StatusBars({ item, monitorID, onOpenExecution }) {
   const [viewportWidth, setViewportWidth] = useState(0);
   const activeSampleIndex = activeSample ? item.samples.findIndex((sample) => sample.record_id === activeSample.record_id) : -1;
   const layout = statusBarLayout(viewportWidth, item.samples.length);
+  const displaySamples = scaleVisibleNumericSamples(item.samples, viewportWidth, layout);
 
   if (knownSampleIDsRef.current === null) {
     knownSampleIDsRef.current = new Set(item.samples.map((sample) => sample.record_id));
@@ -164,7 +167,7 @@ function StatusBars({ item, monitorID, onOpenExecution }) {
     </div>}
     <div className="status-bars-viewport" ref={viewportRef}>
       <div key={`bars-${latestSampleID}`} className={`status-bars${isShifting ? " is-shifting" : ""}`} style={{ "--status-bar-width": `${layout.barWidth}px`, "--status-bar-gap": `${layout.gap}px`, "--status-bars-shift": `${layout.shift}px`, "--status-bars-enter-offset": `${shiftOffset}px` }}>
-        {item.samples.length ? item.samples.map((sample, index) => <span className={`status-bar-slot${barProximityClass(index, activeSampleIndex)}${enteringSampleIDs.has(sample.record_id) ? " is-entering" : ""}`} key={sample.record_id} onPointerEnter={() => setActiveSample(sample)} onFocus={() => setActiveSample(sample)} onBlur={hideSummary}>
+        {displaySamples.length ? displaySamples.map((sample, index) => <span className={`status-bar-slot${barProximityClass(index, activeSampleIndex)}${enteringSampleIDs.has(sample.record_id) ? " is-entering" : ""}`} key={sample.record_id} onPointerEnter={() => setActiveSample(sample)} onFocus={() => setActiveSample(sample)} onBlur={hideSummary}>
           <button type="button" className={`status-bar ${sampleColorClass(sample)}`} style={{ height: `${sample.height}%` }} title={`${formatDate(sample.started_at)} · ${sample.display} · ${sample.label || levelLabels[sample.level]}`} aria-label={`${formatDate(sample.started_at)}，${sample.display}，${sample.label || levelLabels[sample.level]}`} onClick={() => onOpenExecution?.(monitorID, sample.record_id)} />
         </span>) : <span className="status-no-samples">暂无执行数据</span>}
       </div>
@@ -191,17 +194,36 @@ function appendStreamSamples(snapshot, event) {
   return { ...snapshot, groups: snapshot.groups.map((group) => group.monitor.id !== event.monitor_id ? group : { ...group, items: group.items.map((item) => {
     const sample = updates.get(item.id);
     if (!sample) return item;
-    const samples = normalizeSamples([...item.samples.filter((value) => value.record_id !== sample.record_id), sample].slice(-item.history_limit));
+    const samples = [...item.samples.filter((value) => value.record_id !== sample.record_id), sample].slice(-item.history_limit);
     return { ...item, samples, current: samples.at(-1) };
   }) }) };
 }
 
-function normalizeSamples(samples) {
-  const numeric = samples.filter((sample) => typeof sample.numeric === "number").map((sample) => sample.numeric);
-  if (!numeric.length) return samples;
-  const min = Math.min(...numeric);
-  const max = Math.max(...numeric);
-  return samples.map((sample) => typeof sample.numeric !== "number" ? sample : { ...sample, height: min === max ? 100 : 10 + ((sample.numeric - min) / (max - min)) * 90 });
+function scaleVisibleNumericSamples(samples, viewportWidth, layout) {
+  if (!samples.length || !viewportWidth) return samples;
+  const slotWidth = layout.barWidth + layout.gap;
+  const visibleCount = Math.max(1, Math.ceil((viewportWidth - 4 + layout.gap) / slotWidth));
+  const visibleStart = Math.max(0, samples.length - visibleCount);
+  const visibleValues = samples.slice(visibleStart).filter((sample) => typeof sample.numeric === "number" && Number.isFinite(sample.numeric)).map((sample) => sample.numeric);
+  if (!visibleValues.length) return samples;
+  const minimum = Math.min(...visibleValues);
+  const maximum = Math.max(...visibleValues);
+  if (minimum === maximum) return samples.map((sample) => typeof sample.numeric === "number" ? { ...sample, height: 100 } : sample);
+
+  let lower = minimum;
+  let upper = maximum;
+  if (minimum >= 0) {
+    lower = 0;
+    upper = maximum * STATUS_BAR_HEADROOM;
+  } else {
+    upper = maximum + (maximum - minimum) * (STATUS_BAR_HEADROOM - 1);
+  }
+  const range = upper - lower;
+  return samples.map((sample) => {
+    if (typeof sample.numeric !== "number" || !Number.isFinite(sample.numeric)) return sample;
+    const ratio = Math.max(0, Math.min(1, (sample.numeric - lower) / range));
+    return { ...sample, height: STATUS_BAR_MIN_HEIGHT + ratio * (100 - STATUS_BAR_MIN_HEIGHT) };
+  });
 }
 
 function toneForLevel(level) {

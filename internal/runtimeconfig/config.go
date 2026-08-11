@@ -16,6 +16,7 @@ import (
 )
 
 type ApplyFunc func(context.Context, app.RuntimeConfig, app.RuntimeConfig) error
+type ImportPersistFunc func(context.Context, map[string]json.RawMessage) (map[string]int, error)
 
 type Manager struct {
 	store    store.SystemConfigRepository
@@ -238,6 +239,60 @@ func (m *Manager) ResetAll(ctx context.Context) (app.RuntimeConfig, error) {
 		}
 	}
 	return m.Snapshot(), nil
+}
+
+// Import replaces every managed runtime domain as one logical change. The
+// persistence callback can include the runtime rows in a wider transaction.
+func (m *Manager) Import(ctx context.Context, candidate app.RuntimeConfig, persist ImportPersistFunc) (app.RuntimeConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if persist == nil {
+		return app.RuntimeConfig{}, errors.New("runtime config import persistence is required")
+	}
+	candidate.Auth.AdminKeyHash = ""
+	if err := candidate.Validate(); err != nil {
+		return app.RuntimeConfig{}, err
+	}
+	domains := make(map[string]json.RawMessage, len(managedTypes()))
+	for _, configType := range managedTypes() {
+		encoded, err := json.Marshal(m.domain(candidate, configType))
+		if err != nil {
+			return app.RuntimeConfig{}, err
+		}
+		domains[configType] = encoded
+	}
+	old := m.config
+	if m.apply != nil {
+		if err := m.apply(ctx, old, candidate); err != nil {
+			return app.RuntimeConfig{}, err
+		}
+	}
+	versions, err := persist(ctx, domains)
+	if err != nil {
+		if m.apply != nil {
+			_ = m.apply(ctx, candidate, old)
+		}
+		return app.RuntimeConfig{}, err
+	}
+	for _, configType := range managedTypes() {
+		version, ok := versions[configType]
+		if !ok || version < 1 {
+			return app.RuntimeConfig{}, fmt.Errorf("runtime config import did not return version for %q", configType)
+		}
+		m.versions[configType] = version
+	}
+	m.config = candidate
+	m.notifyLocked()
+	return m.config, nil
+}
+
+func (m *Manager) notifyLocked() {
+	for channel := range m.subs {
+		select {
+		case channel <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (m *Manager) load(ctx context.Context) error {

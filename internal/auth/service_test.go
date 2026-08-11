@@ -67,3 +67,25 @@ func TestAdministratorChangeKey(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateAccessKeyHash(t *testing.T) {
+	encoded, err := hashAccessKey("a-secure-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAccessKeyHash(encoded); err != nil {
+		t.Fatalf("generated access key hash was rejected: %v", err)
+	}
+
+	invalid := []string{
+		"$2a$04$W1X.JN8MO7VSG7n7d0bYE.5W3UIaXTxdy8ZDHdd60FmBHKEOUmeje",
+		"$argon2id$v=19$m=0,t=3,p=4$c2FsdA$a2V5",
+		"$argon2id$v=19$m=4294967295,t=3,p=4$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZg",
+		"$argon2id$v=19$m=65536,t=3,p=4$not-base64!$a2V5",
+	}
+	for _, value := range invalid {
+		if err := ValidateAccessKeyHash(value); err == nil {
+			t.Fatalf("invalid access key hash was accepted: %q", value)
+		}
+	}
+}

@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, FileCog, KeyRound, RotateCcw, Save } from "lucide-react";
+import { AlertTriangle, Bell, Database, Download, FileArchive, FileCheck2, FileCog, KeyRound, LayoutDashboard, LockKeyhole, LockOpen, Plus, Radio, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../lib/api";
+import { api, apiBlob } from "../lib/api";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { IconButton } from "../components/ui/IconButton";
 import { Switch } from "../components/ui/Switch";
+import { Checkbox } from "../components/ui/Checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/Dialog";
@@ -35,6 +36,8 @@ export function SettingsPage() {
   const [resetRequest, setResetRequest] = useState(null);
   const [resetSignal, setResetSignal] = useState(null);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const reload = async () => {
     const value = await api("/api/v1/system/config");
@@ -93,7 +96,7 @@ export function SettingsPage() {
       </TabsList>
       <TabsContent value="runtime" forceMount>
         <section className="settings-config-runtime">
-          <div className="section-header"><div><h2>动态配置</h2><p>配置保存在 system_configs 表中，修改后无需重启服务。</p></div><div className="settings-config-actions"><Button variant="outline" size="sm" onClick={() => setKeyDialogOpen(true)}><KeyRound size={14} />修改管理员密钥</Button><Button variant="outline" size="sm" onClick={() => setResetRequest("all")} disabled={saving}><RotateCcw size={14} />恢复全部默认</Button></div></div>
+          <div className="section-header"><div><h2>动态配置</h2><p>配置保存在 system_configs 表中，修改后无需重启服务。</p></div><div className="settings-config-actions"><Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)}><Upload size={14} />导出</Button><Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)} disabled={saving || unsavedCount > 0} title={unsavedCount > 0 ? "请先保存或放弃当前修改" : undefined}><Download size={14} />导入</Button><Button variant="outline" size="sm" onClick={() => setKeyDialogOpen(true)}><KeyRound size={14} />修改管理员密钥</Button><Button variant="outline" size="sm" onClick={() => setResetRequest("all")} disabled={saving}><RotateCcw size={14} />恢复全部默认</Button></div></div>
           {metadata ? <RuntimeConfigTable items={metadata.runtime_items || []} onSaved={reload} onDirtyChange={(count) => setUnsavedCounts((current) => current.runtime === count ? current : { ...current, runtime: count })} onRequestReset={setResetRequest} resetSignal={resetSignal} resetting={saving} /> : <div className="records-empty">正在加载配置...</div>}
         </section>
       </TabsContent>
@@ -105,6 +108,8 @@ export function SettingsPage() {
       </TabsContent>
     </Tabs>
     <AdminKeyDialog open={keyDialogOpen} onOpenChange={setKeyDialogOpen} onDirtyChange={(count) => setUnsavedCounts((current) => current.auth === count ? current : { ...current, auth: count })} />
+    <ConfigExportDialog open={exportDialogOpen} onOpenChange={setExportDialogOpen} />
+    <ConfigImportDialog open={importDialogOpen} onOpenChange={setImportDialogOpen} onImported={reload} />
     <AlertDialog open={Boolean(resetRequest)} onOpenChange={(open) => { if (!open && !saving) setResetRequest(null); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -119,6 +124,212 @@ export function SettingsPage() {
       </AlertDialogContent>
     </AlertDialog>
   </div>;
+}
+
+const transferOptions = [
+  { key: "monitors", label: "监控项配置", description: "采集参数可能包含访问凭据", icon: Radio, sensitive: true },
+  { key: "notification_channels", label: "通知渠道配置", description: "Webhook、SMTP 等渠道及凭据", icon: Bell, sensitive: true },
+  { key: "status_board_items", label: "状态看板配置", description: "看板项、阈值和趋势规则", icon: LayoutDashboard }
+];
+
+function ConfigExportDialog({ open, onOpenChange }) {
+  const [selected, setSelected] = useState({ monitors: true, notification_channels: true, status_board_items: true, admin_key: false });
+  const [encryptionKey, setEncryptionKey] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [encrypted, setEncrypted] = useState(true);
+  const [unencryptedConfirmed, setUnencryptedConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const keyValid = !encrypted || (encryptionKey.length >= 12 && encryptionKey === confirmation);
+
+  const close = (force = false) => {
+    if (busy && !force) return;
+    setEncryptionKey("");
+    setConfirmation("");
+    setEncrypted(true);
+    setUnencryptedConfirmed(false);
+    onOpenChange(false);
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!keyValid) { toast.error(encryptionKey !== confirmation ? "两次输入的配置包密码不一致" : "配置包密码至少需要 12 个字符"); return; }
+    setBusy(true);
+    try {
+      const { blob, filename, summary } = await apiBlob("/api/v1/system/config/transfer/export", { method: "POST", body: JSON.stringify({ ...selected, encrypted, encryption_key: encryptionKey, encryption_key_confirm: confirmation }) });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setBusy(false);
+      close(true);
+      toast.success("配置包已导出", { description: formatExportSummary(summary || { ...selected, encrypted, runtime_types: 5 }), duration: 9000 });
+    } catch (exportError) { toast.error(exportError.message); } finally { setBusy(false); }
+  };
+
+  return <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? onOpenChange(true) : close()}>
+    <DialogContent className="config-transfer-dialog">
+      <DialogHeader><div className="config-transfer-heading"><Upload size={20} /><div><DialogTitle>导出配置</DialogTitle><DialogDescription>动态配置始终包含，可附加其他应用配置。</DialogDescription></div></div></DialogHeader>
+      <form onSubmit={submit}>
+        <div className="modal-body config-transfer-body">
+          <div className={`config-export-encryption${encrypted ? " is-encrypted" : " is-plain"}`}><span className="config-transfer-option-icon">{encrypted ? <LockKeyhole size={16} /> : <LockOpen size={16} />}</span><span><strong>{encrypted ? "加密整个配置包" : "不加密配置包"}</strong><small>{encrypted ? "所有导出内容使用同一密码加密" : "所有导出内容将以明文保存"}</small></span><Switch checked={encrypted} onCheckedChange={(checked) => { setEncrypted(checked); setUnencryptedConfirmed(false); }} aria-label="加密整个配置包" /></div>
+          <TransferOption checked disabled icon={Database} label="动态配置" description="导入时始终整体替换，不参与合并" />
+          {transferOptions.map((option) => <TransferOption key={option.key} checked={selected[option.key]} icon={option.icon} label={option.label} description={option.description} sensitive={option.sensitive} onCheckedChange={(checked) => setSelected((current) => ({ ...current, [option.key]: Boolean(checked) }))} />)}
+          <TransferOption checked={selected.admin_key} icon={KeyRound} label="管理员密钥" description="加密保存密钥哈希，导入后现有会话失效" sensitive onCheckedChange={(checked) => setSelected((current) => ({ ...current, admin_key: Boolean(checked) }))} />
+          {encrypted && <div className="config-transfer-key-fields"><label><span>配置包密码</span><Input autoFocus type="password" minLength={12} autoComplete="new-password" value={encryptionKey} onChange={(event) => setEncryptionKey(event.target.value)} required /></label><label><span>确认配置包密码</span><Input type="password" minLength={12} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label>{confirmation && encryptionKey !== confirmation && <p>两次输入的配置包密码不一致</p>}</div>}
+          {!encrypted && <div className="config-transfer-warning is-danger config-unencrypted-warning"><AlertTriangle size={17} /><div><strong>配置包将不加密</strong><span>动态配置、监控参数、通知凭据和管理员密钥（如选择）都可能以明文保存。请仅存放在可信位置。</span><label><Checkbox checked={unencryptedConfirmed} onCheckedChange={(checked) => setUnencryptedConfirmed(Boolean(checked))} /><em>我已了解未加密导出的风险</em></label></div></div>}
+        </div>
+        <DialogFooter><Button type="button" variant="ghost" onClick={() => close()} disabled={busy}>取消</Button><Button type="submit" variant={encrypted ? "default" : "destructive"} disabled={busy || !keyValid || (!encrypted && !unencryptedConfirmed)}>{busy ? "正在导出..." : <><Upload size={15} />导出压缩包</>}</Button></DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+function TransferOption({ checked, disabled, icon: Icon, label, description, sensitive, onCheckedChange }) {
+  return <label className={`config-transfer-option${disabled ? " is-required" : ""}`}><Checkbox checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} /><span className="config-transfer-option-icon"><Icon size={16} /></span><span><strong>{label}{sensitive && <small>敏感</small>}</strong><em>{description}</em></span></label>;
+}
+
+function ConfigImportDialog({ open, onOpenChange, onImported }) {
+  const inputRef = useRef(null);
+  const [file, setFile] = useState(null);
+  const [mode, setMode] = useState("merge");
+  const [encryptionKey, setEncryptionKey] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+
+  const chooseFile = (value) => {
+    if (!value) return;
+    if (!value.name.toLowerCase().endsWith(".zip")) { toast.error("请选择 ZIP 配置文件"); return; }
+    if (value.size > 10 * 1024 * 1024) { toast.error("配置文件不能超过 10 MB"); return; }
+    setFile(value); setPreview(null);
+  };
+  const close = (force = false) => {
+    if (busy && !force) return;
+    setFile(null); setMode("merge"); setEncryptionKey(""); setDragging(false); setPreview(null);
+    if (inputRef.current) inputRef.current.value = "";
+    onOpenChange(false);
+  };
+  const createFormData = () => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("mode", mode);
+    body.append("encryption_key", encryptionKey);
+    return body;
+  };
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!file) { toast.error("请先选择配置包"); return; }
+    setBusy(true);
+    try {
+      if (!preview) {
+        const result = await api("/api/v1/system/config/transfer/import/preview", { method: "POST", body: createFormData() });
+        setPreview(result);
+        return;
+      }
+      const result = await api("/api/v1/system/config/transfer/import", { method: "POST", body: createFormData() });
+      if (!result.admin_key_imported) await onImported();
+      setBusy(false);
+      close(true);
+      toast.success(mode === "replace" ? "配置已完全覆盖" : "配置已合并导入", { description: formatImportSummary(result.summary, result.admin_key_imported), duration: 12000 });
+      if (result.admin_key_imported) window.setTimeout(() => window.dispatchEvent(new CustomEvent("meerkit:unauthorized")), 4000);
+    } catch (importError) { toast.error(importError.message); } finally { setBusy(false); }
+  };
+
+  return <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? onOpenChange(true) : close()}>
+    <DialogContent className="config-transfer-dialog config-import-dialog">
+      <DialogHeader><div className="config-transfer-heading">{preview ? <FileCheck2 size={20} /> : <Download size={20} />}<div><DialogTitle>{preview ? "确认导入变更" : "导入配置"}</DialogTitle><DialogDescription>{preview ? "核对即将新增、覆盖和删除的配置项。" : "上传由 Meerkit 导出的 ZIP 配置包。"}</DialogDescription></div></div></DialogHeader>
+      <form onSubmit={submit}>
+        <div className="modal-body config-transfer-body">
+          <input ref={inputRef} className="sr-only" type="file" accept=".zip,application/zip" onChange={(event) => chooseFile(event.target.files?.[0])} />
+          <button className={`config-import-dropzone${dragging ? " is-dragging" : ""}${preview ? " is-locked" : ""}`} type="button" disabled={Boolean(preview)} onClick={() => inputRef.current?.click()} onDragEnter={(event) => { event.preventDefault(); if (!preview) setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { event.preventDefault(); setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); if (!preview) chooseFile(event.dataTransfer.files?.[0]); }}>
+            <FileArchive size={24} /><span>{file ? <><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></> : <><strong>拖拽配置包到此处</strong><small>或点击选择 ZIP 文件，最大 10 MB</small></>}</span>
+          </button>
+          <fieldset className="config-import-mode" disabled={Boolean(preview)}><legend>导入方式</legend><label className={mode === "merge" ? "is-selected" : ""}><input type="radio" name="import-mode" value="merge" checked={mode === "merge"} onChange={() => { setMode("merge"); setPreview(null); }} /><span><strong>合并</strong><small>不同 ID 新增，相同 ID 覆盖</small></span></label><label className={mode === "replace" ? "is-selected" : ""}><input type="radio" name="import-mode" value="replace" checked={mode === "replace"} onChange={() => { setMode("replace"); setPreview(null); }} /><span><strong>覆盖</strong><small>清空业务配置后完全替换</small></span></label></fieldset>
+          {mode === "replace" && <div className="config-transfer-warning is-danger"><AlertTriangle size={16} /><span>覆盖会清空现有监控项、状态看板和非内置通知渠道。执行记录、站内通知不会从配置包导入。</span></div>}
+          <label className="config-import-key"><span>配置包密码 <small>导入加密包时必填</small></span><Input type="password" autoComplete="current-password" value={encryptionKey} disabled={Boolean(preview)} onChange={(event) => { setEncryptionKey(event.target.value); setPreview(null); }} placeholder="未加密配置包可留空" /></label>
+          {preview && <ConfigImportPreview preview={preview} />}
+        </div>
+        <DialogFooter>{preview && <Button type="button" variant="ghost" onClick={() => setPreview(null)} disabled={busy}>修改选项</Button>}<Button type="button" variant="ghost" onClick={() => close()} disabled={busy}>取消</Button><Button type="submit" disabled={busy || !file} variant={preview && mode === "replace" ? "destructive" : "default"}>{busy ? (preview ? "正在导入..." : "正在分析...") : preview ? <><Download size={15} />确认导入</> : <><FileCheck2 size={15} />预览变更</>}</Button></DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+const importSummarySections = [
+  { key: "runtime", label: "动态配置", icon: Database },
+  { key: "monitors", label: "监控项", icon: Radio },
+  { key: "notification_channels", label: "通知渠道", icon: Bell },
+  { key: "status_board_items", label: "状态看板", icon: LayoutDashboard },
+  { key: "admin_key", label: "管理员密钥", icon: KeyRound }
+];
+
+const importChangeKinds = [
+  { key: "added", label: "新增", icon: Plus },
+  { key: "overwritten", label: "覆盖", icon: RefreshCw },
+  { key: "deleted", label: "删除", icon: Trash2 }
+];
+
+function ConfigImportPreview({ preview }) {
+  const sections = importSummarySections.map((section) => ({ ...section, changes: preview.summary?.[section.key] || {} })).filter((section) => countChanges(section.changes) > 0);
+  const totals = sumChanges(preview.summary);
+  const exportedAt = preview.exported_at ? new Date(preview.exported_at).toLocaleString("zh-CN", { hour12: false }) : "未知";
+  return <section className="config-import-preview" aria-label="导入变更预览">
+    <div className="config-import-preview-heading"><div><strong>变更预览</strong><span>{preview.encrypted ? "加密配置包" : "未加密配置包"} · 导出于 {exportedAt}</span></div><div className="config-import-preview-totals"><span className="is-added">新增 {totals.added}</span><span className="is-overwritten">覆盖 {totals.overwritten}</span><span className="is-deleted">删除 {totals.deleted}</span></div></div>
+    <div className="config-import-preview-sections">{sections.map(({ key, label, icon: Icon, changes }) => <div className="config-import-preview-section" key={key}><div className="config-import-preview-section-title"><Icon size={14} /><strong>{label}</strong><span>{countChanges(changes)} 项变更</span></div>{importChangeKinds.map((kind) => <ConfigChangeGroup key={kind.key} kind={kind} items={changes[kind.key] || []} />)}</div>)}</div>
+  </section>;
+}
+
+function ConfigChangeGroup({ kind, items }) {
+  if (!items.length) return null;
+  const Icon = kind.icon;
+  return <details className={`config-import-change-group is-${kind.key}`} open={items.length <= 6}><summary><Icon size={12} /><span>{kind.label}</span><strong>{items.length}</strong></summary><ul>{items.map((item) => <li key={item.id}><span>{item.name || item.id}</span><code>{item.id}</code></li>)}</ul></details>;
+}
+
+function countChanges(changes = {}) {
+  return importChangeKinds.reduce((total, kind) => total + (changes[kind.key]?.length || 0), 0);
+}
+
+function sumChanges(summary = {}) {
+  return importSummarySections.reduce((totals, section) => {
+    for (const kind of importChangeKinds) totals[kind.key] += summary?.[section.key]?.[kind.key]?.length || 0;
+    return totals;
+  }, { added: 0, overwritten: 0, deleted: 0 });
+}
+
+function formatImportSummary(summary, adminKeyImported) {
+  const sections = importSummarySections.map((section) => {
+    const changes = summary?.[section.key] || {};
+    const parts = importChangeKinds.map((kind) => [kind.label, changes[kind.key]?.length || 0]).filter(([, count]) => count > 0).map(([label, count]) => `${label} ${count}`);
+    return parts.length ? `${section.label}：${parts.join("、")}` : "";
+  }).filter(Boolean);
+  if (adminKeyImported) sections.push("管理员密钥已替换，即将返回登录页");
+  return sections.join("；") || "配置内容无业务项变更";
+}
+
+function formatExportSummary(summary = {}) {
+  const parts = [`动态配置 ${summary.runtime_types || 5} 类`];
+  parts.push(formatExportCategory("监控项", summary.monitors, summary.monitors_included ?? summary.monitors));
+  parts.push(formatExportCategory("通知渠道", summary.notification_channels, summary.notification_channels_included ?? summary.notification_channels));
+  parts.push(formatExportCategory("状态看板", summary.status_board_items, summary.status_board_items_included ?? summary.status_board_items));
+  if (summary.admin_key) parts.push("管理员密钥已包含");
+  else parts.push("管理员密钥未包含");
+  parts.push(summary.encrypted ? "整包已加密" : "配置包未加密");
+  return parts.join(" · ");
+}
+
+function formatExportCategory(label, count, included) {
+  if (!included) return `${label}未包含`;
+  return typeof count === "number" ? `${label} ${count}` : `${label}已包含`;
+}
+
+function formatFileSize(size) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function AdminKeyDialog({ open, onOpenChange, onDirtyChange }) {

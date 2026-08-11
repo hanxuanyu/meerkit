@@ -174,6 +174,7 @@ type RecordNotificationEvent struct {
 	StatusItemName string                          `json:"status_item_name,omitempty"`
 	TrendRuleID    string                          `json:"trend_rule_id,omitempty"`
 	TrendRuleName  string                          `json:"trend_rule_name,omitempty"`
+	TrendDetail    map[string]any                  `json:"trend_detail,omitempty"`
 	Summary        string                          `json:"summary"`
 	Deliveries     map[string]NotificationDelivery `json:"deliveries,omitempty"`
 }

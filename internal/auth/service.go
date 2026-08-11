@@ -19,6 +19,15 @@ import (
 const CookieName = "meerkit_session"
 const minimumAccessKeyLength = 12
 
+const (
+	minimumHashMemory  = 8 * 1024
+	maximumHashMemory  = 256 * 1024
+	maximumHashTime    = 10
+	maximumHashThreads = 16
+	minimumHashBytes   = 16
+	maximumHashBytes   = 64
+)
+
 type Session struct {
 	Token     string    `json:"-"`
 	CSRFToken string    `json:"csrf_token"`
@@ -178,31 +187,64 @@ func hashAccessKey(value string) (string, error) {
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, 64*1024, 3, 4, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 func verifyAccessKey(value, encoded string) (bool, error) {
+	memoryValue, timeValue, threadsValue, salt, expected, err := parseAccessKeyHash(encoded)
+	if err != nil {
+		return false, err
+	}
+	actual := argon2.IDKey([]byte(value), salt, timeValue, memoryValue, threadsValue, uint32(len(expected)))
+	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
+}
+
+// ValidateAccessKeyHash checks that an encoded administrator key uses the
+// format and parameters understood by this authentication implementation.
+// It does not verify a plaintext key and is intended for configuration import
+// validation.
+func ValidateAccessKeyHash(encoded string) error {
+	_, _, _, _, _, err := parseAccessKeyHash(encoded)
+	return err
+}
+
+func parseAccessKeyHash(encoded string) (uint32, uint32, uint8, []byte, []byte, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[1] != "argon2id" {
-		return false, fmt.Errorf("invalid access key hash")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid access key hash")
 	}
 	var version int
 	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return false, fmt.Errorf("unsupported Argon2 version")
+		return 0, 0, 0, nil, nil, fmt.Errorf("unsupported Argon2 version")
 	}
 	parameters := strings.Split(parts[3], ",")
 	if len(parameters) != 3 {
-		return false, fmt.Errorf("invalid Argon2 parameters")
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 parameters")
 	}
-	memoryValue, _ := strconv.ParseUint(strings.TrimPrefix(parameters[0], "m="), 10, 32)
-	timeValue, _ := strconv.ParseUint(strings.TrimPrefix(parameters[1], "t="), 10, 32)
-	threadsValue, _ := strconv.ParseUint(strings.TrimPrefix(parameters[2], "p="), 10, 8)
+	memoryValue, err := parseHashParameter(parameters[0], "m=", 32)
+	if err != nil || memoryValue < minimumHashMemory || memoryValue > maximumHashMemory {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 memory parameter")
+	}
+	timeValue, err := parseHashParameter(parameters[1], "t=", 32)
+	if err != nil || timeValue == 0 || timeValue > maximumHashTime {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 time parameter")
+	}
+	threadsValue, err := parseHashParameter(parameters[2], "p=", 8)
+	if err != nil || threadsValue == 0 || threadsValue > maximumHashThreads {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 threads parameter")
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
-		return false, err
+	if err != nil || len(salt) < minimumHashBytes || len(salt) > maximumHashBytes {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 salt")
 	}
 	expected, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
-		return false, err
+	if err != nil || len(expected) < minimumHashBytes || len(expected) > maximumHashBytes {
+		return 0, 0, 0, nil, nil, fmt.Errorf("invalid Argon2 key")
 	}
-	actual := argon2.IDKey([]byte(value), salt, uint32(timeValue), uint32(memoryValue), uint8(threadsValue), uint32(len(expected)))
-	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
+	return uint32(memoryValue), uint32(timeValue), uint8(threadsValue), salt, expected, nil
+}
+
+func parseHashParameter(value, prefix string, bits int) (uint64, error) {
+	if !strings.HasPrefix(value, prefix) || strings.TrimPrefix(value, prefix) == "" {
+		return 0, fmt.Errorf("invalid parameter")
+	}
+	return strconv.ParseUint(strings.TrimPrefix(value, prefix), 10, bits)
 }
 func randomToken(size int) (string, error) {
 	value := make([]byte, size)

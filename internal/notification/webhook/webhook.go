@@ -204,7 +204,7 @@ func requestBody(config map[string]any, event core.NotificationEvent) (*bytes.Re
 }
 
 func eventQuery(event core.NotificationEvent) map[string]any {
-	return map[string]any{"event_type": event.EventType, "monitor_name": event.MonitorName, "module_type": event.ModuleType, "summary": event.Summary, "triggered_at": event.TriggeredAt.Format(time.RFC3339)}
+	return map[string]any{"event_type": event.EventType, "monitor_name": event.MonitorName, "module_type": event.ModuleType, "summary": event.Summary, "status_item_name": event.StatusItemName, "trend_rule_name": event.TrendRuleName, "trend_detail": event.TrendDetail, "triggered_at": event.TriggeredAt.Format(time.RFC3339)}
 }
 
 func addQuery(target *url.URL, source any) {

@@ -3,6 +3,7 @@ package statusboard
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,12 @@ func TestEvaluateExecutionTransitionsTrendState(t *testing.T) {
 	triggered, err := service.EvaluateExecution(ctx, monitorValue, failing)
 	if err != nil || len(triggered.Events) != 1 || triggered.Events[0].Event.EventType != "trend_triggered" || !triggered.ItemStates[item.ID].Rules["rule"].Active {
 		t.Fatalf("triggered=%#v err=%v", triggered, err)
+	}
+	if summary := triggered.Events[0].Event.Summary; !strings.Contains(summary, "窗口 1 次") || !strings.Contains(summary, "连续异常 1 次") {
+		t.Fatalf("trend summary does not explain trigger: %q", summary)
+	}
+	if detail := triggered.Events[0].Event.TrendDetail; detail["window"] != 1 || detail["abnormal_count"] != 1 {
+		t.Fatalf("unexpected trend detail: %#v", detail)
 	}
 	item.RuntimeState = triggered.ItemStates[item.ID]
 	if err := database.UpdateStatusBoardItem(ctx, item); err != nil {

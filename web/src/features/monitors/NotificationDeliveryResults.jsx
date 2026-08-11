@@ -10,7 +10,7 @@ export function NotificationDeliveryResults({ events = [], channels = [], expand
   const channelMap = new Map(channels.map((channel) => [channel.id, channel]));
   return <div className="notification-event-list">{events.map((event) => {
     const deliveries = Object.entries(event.deliveries || {});
-    return <section className="notification-event-group" key={event.id}><header><div><strong>{event.source === "status_trend" ? event.status_item_name || "状态趋势" : "监控条件"}</strong><span>{notificationEventLabel(event.event_type)}{event.trend_rule_name ? ` · ${event.trend_rule_name}` : ""}</span></div><Badge tone={event.event_type.includes("recovered") ? "success" : "warning"}>{notificationEventLabel(event.event_type)}</Badge></header><p>{event.summary}</p>{deliveries.length ? <div className="notification-delivery-list">{deliveries.map(([channelID, raw]) => {
+    return <section className="notification-event-group" key={event.id}><header><div><strong>{event.source === "status_trend" ? event.status_item_name || "状态趋势" : "监控条件"}</strong><span>{notificationEventLabel(event.event_type)}{event.trend_rule_name ? ` · ${event.trend_rule_name}` : ""}</span></div><Badge tone={event.event_type.includes("recovered") ? "success" : "warning"}>{notificationEventLabel(event.event_type)}</Badge></header><p>{event.summary}</p>{event.source === "status_trend" && <TrendDetail detail={event.trend_detail} />}{deliveries.length ? <div className="notification-delivery-list">{deliveries.map(([channelID, raw]) => {
 		const channel = channelMap.get(channelID);
     const delivery = normalizeDelivery(raw);
     const status = deliveryStatus(delivery.status);
@@ -26,6 +26,14 @@ export function NotificationDeliveryResults({ events = [], channels = [], expand
 		</div>;
 	})}</div> : <div className="notification-delivery-empty compact"><MinusCircle size={15} /><div><strong>未选择通知渠道</strong><span>事件已记录，但没有需要投递的渠道。</span></div></div>}</section>;
   })}</div>;
+}
+
+function TrendDetail({ detail = {} }) {
+  const entries = Object.entries(detail || {}).filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (!entries.length) return null;
+  const labels = { window: "窗口", abnormal_count: "异常次数", minimum: "最低次数", value: "实际值", threshold: "阈值", operator: "比较", reason: "原因" };
+  const operators = { gt: ">", gte: ">=", lt: "<", lte: "<=", eq: "=", neq: "不等于" };
+  return <div className="notification-trend-detail">{entries.map(([key, value]) => <span key={key}><small>{labels[key] || key}</small><strong>{key === "operator" ? operators[value] || value : typeof value === "object" ? JSON.stringify(value) : String(value)}</strong></span>)}</div>;
 }
 
 function notificationEventLabel(type) {

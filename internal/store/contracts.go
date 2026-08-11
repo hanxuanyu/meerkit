@@ -97,12 +97,31 @@ type SystemConfigRepository interface {
 	UpdateSystemConfig(context.Context, string, json.RawMessage, int) (SystemConfig, error)
 }
 
+type ConfigurationImport struct {
+	Runtime              map[string]json.RawMessage
+	Monitors             []core.Monitor
+	NotificationChannels []core.NotificationChannel
+	StatusBoardItems     []core.StatusBoardItem
+	Replace              bool
+	AdminKeyHash         string
+}
+
+type ConfigurationImportResult struct {
+	Versions map[string]int
+}
+
+type ConfigurationTransferRepository interface {
+	ImportConfiguration(context.Context, ConfigurationImport) (ConfigurationImportResult, error)
+	AdminKeyHash(context.Context) (string, error)
+}
+
 type APIRepository interface {
 	MonitorRepository
 	RecordRepository
 	ChannelRepository
 	NotificationRepository
 	StatusBoardRepository
+	ConfigurationTransferRepository
 	GetDescriptorSnapshot(context.Context, string, string) (core.ModuleDescriptor, error)
 	Ping(context.Context) error
 }

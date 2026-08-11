@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -310,7 +311,7 @@ func (s *Service) EvaluateExecution(ctx context.Context, monitorValue core.Monit
 				if eventType == "trend_recovered" {
 					action = "已恢复"
 				}
-				summary := fmt.Sprintf("状态看板“%s”的趋势规则“%s”%s", item.Name, rule.Name, action)
+				summary := fmt.Sprintf("状态看板“%s”的趋势规则“%s”%s：%s", item.Name, rule.Name, action, trendDetailSummary(rule, detail))
 				result.Events = append(result.Events, PendingNotification{ChannelIDs: append([]string(nil), item.NotificationChannelIDs...), Event: core.NotificationEvent{
 					ID: core.NewID(), Source: "status_trend", EventType: eventType, MonitorID: monitorValue.ID, MonitorName: monitorValue.Name, ModuleType: monitorValue.ModuleType,
 					RecordID: record.ID, TriggeredAt: record.FinishedAt, Summary: summary, CurrentResult: record.Result, StatusItemID: item.ID, StatusItemName: item.Name,
@@ -324,6 +325,56 @@ func (s *Service) EvaluateExecution(ctx context.Context, monitorValue core.Monit
 		result.Stream.Items = append(result.Stream.Items, StreamItem{ItemID: item.ID, Sample: current})
 	}
 	return result, nil
+}
+
+func trendDetailSummary(rule core.TrendRule, detail map[string]any) string {
+	window := detailInt(detail, "window")
+	switch rule.Type {
+	case core.TrendConsecutive:
+		return fmt.Sprintf("窗口 %d 次，连续异常 %d 次", window, detailInt(detail, "abnormal_count"))
+	case core.TrendCount:
+		return fmt.Sprintf("窗口 %d 次，异常 %d 次（至少 %d 次）", window, detailInt(detail, "abnormal_count"), detailInt(detail, "minimum"))
+	case core.TrendAverage:
+		return fmt.Sprintf("窗口 %d 次，平均值 %s %s 阈值 %s", window, detailNumber(detail, "value"), trendOperatorLabel(rule.Operator), detailNumber(detail, "threshold"))
+	case core.TrendDelta:
+		unit := ""
+		if rule.DeltaMode == "percent" {
+			unit = "%"
+		}
+		return fmt.Sprintf("窗口 %d 次，变化量 %s%s %s 阈值 %s%s", window, detailNumber(detail, "value"), unit, trendOperatorLabel(rule.Operator), detailNumber(detail, "threshold"), unit)
+	case core.TrendSlope:
+		return fmt.Sprintf("窗口 %d 次，趋势斜率 %s %s 阈值 %s", window, detailNumber(detail, "value"), trendOperatorLabel(rule.Operator), detailNumber(detail, "threshold"))
+	default:
+		return fmt.Sprintf("窗口 %d 次", window)
+	}
+}
+
+func detailInt(detail map[string]any, key string) int {
+	if value, ok := detail[key].(int); ok {
+		return value
+	}
+	if value, ok := detail[key].(float64); ok {
+		return int(value)
+	}
+	return 0
+}
+
+func detailNumber(detail map[string]any, key string) string {
+	value, ok := detail[key].(float64)
+	if !ok {
+		if integer, integerOK := detail[key].(int); integerOK {
+			return strconv.Itoa(integer)
+		}
+		return "-"
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func trendOperatorLabel(operator string) string {
+	if label := map[string]string{"gt": ">", "gte": ">=", "lt": "<", "lte": "<=", "eq": "=", "neq": "不等于"}[operator]; label != "" {
+		return label
+	}
+	return operator
 }
 
 func (s *Service) descriptor(ctx context.Context, value core.Monitor) (core.ModuleDescriptor, error) {
@@ -424,13 +475,23 @@ func normalizeAndValidateValueMappings(source *core.StatusItemSource) error {
 		source.ValueMappings = []core.StatusValueMapping{{Value: "", Level: core.StatusLevelFailure, Label: "无值", Color: "red"}}
 	}
 	if len(source.ValueMappings) > 100 {
-		return errors.New("精确值颜色规则不能超过 100 条")
+		return errors.New("值颜色规则不能超过 100 条")
 	}
 	seen := map[string]bool{}
 	for index := range source.ValueMappings {
 		mapping := &source.ValueMappings[index]
+		matchType := mapping.MatchType
+		if matchType == "" {
+			matchType = core.StatusMatchExact
+		}
+		if source.ValueType == core.StatusValueNumber && matchType != core.StatusMatchExact {
+			return fmt.Errorf("第 %d 条数值规则只支持精确匹配", index+1)
+		}
+		if source.ValueType == core.StatusValueText && matchType != core.StatusMatchExact && matchType != core.StatusMatchRegex {
+			return fmt.Errorf("第 %d 条文本规则匹配方式无效", index+1)
+		}
 		if !validStatusLevel(mapping.Level) {
-			return fmt.Errorf("第 %d 条精确值规则状态无效", index+1)
+			return fmt.Errorf("第 %d 条值规则状态无效", index+1)
 		}
 		if strings.TrimSpace(mapping.Label) == "" {
 			mapping.Label = statusLevelLabel(mapping.Level)
@@ -438,7 +499,13 @@ func normalizeAndValidateValueMappings(source *core.StatusItemSource) error {
 		if mapping.Color == "" {
 			mapping.Color = defaultStatusColor(mapping.Level)
 		} else if !validStatusColor(mapping.Color) {
-			return fmt.Errorf("第 %d 条精确值规则颜色预设无效", index+1)
+			return fmt.Errorf("第 %d 条值规则颜色预设无效", index+1)
+		}
+		if source.ValueType == core.StatusValueText && matchType == core.StatusMatchRegex {
+			if _, err := regexp.Compile(mapping.Value); err != nil {
+				return fmt.Errorf("第 %d 条文本规则正则表达式无效：%w", index+1, err)
+			}
+			continue
 		}
 		key := "text:" + mapping.Value
 		if source.ValueType == core.StatusValueNumber {
