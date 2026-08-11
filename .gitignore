@@ -8,6 +8,8 @@
 config.yaml
 .DS_Store
 /.gocache/
+/.air/
+/.tools/
 /dist/
 /keys/
 /docs/node_modules/

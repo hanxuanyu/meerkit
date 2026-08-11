@@ -1,0 +1,41 @@
+root = "."
+tmp_dir = ".air"
+
+[build]
+cmd = "go build -o ./.air/meerkit ."
+entrypoint = ["./.air/meerkit", "serve"]
+include_ext = ["go"]
+exclude_dir = [
+  ".air",
+  ".git",
+  ".gocache",
+  ".tools",
+  "data",
+  "dist",
+  "docs",
+  "logs",
+  "testdata",
+  "vendor",
+  "web",
+]
+exclude_regex = ["_test\\.go"]
+exclude_unchanged = true
+delay = 500
+stop_on_error = true
+send_interrupt = true
+kill_delay = "11s"
+log = "build-errors.log"
+
+[build.windows]
+cmd = "go build -o .\\.air\\meerkit.exe ."
+entrypoint = [".air\\meerkit.exe", "serve"]
+
+[log]
+time = true
+
+[misc]
+clean_on_exit = true
+
+[screen]
+clear_on_rebuild = false
+keep_scroll = true

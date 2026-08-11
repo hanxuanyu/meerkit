@@ -30,6 +30,8 @@ make dev
 
 Open `http://127.0.0.1:5173`. The frontend development server proxies API and WebSocket traffic to `http://127.0.0.1:8080`. The first visit asks you to set an administrator access key containing at least 12 characters.
 
+In development, Vite handles frontend hot updates while Air rebuilds and restarts the backend after Go source changes.
+
 To run only the host with its embedded production UI:
 
 ```bash

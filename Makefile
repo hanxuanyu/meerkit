@@ -3,6 +3,8 @@ SHELL := /bin/sh
 
 GO ?= go
 NPM ?= npm
+AIR_VERSION ?= v1.67.4
+AIR_BIN ?= $(CURDIR)/.tools/bin/air
 
 WEB_DIR ?= web
 DOCS_DIR ?= docs
@@ -17,7 +19,7 @@ VERSION ?= $(MEERKIT_VERSION)
 BACKEND_ARGS ?=
 FRONTEND_ARGS ?=
 
-.PHONY: help deps dev dev-backend dev-frontend frontend-build prepare-frontend-assets \
+.PHONY: help deps dev dev-backend dev-frontend dev-tools frontend-build prepare-frontend-assets \
 	docs-dev docs-build docs-preview \
 	package-plugins package-plugin package-release plugins release generate-key keygen clean reset
 
@@ -28,6 +30,7 @@ help:
 		'  make deps               Install frontend and Go dependencies' \
 		'  make dev                Start the backend and Vite frontend' \
 		'  make dev-backend        Start only the Go backend' \
+		'  make dev-tools          Install the pinned backend hot-reload tool' \
 		'  make dev-frontend       Start only the Vite frontend' \
 		'  make frontend-build     Build frontend production assets' \
 		'  make docs-dev           Start the VitePress documentation site' \
@@ -43,12 +46,20 @@ help:
 		'Common overrides:' \
 		'  TARGETS=linux/amd64,linux/arm64  SIGN_KEY=path  KEY_ID=name' \
 		'  VERSION=v0.1.0  KEY_PREFIX=keys/meerkit-official' \
-		'  BACKEND_ARGS="--config config.yaml"  FRONTEND_ARGS="--host 0.0.0.0"'
+		'  BACKEND_ARGS="--config config.yaml"  FRONTEND_ARGS="--host 0.0.0.0"' \
+		'  AIR_VERSION=v1.67.4  AIR_BIN=/path/to/air'
 
-deps:
+deps: dev-tools
 	$(GO) mod download
 	$(NPM) --prefix $(WEB_DIR) ci
 	$(NPM) --prefix $(DOCS_DIR) ci
+
+dev-tools:
+	@if [ ! -x "$(AIR_BIN)" ]; then \
+		mkdir -p "$(dir $(AIR_BIN))"; \
+		echo "Installing Air $(AIR_VERSION) into $(AIR_BIN)..."; \
+		GOBIN="$(abspath $(dir $(AIR_BIN)))" $(GO) install github.com/air-verse/air@$(AIR_VERSION); \
+	fi
 
 prepare-frontend-assets:
 	@if [ ! -f "$(WEB_DIR)/dist/index.html" ]; then \
@@ -84,8 +95,8 @@ dev: prepare-frontend-assets
 	fi; \
 	exit "$$status"
 
-dev-backend: prepare-frontend-assets
-	$(GO) run . serve $(BACKEND_ARGS)
+dev-backend: prepare-frontend-assets dev-tools
+	$(AIR_BIN) -c .air.toml -- $(BACKEND_ARGS)
 
 dev-frontend:
 	$(NPM) --prefix $(WEB_DIR) run dev -- $(FRONTEND_ARGS)
@@ -132,7 +143,7 @@ generate-key:
 	./scripts/package-plugins.sh --generate-key "$(KEY_PREFIX)"
 
 clean:
-	rm -rf ./dist ./web/dist ./docs/.vitepress/.temp ./docs/.vitepress/cache ./docs/.vitepress/dist ./.gocache
+	rm -rf ./dist ./web/dist ./docs/.vitepress/.temp ./docs/.vitepress/cache ./docs/.vitepress/dist ./.air ./.gocache
 	rm -f ./meerkit ./meerkit.exe
 
 reset: clean

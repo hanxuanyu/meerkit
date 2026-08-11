@@ -9,7 +9,7 @@ make deps
 make dev-backend
 ```
 
-`make dev-backend` 会在 `web/dist/index.html` 缺失时先构建前端，然后执行 `go run . serve`。传递参数：
+`make dev-backend` 会在 `web/dist/index.html` 缺失时先构建前端，然后使用固定版本的 Air 监听 Go 源码；源码变化后会自动重新编译并重启 `serve` 进程。首次运行会把 Air 安装到仓库内的 `.tools/bin`。传递参数：
 
 ```bash
 make dev-backend \
@@ -17,6 +17,8 @@ make dev-backend \
 ```
 
 没有通过 ldflags 注入版本时，宿主版本为 `dev`。开发宿主会扫描 `plugins.source_dir`，构建除模板外的源码插件，并把产物写到数据目录。
+
+Air 配置位于仓库根目录的 `.air.toml`。编译失败时旧进程会停止，修复代码并保存后会自动再次编译；数据库等持久化状态不会丢失，但重启期间正在处理的请求可能中断。可通过 `AIR_VERSION` 或 `AIR_BIN` 覆盖默认工具版本和路径。
 
 ## 分层约定
 
