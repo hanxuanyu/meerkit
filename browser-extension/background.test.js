@@ -115,6 +115,43 @@ test("changing the reuse key preserves the old tab and creates a separate associ
   assert.equal(localState["reusableTab:browser-example-html:account-b"].tab_id, second.tab_id);
 });
 
+test("captures request, connection, cache and timing details", async () => {
+  const harness = createHarness({
+    networkResponse: {
+      url: "https://example.com/api/items",
+      method: "POST",
+      requestHeaders: { "Content-Type": "application/json" },
+      requestBody: "{\"page\":1}",
+      responseHeaders: { "Content-Type": "application/json", "X-Request-ID": "req-1" },
+      body: "{\"items\":[1,2]}",
+      mimeType: "application/json",
+      protocol: "h2",
+      remoteIPAddress: "203.0.113.7",
+      remotePort: 443,
+      fromServiceWorker: true,
+      encodedDataLength: 1280,
+      durationMS: 125
+    }
+  });
+  const request = reusableRequest();
+  request.network_captures = [{ id: "api", url_contains: "/api/", max_body_bytes: 4096 }];
+
+  const result = await harness.context.executeRun(request);
+  const captured = result.network[0];
+
+  assert.equal(captured.capture_id, "api");
+  assert.equal(captured.method, "POST");
+  assert.equal(captured.request_headers["Content-Type"], "application/json");
+  assert.equal(captured.request_body, "{\"page\":1}");
+  assert.equal(captured.headers["X-Request-ID"], "req-1");
+  assert.equal(captured.protocol, "h2");
+  assert.equal(captured.remote_ip_address, "203.0.113.7");
+  assert.equal(captured.from_service_worker, true);
+  assert.equal(captured.encoded_data_length, 1280);
+  assert.equal(captured.duration_ms, 125);
+  assert.equal(captured.body, "{\"items\":[1,2]}");
+});
+
 function reusableRequest() {
   return {
     keep_tab: true,
@@ -125,7 +162,7 @@ function reusableRequest() {
   };
 }
 
-function createHarness({ localState = {}, tabs = [], groups: initialGroups = [], redirects = {} } = {}) {
+function createHarness({ localState = {}, tabs = [], groups: initialGroups = [], redirects = {}, networkResponse = null } = {}) {
   const tabMap = new Map(tabs.map((tab) => [tab.id, { title: "", ...tab }]));
   const sessionState = {};
   const groups = new Map(initialGroups.map((group) => [group.id, { ...group }]));
@@ -134,6 +171,12 @@ function createHarness({ localState = {}, tabs = [], groups: initialGroups = [],
   let nextTabID = Math.max(0, ...tabMap.keys()) + 1;
   let nextGroupID = Math.max(0, ...groups.keys()) + 1;
   const event = { addListener() {}, removeListener() {} };
+  const debuggerListeners = new Set();
+  const debuggerEvent = {
+    addListener(listener) { debuggerListeners.add(listener); },
+    removeListener(listener) { debuggerListeners.delete(listener); },
+    emit(...args) { for (const listener of debuggerListeners) listener(...args); }
+  };
   const storageArea = (state) => ({
     async get(query) {
       if (typeof query === "string") return { [query]: state[query] };
@@ -167,6 +210,13 @@ function createHarness({ localState = {}, tabs = [], groups: initialGroups = [],
         Object.assign(tab, values);
         if (values.url) tab.url = redirects[values.url] || values.url;
         tab.status = "complete";
+        if (networkResponse) {
+          const requestId = "network-request";
+          const started = 100;
+          debuggerEvent.emit({ tabId: id }, "Network.requestWillBeSent", { requestId, timestamp: started, request: { url: networkResponse.url, method: networkResponse.method, headers: networkResponse.requestHeaders, postData: networkResponse.requestBody }, initiator: { type: "script" } });
+          debuggerEvent.emit({ tabId: id }, "Network.responseReceived", { requestId, type: "Fetch", response: { url: networkResponse.url, status: 200, statusText: "OK", mimeType: networkResponse.mimeType, headers: networkResponse.responseHeaders, protocol: networkResponse.protocol, remoteIPAddress: networkResponse.remoteIPAddress, remotePort: networkResponse.remotePort, fromDiskCache: Boolean(networkResponse.fromDiskCache), fromServiceWorker: Boolean(networkResponse.fromServiceWorker), timing: { requestTime: started, sendStart: 1, receiveHeadersEnd: networkResponse.durationMS } } });
+          debuggerEvent.emit({ tabId: id }, "Network.loadingFinished", { requestId, timestamp: started + networkResponse.durationMS / 1000, encodedDataLength: networkResponse.encodedDataLength });
+        }
         return { ...tab };
       },
       async reload(id) { reloaded.push(id); },
@@ -191,7 +241,15 @@ function createHarness({ localState = {}, tabs = [], groups: initialGroups = [],
         return groups.get(id);
       }
     },
-    debugger: { onEvent: event },
+    debugger: {
+      onEvent: debuggerEvent,
+      async attach() {},
+      async detach() {},
+      async sendCommand(_target, method) {
+        if (method === "Network.getResponseBody") return { body: networkResponse?.body || "", base64Encoded: false };
+        return {};
+      }
+    },
     scripting: {}
   };
   const context = vm.createContext({ chrome, console, crypto: { randomUUID: () => "test-agent" }, performance, setInterval, clearInterval, setTimeout, clearTimeout, URL, WebSocket: class {} });

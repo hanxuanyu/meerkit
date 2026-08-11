@@ -494,7 +494,13 @@ async function createNetworkCapture(tabId, rules) {
   await chrome.debugger.sendCommand(target, "Network.enable", { maxTotalBufferSize: 50 * 1024 * 1024, maxResourceBufferSize: 10 * 1024 * 1024 });
   const listener = (source, method, params) => {
     if (source.tabId !== tabId) return;
-    if (method === "Network.requestWillBeSent") requests.set(params.requestId, { method: params.request?.method || "" });
+    if (method === "Network.requestWillBeSent") requests.set(params.requestId, {
+      method: params.request?.method || "",
+      headers: normalizeHeaders(params.request?.headers || {}),
+      postData: String(params.request?.postData || ""),
+      timestamp: Number(params.timestamp) || 0,
+      initiatorType: String(params.initiator?.type || "")
+    });
     if (method === "Network.responseReceived") {
       for (const rule of rules) {
         const response = params.response || {};
@@ -504,12 +510,13 @@ async function createNetworkCapture(tabId, rules) {
       }
     }
     if (method === "Network.loadingFinished" && responses.has(params.requestId)) {
-      const task = collectResponse(target, params.requestId, responses.get(params.requestId), requests.get(params.requestId), results).finally(() => pending.delete(task));
+      const task = collectResponse(target, params.requestId, responses.get(params.requestId), requests.get(params.requestId), params, results).finally(() => pending.delete(task));
       pending.add(task);
     }
     if (method === "Network.loadingFailed" && responses.has(params.requestId)) {
       const matched = responses.get(params.requestId);
-      results.push({ capture_id: matched.rule.id, url: matched.response.url, status: matched.response.status || 0, resource_type: matched.resourceType, error: params.errorText || "Network request failed.", _sequence: matched.sequence });
+      const request = requests.get(params.requestId);
+      results.push({ capture_id: matched.rule.id, url: matched.response.url, method: request?.method || "", status: matched.response.status || 0, resource_type: matched.resourceType, request_headers: request?.headers || {}, request_body: request?.postData || "", initiator_type: request?.initiatorType || "", duration_ms: request?.timestamp && params.timestamp ? Math.max(0, Math.round((params.timestamp - request.timestamp) * 1000)) : 0, error: params.errorText || "Network request failed.", _sequence: matched.sequence });
     }
   };
   chrome.debugger.onEvent.addListener(listener);
@@ -530,8 +537,9 @@ async function createNetworkCapture(tabId, rules) {
   };
 }
 
-async function collectResponse(target, requestId, matched, request, results) {
+async function collectResponse(target, requestId, matched, request, loading, results) {
   const response = matched.response;
+  const maxBytes = clamp(Number(matched.rule.max_body_bytes) || 262144, 1024, 1048576);
   const output = {
     capture_id: matched.rule.id,
     url: response.url,
@@ -540,12 +548,23 @@ async function collectResponse(target, requestId, matched, request, results) {
     status_text: response.statusText || "",
     resource_type: matched.resourceType || "",
     mime_type: response.mimeType || "",
+    protocol: response.protocol || "",
+    remote_ip_address: response.remoteIPAddress || "",
+    remote_port: Math.round(response.remotePort || 0),
+    initiator_type: request?.initiatorType || "",
     headers: normalizeHeaders(response.headers || {}),
+    request_headers: request?.headers || {},
+    request_body: String(request?.postData || "").slice(0, maxBytes),
+    request_body_truncated: String(request?.postData || "").length > maxBytes,
+    encoded_data_length: Math.round(loading?.encodedDataLength || response.encodedDataLength || 0),
+    duration_ms: request?.timestamp && loading?.timestamp ? Math.max(0, Math.round((loading.timestamp - request.timestamp) * 1000)) : 0,
+    from_disk_cache: Boolean(response.fromDiskCache),
+    from_service_worker: Boolean(response.fromServiceWorker),
+    timing: normalizeTiming(response.timing || {}),
     _sequence: matched.sequence
   };
   try {
     const body = await chrome.debugger.sendCommand(target, "Network.getResponseBody", { requestId });
-    const maxBytes = clamp(Number(matched.rule.max_body_bytes) || 262144, 1024, 1048576);
     output.body = String(body.body || "").slice(0, maxBytes);
     output.body_base64 = Boolean(body.base64Encoded);
     output.truncated = String(body.body || "").length > maxBytes;
@@ -559,6 +578,10 @@ function normalizeHeaders(headers) {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [String(key), String(value)]));
 }
 
+function normalizeTiming(timing) {
+  return Object.fromEntries(Object.entries(timing).filter(([, value]) => Number.isFinite(value)).map(([key, value]) => [String(key), Number(value)]));
+}
+
 function tabInfo(tab) {
   return { tab_id: tab.id, window_id: tab.windowId, url: tab.url || "", title: tab.title || "", status: tab.status || "" };
 }
@@ -569,7 +592,14 @@ function validGroupColor(value) { return ["grey", "blue", "red", "yellow", "gree
 function clamp(value, minimum, maximum) { return Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : minimum)); }
 function remaining(deadline) { return Math.max(1, deadline - Date.now()); }
 function sleep(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
-function withTimeout(promise, milliseconds, message) { return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(message)), milliseconds))]); }
+async function withTimeout(promise, milliseconds, message) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function safeError(error) { return String(error?.message || error || "Browser operation failed.").slice(0, 2000); }
 
 void ensureIdentity().then(connect);

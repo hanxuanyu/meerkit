@@ -53,18 +53,30 @@ type BrowserActionResult struct {
 }
 
 type BrowserNetworkResult struct {
-	CaptureID    string            `json:"capture_id"`
-	URL          string            `json:"url"`
-	Method       string            `json:"method,omitempty"`
-	Status       int               `json:"status,omitempty"`
-	StatusText   string            `json:"status_text,omitempty"`
-	ResourceType string            `json:"resource_type,omitempty"`
-	MimeType     string            `json:"mime_type,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	Body         string            `json:"body,omitempty"`
-	BodyBase64   bool              `json:"body_base64,omitempty"`
-	Truncated    bool              `json:"truncated,omitempty"`
-	Error        string            `json:"error,omitempty"`
+	CaptureID            string             `json:"capture_id"`
+	URL                  string             `json:"url"`
+	Method               string             `json:"method,omitempty"`
+	Status               int                `json:"status,omitempty"`
+	StatusText           string             `json:"status_text,omitempty"`
+	ResourceType         string             `json:"resource_type,omitempty"`
+	MimeType             string             `json:"mime_type,omitempty"`
+	Protocol             string             `json:"protocol,omitempty"`
+	RemoteIPAddress      string             `json:"remote_ip_address,omitempty"`
+	RemotePort           int                `json:"remote_port,omitempty"`
+	InitiatorType        string             `json:"initiator_type,omitempty"`
+	Headers              map[string]string  `json:"headers,omitempty"`
+	RequestHeaders       map[string]string  `json:"request_headers,omitempty"`
+	RequestBody          string             `json:"request_body,omitempty"`
+	RequestBodyTruncated bool               `json:"request_body_truncated,omitempty"`
+	Body                 string             `json:"body,omitempty"`
+	BodyBase64           bool               `json:"body_base64,omitempty"`
+	Truncated            bool               `json:"truncated,omitempty"`
+	EncodedDataLength    int64              `json:"encoded_data_length,omitempty"`
+	Duration             int64              `json:"duration_ms,omitempty"`
+	FromDiskCache        bool               `json:"from_disk_cache,omitempty"`
+	FromServiceWorker    bool               `json:"from_service_worker,omitempty"`
+	Timing               map[string]float64 `json:"timing,omitempty"`
+	Error                string             `json:"error,omitempty"`
 }
 
 type BrowserRunResult struct {

@@ -119,6 +119,7 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/system/config/transfer/import", a.importConfiguration)
 	api.GET("/browser", a.getBrowserStatus)
 	api.POST("/browser/pairing-token/rotate", a.rotateBrowserPairingToken)
+	api.POST("/browser/run", a.runBrowser)
 
 	api.GET("/notification-channels", legacyParts(a.handleChannels))
 	api.POST("/notification-channels", legacyParts(a.handleChannels))

@@ -34,6 +34,7 @@ npm --prefix web run build
 | `/notifications/:id?` | 站内通知中心 |
 | `/notification-channels` | 通知渠道 |
 | `/plugins` | 插件管理 |
+| `/browser-debug` | 内置浏览器操作调试台 |
 | `/logs` | 系统与插件日志 |
 | `/settings` | 启动与运行时配置、管理员密钥 |
 

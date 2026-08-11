@@ -20,7 +20,7 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 - 点击元素和填写表单控件
 - 在页面主世界执行 JavaScript
 - 截取当前页面可见区域
-- 通过 `chrome.debugger` 和 CDP 捕获匹配的网络响应及响应正文
+- 通过 `chrome.debugger` 和 CDP 捕获匹配的网络请求、响应正文、标头、连接、缓存与时序信息
 
 业务 URL、选择器、页面流程和监控结果语义由独立的 Meerkit 监控插件维护。
 

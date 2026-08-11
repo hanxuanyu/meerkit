@@ -29,7 +29,7 @@ export function placeholderFor(key) {
 
 export function pageTitle(page) {
   if (page?.startsWith("monitor-details:") || page?.startsWith("monitor-records:")) return "执行记录";
-  return { overview: "总览", monitors: "监控项", statusBoard: "状态看板", inbox: "通知中心", notifications: "通知渠道", plugins: "监控插件", logs: "日志", settings: "系统设置" }[page];
+  return { overview: "总览", monitors: "监控项", statusBoard: "状态看板", inbox: "通知中心", notifications: "通知渠道", plugins: "监控插件", browserDebug: "浏览器工具", logs: "日志", settings: "系统设置" }[page];
 }
 
 export function formatDate(value, fallback = "尚未执行") {

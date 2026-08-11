@@ -17,6 +17,7 @@ import { SettingsPage } from "../pages/SettingsPage";
 import { StatusBoardPage } from "../pages/StatusBoardPage";
 import { PluginsPage } from "../pages/PluginsPage";
 import { SystemLogsPage } from "../pages/SystemLogsPage";
+import { BrowserDebugPage } from "../pages/BrowserDebugPage";
 import { AppOverlays } from "./AppOverlays";
 import { pathForRoute, routeFromPath } from "./routes";
 import { useMobileShell } from "./useMobileShell";
@@ -296,6 +297,8 @@ export function App() {
           ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onDuplicate={openDuplicateChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
           : activePage === "plugins"
             ? <PluginsPage notify={notify} onChanged={refresh} />
+          : activePage === "browserDebug"
+            ? <BrowserDebugPage />
           : activePage === "logs"
             ? <SystemLogsPage />
           : activePage.startsWith("monitor-details:")
