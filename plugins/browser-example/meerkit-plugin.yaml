@@ -2,16 +2,26 @@
 schema_version: 1
 id: meerkit.browser-example
 name: Browser Example Monitor
-version: 0.1.0
+version: 0.0.1
 vendor: Meerkit
-desp: 使用 Meerkit Browser Agent 验证页面 DOM 和接口响应采集链路。
+desp: 使用多个 Example 模块演示页面 HTML、CSS 文本和网络响应采集。
 url: https://github.com/hanxuanyu/meerkit
 protocol:
   min: 1
   max: 1
 modules:
-  - type: browser-example
-    name: Browser Example
+  - type: browser-example-html
+    name: Example - Page HTML
+    version: "1"
+    config_version: "1"
+    result_schema_version: "1"
+  - type: browser-example-css-text
+    name: Example - CSS Text
+    version: "1"
+    config_version: "1"
+    result_schema_version: "1"
+  - type: browser-example-response
+    name: Example - Latest URL Response
     version: "1"
     config_version: "1"
     result_schema_version: "1"

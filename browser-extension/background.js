@@ -20,6 +20,8 @@ let reconnectAttempt = 0;
 let connectionState = "disconnected";
 let lastError = "";
 let activeRuns = 0;
+const leasedTabIds = new Set();
+const leasedReuseKeys = new Set();
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureIdentity();
@@ -171,7 +173,7 @@ async function executeRun(request) {
   const started = performance.now();
   const timeoutMS = clamp(Number(request.timeout_ms) || 60000, 1000, 300000);
   const deadline = Date.now() + timeoutMS;
-  const state = { tabId: null, debuggerAttached: false, capture: null };
+  const state = { tabId: null, createdTab: false, reuseKey: "", debuggerAttached: false, capture: null };
   const actionResults = [];
   try {
     for (const action of request.actions || []) {
@@ -194,7 +196,9 @@ async function executeRun(request) {
     };
   } finally {
     if (state.capture) await state.capture.stop();
-    if (state.tabId && !request.keep_tab) await chrome.tabs.remove(state.tabId).catch(() => {});
+    if (state.tabId) leasedTabIds.delete(state.tabId);
+    if (state.reuseKey) leasedReuseKeys.delete(state.reuseKey);
+    if (state.tabId && state.createdTab && !request.keep_tab) await chrome.tabs.remove(state.tabId).catch(() => {});
   }
 }
 
@@ -204,19 +208,35 @@ async function executeAction(state, action, captureRules, deadline) {
     case "tab.open": {
       if (state.tabId) throw new Error("A browser tab is already active for this run; close it before opening another tab.");
       validateURL(params.url || "about:blank", true);
-      const tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false });
+      const reuseKey = String(params.reuse_key || params.url || "");
+      if (params.reuse && reuseKey) {
+        await acquireReuseKey(reuseKey, deadline);
+        state.reuseKey = reuseKey;
+      }
+      let tab = params.reuse ? await findReusableTab(reuseKey, params.url) : null;
+      state.createdTab = !tab;
+      if (!tab) {
+        const group = params.group_title ? await findTabGroup(undefined, String(params.group_title)) : null;
+        tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false, ...(group ? { windowId: group.windowId } : {}) });
+      }
       state.tabId = tab.id;
+      leasedTabIds.add(tab.id);
       state.capture = null;
       state.debuggerAttached = false;
       if (captureRules.length) {
         state.capture = await createNetworkCapture(tab.id, captureRules);
         state.debuggerAttached = true;
       }
-      if (params.url && params.url !== "about:blank") {
+      if (!state.createdTab) {
+        await chrome.tabs.reload(tab.id);
+        if (params.wait !== false) await waitForTab(tab.id, deadline);
+      } else if (params.url && params.url !== "about:blank") {
         await chrome.tabs.update(tab.id, { url: params.url });
         if (params.wait !== false) await waitForTab(tab.id, deadline);
       }
-      return tabInfo(await chrome.tabs.get(tab.id));
+      const finalTab = await chrome.tabs.get(tab.id);
+      if (params.reuse && reuseKey) await rememberReusableTab(reuseKey, finalTab, String(params.group_title || ""));
+      return { ...tabInfo(finalTab), reused: !state.createdTab };
     }
     case "tab.navigate": {
       requireTab(state);
@@ -227,9 +247,16 @@ async function executeAction(state, action, captureRules, deadline) {
     }
     case "tab.group": {
       requireTab(state);
-      const groupId = await chrome.tabs.group({ tabIds: [state.tabId] });
+      const title = String(params.title || "Meerkit");
+      const current = await chrome.tabs.get(state.tabId);
+      if (current.groupId != null && current.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        const currentGroup = await chrome.tabGroups.get(current.groupId).catch(() => null);
+        if (currentGroup?.title === title) return { group_id: currentGroup.id, reused: true };
+      }
+      const existing = params.reuse_group ? await findTabGroup(current.windowId, title) : null;
+      const groupId = await chrome.tabs.group({ tabIds: [state.tabId], ...(existing ? { groupId: existing.id } : {}) });
       await chrome.tabGroups.update(groupId, { title: String(params.title || "Meerkit"), color: validGroupColor(params.color), collapsed: Boolean(params.collapsed) });
-      return { group_id: groupId };
+      return { group_id: groupId, reused: Boolean(existing) };
     }
     case "tab.close": {
       requireTab(state);
@@ -237,6 +264,10 @@ async function executeAction(state, action, captureRules, deadline) {
       if (state.capture) await state.capture.stop();
       await chrome.tabs.remove(tabId);
       state.tabId = null;
+      leasedTabIds.delete(tabId);
+      if (state.reuseKey) leasedReuseKeys.delete(state.reuseKey);
+      state.createdTab = false;
+      state.reuseKey = "";
       state.capture = null;
       state.debuggerAttached = false;
       return { tab_id: tabId };
@@ -288,6 +319,83 @@ async function executeAction(state, action, captureRules, deadline) {
     }
     default:
       throw new Error(`Unsupported browser action: ${action.type}`);
+  }
+}
+
+async function acquireReuseKey(reuseKey, deadline) {
+  while (leasedReuseKeys.has(reuseKey)) {
+    if (remaining(deadline) <= 1) throw new Error(`Timed out waiting for reusable tab ${reuseKey}.`);
+    await sleep(Math.min(100, remaining(deadline)));
+  }
+  leasedReuseKeys.add(reuseKey);
+}
+
+async function findReusableTab(reuseKey, targetURL) {
+  const storageKey = reusableTabStorageKey(reuseKey);
+  const [sessionState, localState] = await Promise.all([
+    chrome.storage.session.get([storageKey, "reusableTabs"]),
+    chrome.storage.local.get(null)
+  ]);
+  const sessionTabId = sessionState[storageKey]?.tab_id || sessionState.reusableTabs?.[reuseKey];
+  if (sessionTabId && !leasedTabIds.has(sessionTabId)) {
+    const tab = await chrome.tabs.get(sessionTabId).catch(() => null);
+    if (tab && !leasedTabIds.has(tab.id)) {
+      leasedTabIds.add(tab.id);
+      return tab;
+    }
+  }
+
+  const record = localState[storageKey] || {};
+  const legacyFinalURL = localState.reusableTabURLs?.[reuseKey] || localState.reusableTabURLs?.[targetURL];
+  const candidates = new Set([record.final_url, legacyFinalURL, targetURL].map(comparableURL).filter(Boolean));
+  if (record.tab_id && !leasedTabIds.has(record.tab_id)) {
+    const tab = await chrome.tabs.get(record.tab_id).catch(() => null);
+    if (tab && !leasedTabIds.has(tab.id) && (candidates.has(comparableURL(tab.url)) || await tabBelongsToGroup(tab, record.group_title))) {
+      leasedTabIds.add(tab.id);
+      return tab;
+    }
+  }
+  if (!candidates.size) return null;
+  const ownedByOtherKeys = new Set(Object.entries(localState)
+    .filter(([key, value]) => key.startsWith("reusableTab:") && key !== storageKey && value?.tab_id)
+    .map(([, value]) => value.tab_id));
+  const tabs = await chrome.tabs.query({});
+  const tab = tabs.find((value) => !leasedTabIds.has(value.id) && !ownedByOtherKeys.has(value.id) && candidates.has(comparableURL(value.url))) || null;
+  if (tab) leasedTabIds.add(tab.id);
+  return tab;
+}
+
+async function rememberReusableTab(reuseKey, tab, groupTitle) {
+  const storageKey = reusableTabStorageKey(reuseKey);
+  const record = { tab_id: tab.id, final_url: comparableURL(tab.url), group_title: groupTitle };
+  await Promise.all([
+    chrome.storage.session.set({ [storageKey]: { tab_id: tab.id } }),
+    chrome.storage.local.set({ [storageKey]: record })
+  ]);
+}
+
+async function findTabGroup(windowId, title) {
+  const groups = await chrome.tabGroups.query(windowId == null ? {} : { windowId });
+  return groups.find((group) => group.title === title) || null;
+}
+
+async function tabBelongsToGroup(tab, title) {
+  if (!title || tab.groupId == null || tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) return false;
+  const group = await chrome.tabGroups.get(tab.groupId).catch(() => null);
+  return group?.title === title;
+}
+
+function reusableTabStorageKey(reuseKey) {
+  return `reusableTab:${reuseKey}`;
+}
+
+function comparableURL(value) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return "";
   }
 }
 
@@ -381,6 +489,7 @@ async function createNetworkCapture(tabId, rules) {
   const requests = new Map();
   const responses = new Map();
   const pending = new Set();
+  let sequence = 0;
   await chrome.debugger.attach(target, "1.3");
   await chrome.debugger.sendCommand(target, "Network.enable", { maxTotalBufferSize: 50 * 1024 * 1024, maxResourceBufferSize: 10 * 1024 * 1024 });
   const listener = (source, method, params) => {
@@ -390,7 +499,7 @@ async function createNetworkCapture(tabId, rules) {
       for (const rule of rules) {
         const response = params.response || {};
         if ((!rule.url_contains || response.url.includes(rule.url_contains)) && (!rule.resource_type || String(params.type).toLowerCase() === String(rule.resource_type).toLowerCase())) {
-          responses.set(params.requestId, { rule, response, resourceType: params.type });
+          responses.set(params.requestId, { rule, response, resourceType: params.type, sequence: sequence++ });
         }
       }
     }
@@ -400,7 +509,7 @@ async function createNetworkCapture(tabId, rules) {
     }
     if (method === "Network.loadingFailed" && responses.has(params.requestId)) {
       const matched = responses.get(params.requestId);
-      results.push({ capture_id: matched.rule.id, url: matched.response.url, status: matched.response.status || 0, resource_type: matched.resourceType, error: params.errorText || "Network request failed." });
+      results.push({ capture_id: matched.rule.id, url: matched.response.url, status: matched.response.status || 0, resource_type: matched.resourceType, error: params.errorText || "Network request failed.", _sequence: matched.sequence });
     }
   };
   chrome.debugger.onEvent.addListener(listener);
@@ -409,6 +518,8 @@ async function createNetworkCapture(tabId, rules) {
     results,
     async flush(deadline) {
       while (pending.size && remaining(deadline) > 0) await Promise.race([Promise.allSettled([...pending]), sleep(Math.min(100, remaining(deadline)))]);
+      results.sort((left, right) => left._sequence - right._sequence);
+      for (const result of results) delete result._sequence;
     },
     async stop() {
       if (stopped) return;
@@ -429,7 +540,8 @@ async function collectResponse(target, requestId, matched, request, results) {
     status_text: response.statusText || "",
     resource_type: matched.resourceType || "",
     mime_type: response.mimeType || "",
-    headers: normalizeHeaders(response.headers || {})
+    headers: normalizeHeaders(response.headers || {}),
+    _sequence: matched.sequence
   };
   try {
     const body = await chrome.debugger.sendCommand(target, "Network.getResponseBody", { requestId });

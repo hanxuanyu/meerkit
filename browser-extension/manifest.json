@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meerkit Browser Agent",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Provides browser automation capabilities to a paired Meerkit instance.",
   "permissions": [
     "alarms",

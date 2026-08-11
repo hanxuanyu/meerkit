@@ -15,5 +15,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer client.Close()
-	sdk.Serve(sdk.NewProvider(browsermonitor.New(client)))
+	sdk.Serve(sdk.NewProvider(
+		browsermonitor.NewHTML(client),
+		browsermonitor.NewCSSText(client),
+		browsermonitor.NewResponse(client),
+	))
 }
