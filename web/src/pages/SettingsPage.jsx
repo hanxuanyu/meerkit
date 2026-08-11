@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bell, Database, Download, FileArchive, FileCheck2, FileCog, KeyRound, LayoutDashboard, LockKeyhole, LockOpen, Plus, Radio, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Bell, Database, Download, FileArchive, FileCheck2, FileCog, KeyRound, LayoutDashboard, Link2, LockKeyhole, LockOpen, Plus, Radio, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiBlob } from "../lib/api";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { IconButton } from "../components/ui/IconButton";
 import { Switch } from "../components/ui/Switch";
 import { Checkbox } from "../components/ui/Checkbox";
@@ -129,11 +130,12 @@ export function SettingsPage() {
 const transferOptions = [
   { key: "monitors", label: "监控项配置", description: "采集参数可能包含访问凭据", icon: Radio, sensitive: true },
   { key: "notification_channels", label: "通知渠道配置", description: "Webhook、SMTP 等渠道及凭据", icon: Bell, sensitive: true },
-  { key: "status_board_items", label: "状态看板配置", description: "看板项、阈值和趋势规则", icon: LayoutDashboard }
+  { key: "status_board_items", label: "状态看板配置", description: "看板项、阈值和趋势规则", icon: LayoutDashboard },
+  { key: "status_board_shares", label: "共享链接", description: "公共访问令牌、分享范围和启停状态", icon: Link2, sensitive: true }
 ];
 
 function ConfigExportDialog({ open, onOpenChange }) {
-  const [selected, setSelected] = useState({ monitors: true, notification_channels: true, status_board_items: true, admin_key: false });
+  const [selected, setSelected] = useState({ monitors: true, notification_channels: true, status_board_items: true, status_board_shares: true, admin_key: false });
   const [encryptionKey, setEncryptionKey] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [encrypted, setEncrypted] = useState(true);
@@ -176,11 +178,13 @@ function ConfigExportDialog({ open, onOpenChange }) {
       <form onSubmit={submit}>
         <div className="modal-body config-transfer-body">
           <div className={`config-export-encryption${encrypted ? " is-encrypted" : " is-plain"}`}><span className="config-transfer-option-icon">{encrypted ? <LockKeyhole size={16} /> : <LockOpen size={16} />}</span><span><strong>{encrypted ? "加密整个配置包" : "不加密配置包"}</strong><small>{encrypted ? "所有导出内容使用同一密码加密" : "所有导出内容将以明文保存"}</small></span><Switch checked={encrypted} onCheckedChange={(checked) => { setEncrypted(checked); setUnencryptedConfirmed(false); }} aria-label="加密整个配置包" /></div>
-          <TransferOption checked disabled icon={Database} label="动态配置" description="导入时始终整体替换，不参与合并" />
-          {transferOptions.map((option) => <TransferOption key={option.key} checked={selected[option.key]} icon={option.icon} label={option.label} description={option.description} sensitive={option.sensitive} onCheckedChange={(checked) => setSelected((current) => ({ ...current, [option.key]: Boolean(checked) }))} />)}
-          <TransferOption checked={selected.admin_key} icon={KeyRound} label="管理员密钥" description="加密保存密钥哈希，导入后现有会话失效" sensitive onCheckedChange={(checked) => setSelected((current) => ({ ...current, admin_key: Boolean(checked) }))} />
-          {encrypted && <div className="config-transfer-key-fields"><label><span>配置包密码</span><Input autoFocus type="password" minLength={12} autoComplete="new-password" value={encryptionKey} onChange={(event) => setEncryptionKey(event.target.value)} required /></label><label><span>确认配置包密码</span><Input type="password" minLength={12} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label>{confirmation && encryptionKey !== confirmation && <p>两次输入的配置包密码不一致</p>}</div>}
-          {!encrypted && <div className="config-transfer-warning is-danger config-unencrypted-warning"><AlertTriangle size={17} /><div><strong>配置包将不加密</strong><span>动态配置、监控参数、通知凭据和管理员密钥（如选择）都可能以明文保存。请仅存放在可信位置。</span><label><Checkbox checked={unencryptedConfirmed} onCheckedChange={(checked) => setUnencryptedConfirmed(Boolean(checked))} /><em>我已了解未加密导出的风险</em></label></div></div>}
+          <div className="config-transfer-options-grid">
+            <TransferOption checked disabled icon={Database} label="动态配置" description="导入时始终整体替换，不参与合并" />
+            {transferOptions.map((option) => <TransferOption key={option.key} checked={selected[option.key]} icon={option.icon} label={option.label} description={option.description} sensitive={option.sensitive} onCheckedChange={(checked) => setSelected((current) => ({ ...current, [option.key]: Boolean(checked) }))} />)}
+            <TransferOption checked={selected.admin_key} icon={KeyRound} label="管理员密钥" description="加密保存密钥哈希，导入后现有会话失效" sensitive onCheckedChange={(checked) => setSelected((current) => ({ ...current, admin_key: Boolean(checked) }))} />
+          </div>
+          {encrypted && <div className="config-transfer-key-fields"><label><span>配置包密码</span><PasswordInput autoFocus minLength={12} autoComplete="new-password" value={encryptionKey} onChange={(event) => setEncryptionKey(event.target.value)} required /></label><label><span>确认配置包密码</span><PasswordInput minLength={12} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label>{confirmation && encryptionKey !== confirmation && <p>两次输入的配置包密码不一致</p>}</div>}
+          {!encrypted && <div className="config-transfer-warning is-danger config-unencrypted-warning"><AlertTriangle size={17} /><div><strong>配置包将不加密</strong><span>动态配置、监控参数、通知凭据、共享链接令牌和管理员密钥（如选择）都可能以明文保存。请仅存放在可信位置。</span><label><Checkbox checked={unencryptedConfirmed} onCheckedChange={(checked) => setUnencryptedConfirmed(Boolean(checked))} /><em>我已了解未加密导出的风险</em></label></div></div>}
         </div>
         <DialogFooter><Button type="button" variant="ghost" onClick={() => close()} disabled={busy}>取消</Button><Button type="submit" variant={encrypted ? "default" : "destructive"} disabled={busy || !keyValid || (!encrypted && !unencryptedConfirmed)}>{busy ? "正在导出..." : <><Upload size={15} />导出压缩包</>}</Button></DialogFooter>
       </form>
@@ -249,8 +253,8 @@ function ConfigImportDialog({ open, onOpenChange, onImported }) {
             <FileArchive size={24} /><span>{file ? <><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></> : <><strong>拖拽配置包到此处</strong><small>或点击选择 ZIP 文件，最大 10 MB</small></>}</span>
           </button>
           <fieldset className="config-import-mode" disabled={Boolean(preview)}><legend>导入方式</legend><label className={mode === "merge" ? "is-selected" : ""}><input type="radio" name="import-mode" value="merge" checked={mode === "merge"} onChange={() => { setMode("merge"); setPreview(null); }} /><span><strong>合并</strong><small>不同 ID 新增，相同 ID 覆盖</small></span></label><label className={mode === "replace" ? "is-selected" : ""}><input type="radio" name="import-mode" value="replace" checked={mode === "replace"} onChange={() => { setMode("replace"); setPreview(null); }} /><span><strong>覆盖</strong><small>清空业务配置后完全替换</small></span></label></fieldset>
-          {mode === "replace" && <div className="config-transfer-warning is-danger"><AlertTriangle size={16} /><span>覆盖会清空现有监控项、状态看板和非内置通知渠道。执行记录、站内通知不会从配置包导入。</span></div>}
-          <label className="config-import-key"><span>配置包密码 <small>导入加密包时必填</small></span><Input type="password" autoComplete="current-password" value={encryptionKey} disabled={Boolean(preview)} onChange={(event) => { setEncryptionKey(event.target.value); setPreview(null); }} placeholder="未加密配置包可留空" /></label>
+          {mode === "replace" && <div className="config-transfer-warning is-danger"><AlertTriangle size={16} /><span>覆盖会清空现有监控项、状态看板、共享链接和非内置通知渠道。执行记录、站内通知不会从配置包导入。</span></div>}
+          <label className="config-import-key"><span>配置包密码 <small>导入加密包时必填</small></span><PasswordInput autoComplete="current-password" value={encryptionKey} disabled={Boolean(preview)} onChange={(event) => { setEncryptionKey(event.target.value); setPreview(null); }} placeholder="未加密配置包可留空" /></label>
           {preview && <ConfigImportPreview preview={preview} />}
         </div>
         <DialogFooter>{preview && <Button type="button" variant="ghost" onClick={() => setPreview(null)} disabled={busy}>修改选项</Button>}<Button type="button" variant="ghost" onClick={() => close()} disabled={busy}>取消</Button><Button type="submit" disabled={busy || !file} variant={preview && mode === "replace" ? "destructive" : "default"}>{busy ? (preview ? "正在导入..." : "正在分析...") : preview ? <><Download size={15} />确认导入</> : <><FileCheck2 size={15} />预览变更</>}</Button></DialogFooter>
@@ -264,6 +268,7 @@ const importSummarySections = [
   { key: "monitors", label: "监控项", icon: Radio },
   { key: "notification_channels", label: "通知渠道", icon: Bell },
   { key: "status_board_items", label: "状态看板", icon: LayoutDashboard },
+  { key: "status_board_shares", label: "共享链接", icon: Link2 },
   { key: "admin_key", label: "管理员密钥", icon: KeyRound }
 ];
 
@@ -315,6 +320,7 @@ function formatExportSummary(summary = {}) {
   parts.push(formatExportCategory("监控项", summary.monitors, summary.monitors_included ?? summary.monitors));
   parts.push(formatExportCategory("通知渠道", summary.notification_channels, summary.notification_channels_included ?? summary.notification_channels));
   parts.push(formatExportCategory("状态看板", summary.status_board_items, summary.status_board_items_included ?? summary.status_board_items));
+  parts.push(formatExportCategory("共享链接", summary.status_board_shares, summary.status_board_shares_included ?? summary.status_board_shares));
   if (summary.admin_key) parts.push("管理员密钥已包含");
   else parts.push("管理员密钥未包含");
   parts.push(summary.encrypted ? "整包已加密" : "配置包未加密");
@@ -385,7 +391,7 @@ function AdminKeyDialog({ open, onOpenChange, onDirtyChange }) {
         <DialogHeader><div className="admin-key-dialog-heading"><KeyRound size={20} /><div><span className="eyebrow">SECURITY</span><DialogTitle>修改管理员密钥</DialogTitle><DialogDescription>修改后将撤销所有已登录会话，需要重新登录。</DialogDescription></div></div></DialogHeader>
         <form onSubmit={submit}>
           <input className="admin-key-username" type="text" name="username" autoComplete="username" value="admin" readOnly tabIndex={-1} aria-hidden="true" />
-          <div className="modal-body admin-key-dialog-body"><label className="admin-key-field"><span>当前密钥</span><Input type="password" name="current-password" autoFocus autoComplete="current-password" required value={currentAccessKey} onChange={(event) => setCurrentAccessKey(event.target.value)} /></label><label className="admin-key-field"><span>新密钥</span><Input type="password" name="new-password" autoComplete="new-password" minLength={12} required value={accessKey} onChange={(event) => setAccessKey(event.target.value)} /></label><label className="admin-key-field"><span>确认新密钥</span><Input type="password" name="confirm-password" autoComplete="new-password" minLength={12} required value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>{mismatch && <p className="admin-key-form-error">两次输入的新密钥不一致</p>}</div>
+          <div className="modal-body admin-key-dialog-body"><label className="admin-key-field"><span>当前密钥</span><PasswordInput name="current-password" autoFocus autoComplete="current-password" required value={currentAccessKey} onChange={(event) => setCurrentAccessKey(event.target.value)} /></label><label className="admin-key-field"><span>新密钥</span><PasswordInput name="new-password" autoComplete="new-password" minLength={12} required value={accessKey} onChange={(event) => setAccessKey(event.target.value)} /></label><label className="admin-key-field"><span>确认新密钥</span><PasswordInput name="confirm-password" autoComplete="new-password" minLength={12} required value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>{mismatch && <p className="admin-key-form-error">两次输入的新密钥不一致</p>}</div>
           <DialogFooter><Button type="button" variant="ghost" onClick={requestClose} disabled={busy}>取消</Button><Button type="submit" disabled={busy || !dirty || !valid}>{busy ? "修改中..." : <><KeyRound size={15} />修改密钥</>}</Button></DialogFooter>
         </form>
       </DialogContent>

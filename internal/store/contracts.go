@@ -64,6 +64,14 @@ type StatusBoardRepository interface {
 	CommitMonitorExecution(context.Context, core.MonitorRecord, string, core.RuntimeState, map[string]core.StatusItemRuntimeState) error
 }
 
+type StatusBoardShareRepository interface {
+	CreateStatusBoardShare(context.Context, core.StatusBoardShare) error
+	ListStatusBoardShares(context.Context) ([]core.StatusBoardShare, error)
+	GetStatusBoardShareByToken(context.Context, string) (core.StatusBoardShare, error)
+	SetStatusBoardShareActive(context.Context, string, bool) error
+	DeleteStatusBoardShare(context.Context, string) (bool, error)
+}
+
 type PluginRepository interface {
 	UpsertPlugin(context.Context, core.PluginInstallation) error
 	ListPlugins(context.Context) ([]core.PluginInstallation, error)
@@ -102,6 +110,7 @@ type ConfigurationImport struct {
 	Monitors             []core.Monitor
 	NotificationChannels []core.NotificationChannel
 	StatusBoardItems     []core.StatusBoardItem
+	StatusBoardShares    []core.StatusBoardShare
 	Replace              bool
 	AdminKeyHash         string
 }
@@ -121,6 +130,7 @@ type APIRepository interface {
 	ChannelRepository
 	NotificationRepository
 	StatusBoardRepository
+	StatusBoardShareRepository
 	ConfigurationTransferRepository
 	GetDescriptorSnapshot(context.Context, string, string) (core.ModuleDescriptor, error)
 	Ping(context.Context) error

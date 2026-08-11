@@ -3,6 +3,7 @@ import { Braces, ClipboardPaste, Copy, Plus, Trash2 } from "lucide-react";
 import { getParameterOptions, isParameterEnabled, isParameterVisible } from "../../lib/parameterSchema";
 import { IconButton } from "../ui/IconButton";
 import { Input, Label } from "../ui/Input";
+import { PasswordInput } from "../ui/PasswordInput";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/Select";
 import { Switch } from "../ui/Switch";
 
@@ -101,5 +102,6 @@ export function ParameterField({ parameter, value, values, onChange }) {
   if (parameter.type === "time") return <label className={fieldClass}><FieldLabel parameter={parameter} /><TimeField disabled={!enabled} value={value} onChange={onChange} parameter={parameter} /><FieldHint parameter={parameter} /></label>;
   if (parameter.type === "text" || parameter.type === "json" || parameter.format === "json") return <label className={fieldClass}><FieldLabel parameter={parameter} />{parameter.type === "json" || parameter.format === "json" ? <JsonField value={value} onChange={onChange} parameter={parameter} asObject={parameter.type === "json"} disabled={!enabled} /> : <textarea className="field-textarea" rows={parameter.rows || 5} value={value ?? ""} onChange={(event) => onChange(event.target.value)} {...common} placeholder={parameter.placeholder} />}<FieldHint parameter={parameter} /></label>;
 
-  return <label className={fieldClass}><FieldLabel parameter={parameter} /><div className={parameter.unit ? "input-with-suffix" : ""}><Input {...common} type={inputType} min={parameter.minimum} max={parameter.maximum} step={parameter.step || (numberType ? 1 : undefined)} value={value ?? ""} onChange={(event) => onChange(numberType ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} placeholder={parameter.placeholder} />{parameter.unit && <span>{parameter.unit}</span>}</div><FieldHint parameter={parameter} /></label>;
+  const ValueInput = parameter.secret ? PasswordInput : Input;
+  return <label className={fieldClass}><FieldLabel parameter={parameter} /><div className={parameter.unit ? "input-with-suffix" : ""}><ValueInput {...common} type={inputType} min={parameter.minimum} max={parameter.maximum} step={parameter.step || (numberType ? 1 : undefined)} value={value ?? ""} onChange={(event) => onChange(numberType ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} placeholder={parameter.placeholder} />{parameter.unit && <span>{parameter.unit}</span>}</div><FieldHint parameter={parameter} /></label>;
 }

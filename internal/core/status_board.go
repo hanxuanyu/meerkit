@@ -120,3 +120,13 @@ type StatusBoardGroup struct {
 type StatusBoardSnapshot struct {
 	Groups []StatusBoardGroup `json:"groups"`
 }
+
+type StatusBoardShare struct {
+	ID         string    `json:"id"`
+	Token      string    `json:"-"`
+	Name       string    `json:"name"`
+	MonitorIDs []string  `json:"monitor_ids"`
+	ItemIDs    []string  `json:"item_ids"`
+	Active     bool      `json:"active"`
+	CreatedAt  time.Time `json:"created_at"`
+}

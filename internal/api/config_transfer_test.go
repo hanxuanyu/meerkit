@@ -59,6 +59,14 @@ func TestExportEncryptsMonitorAndNotificationSecrets(t *testing.T) {
 	if err := database.CreateMonitor(ctx, monitor); err != nil {
 		t.Fatal(err)
 	}
+	shareToken, err := randomStatusBoardShareToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	share := core.StatusBoardShare{ID: "public-share", Token: shareToken, Name: "Public status", MonitorIDs: []string{monitor.ID}, Active: true, CreatedAt: now}
+	if err := database.CreateStatusBoardShare(ctx, share); err != nil {
+		t.Fatal(err)
+	}
 	server := &APIServer{store: database, runtime: manager}
 
 	missingPassword := httptest.NewRequest(http.MethodPost, "/api/v1/system/config/transfer/export", strings.NewReader(`{"encrypted":true,"monitors":true}`))
@@ -70,7 +78,7 @@ func TestExportEncryptsMonitorAndNotificationSecrets(t *testing.T) {
 		t.Fatalf("export without password status=%d", missingResponse.Code)
 	}
 
-	requestBody := `{"encrypted":true,"monitors":true,"notification_channels":true,"encryption_key":"configuration-password","encryption_key_confirm":"configuration-password"}`
+	requestBody := `{"encrypted":true,"monitors":true,"notification_channels":true,"status_board_shares":true,"encryption_key":"configuration-password","encryption_key_confirm":"configuration-password"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/system/config/transfer/export", strings.NewReader(requestBody))
 	response := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(response)
@@ -83,10 +91,10 @@ func TestExportEncryptsMonitorAndNotificationSecrets(t *testing.T) {
 	if err := json.Unmarshal([]byte(response.Header().Get("X-Meerkit-Export-Summary")), &exportSummary); err != nil {
 		t.Fatalf("invalid export summary header: %v", err)
 	}
-	if !exportSummary.Encrypted || exportSummary.RuntimeTypes != 5 || exportSummary.Monitors != 1 || !exportSummary.MonitorsIncluded || exportSummary.NotificationChannels != 1 || !exportSummary.NotificationChannelsIncluded || exportSummary.StatusBoardItemsIncluded || exportSummary.AdminKey {
+	if !exportSummary.Encrypted || exportSummary.RuntimeTypes != 5 || exportSummary.Monitors != 1 || !exportSummary.MonitorsIncluded || exportSummary.NotificationChannels != 1 || !exportSummary.NotificationChannelsIncluded || exportSummary.StatusBoardItemsIncluded || exportSummary.StatusBoardShares != 1 || !exportSummary.StatusBoardSharesIncluded || exportSummary.AdminKey {
 		t.Fatalf("unexpected export summary: %+v", exportSummary)
 	}
-	if bytes.Contains(response.Body.Bytes(), []byte("monitor-secret")) || bytes.Contains(response.Body.Bytes(), []byte("channel-secret")) {
+	if bytes.Contains(response.Body.Bytes(), []byte("monitor-secret")) || bytes.Contains(response.Body.Bytes(), []byte("channel-secret")) || bytes.Contains(response.Body.Bytes(), []byte(shareToken)) {
 		t.Fatal("ZIP contains plaintext sensitive configuration")
 	}
 	bundle, err := readConfigBundle(response.Body.Bytes())
@@ -101,8 +109,11 @@ func TestExportEncryptsMonitorAndNotificationSecrets(t *testing.T) {
 	if err := json.Unmarshal(plain, &protected); err != nil {
 		t.Fatal(err)
 	}
-	if len(protected.Monitors) != 1 || len(protected.NotificationChannels) != 1 || !bytes.Contains(protected.Monitors[0].ModuleConfig, []byte("monitor-secret")) || !bytes.Contains(protected.NotificationChannels[0].Config, []byte("channel-secret")) {
+	if len(protected.Monitors) != 1 || len(protected.NotificationChannels) != 1 || len(protected.StatusBoardShares) != 1 || protected.StatusBoardShares[0].Token != shareToken || !bytes.Contains(protected.Monitors[0].ModuleConfig, []byte("monitor-secret")) || !bytes.Contains(protected.NotificationChannels[0].Config, []byte("channel-secret")) {
 		t.Fatalf("unexpected protected content: %+v", protected)
+	}
+	if err := server.validateConfigBundle(ginContext, protected, true); err != nil {
+		t.Fatalf("exported status board share cannot be imported: %v", err)
 	}
 
 	plainRequest := httptest.NewRequest(http.MethodPost, "/api/v1/system/config/transfer/export", strings.NewReader(`{"monitors":true,"notification_channels":true}`))

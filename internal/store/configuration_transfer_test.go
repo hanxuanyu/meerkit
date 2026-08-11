@@ -34,11 +34,16 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 	if err := database.CreateMonitor(ctx, oldMonitor); err != nil {
 		t.Fatal(err)
 	}
+	share := core.StatusBoardShare{ID: "share-old", Token: "share-token", Name: "Old share", MonitorIDs: []string{oldMonitor.ID}, Active: true, CreatedAt: now}
+	if err := database.CreateStatusBoardShare(ctx, share); err != nil {
+		t.Fatal(err)
+	}
 
 	updatedChannel := oldChannel
 	updatedChannel.Name = "Updated"
 	newMonitor := transferTestMonitor("monitor-new", "New monitor", oldChannel.ID, now)
-	result, err := database.ImportConfiguration(ctx, ConfigurationImport{Runtime: runtimeDomains(t, app.DefaultRuntimeConfig()), NotificationChannels: []core.NotificationChannel{updatedChannel}, Monitors: []core.Monitor{newMonitor}})
+	newShare := core.StatusBoardShare{ID: "share-new", Token: "new-share-token", Name: "New share", MonitorIDs: []string{newMonitor.ID}, Active: true, CreatedAt: now}
+	result, err := database.ImportConfiguration(ctx, ConfigurationImport{Runtime: runtimeDomains(t, app.DefaultRuntimeConfig()), NotificationChannels: []core.NotificationChannel{updatedChannel}, Monitors: []core.Monitor{newMonitor}, StatusBoardShares: []core.StatusBoardShare{newShare}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +61,9 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 	if got, err := database.AdminKeyHash(ctx); err != nil || got != string(originalHash) {
 		t.Fatalf("admin hash changed during merge: %v", err)
 	}
+	if shares, err := database.ListStatusBoardShares(ctx); err != nil || len(shares) != 2 {
+		t.Fatalf("merge did not preserve and add status board shares: %+v, err=%v", shares, err)
+	}
 
 	newHash, _ := bcrypt.GenerateFromPassword([]byte("replacement-admin-key"), bcrypt.MinCost)
 	session := AdminSession{TokenHash: "session", CSRFToken: "csrf", ExpiresAt: now.Add(time.Hour), LastSeenAt: now, CreatedAt: now}
@@ -65,7 +73,8 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 	replacementChannel := core.NotificationChannel{ID: "channel-replacement", Name: "Replacement", NotifierType: "smtp", Enabled: false, Config: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now}
 	replacementMonitor := transferTestMonitor("monitor-replacement", "Replacement monitor", replacementChannel.ID, now)
 	replacementItem := core.StatusBoardItem{ID: "item-replacement", Name: "Replacement item", MonitorID: replacementMonitor.ID, Enabled: true, Source: core.StatusItemSource{Kind: core.StatusSourceConditionOverall, ValueType: core.StatusValueBoolean}, HistoryLimit: 60, RuntimeState: core.StatusItemRuntimeState{Rules: map[string]core.TrendRuleState{}}, CreatedAt: now, UpdatedAt: now}
-	_, err = database.ImportConfiguration(ctx, ConfigurationImport{Runtime: runtimeDomains(t, app.DefaultRuntimeConfig()), NotificationChannels: []core.NotificationChannel{replacementChannel}, Monitors: []core.Monitor{replacementMonitor}, StatusBoardItems: []core.StatusBoardItem{replacementItem}, Replace: true, AdminKeyHash: string(newHash)})
+	replacementShare := core.StatusBoardShare{ID: "share-replacement", Token: "replacement-share-token", Name: "Replacement share", ItemIDs: []string{replacementItem.ID}, Active: false, CreatedAt: now}
+	_, err = database.ImportConfiguration(ctx, ConfigurationImport{Runtime: runtimeDomains(t, app.DefaultRuntimeConfig()), NotificationChannels: []core.NotificationChannel{replacementChannel}, Monitors: []core.Monitor{replacementMonitor}, StatusBoardItems: []core.StatusBoardItem{replacementItem}, StatusBoardShares: []core.StatusBoardShare{replacementShare}, Replace: true, AdminKeyHash: string(newHash)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +89,9 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 	}
 	if _, err := database.GetStatusBoardItem(ctx, replacementItem.ID); err != nil {
 		t.Fatalf("replacement board item missing: %v", err)
+	}
+	if shares, err := database.ListStatusBoardShares(ctx); err != nil || len(shares) != 1 || shares[0].ID != replacementShare.ID || shares[0].Token != replacementShare.Token || shares[0].Active {
+		t.Fatalf("replace did not install status board shares: %+v, err=%v", shares, err)
 	}
 	if got, err := database.AdminKeyHash(ctx); err != nil || got != string(newHash) {
 		t.Fatalf("admin hash was not replaced: %v", err)

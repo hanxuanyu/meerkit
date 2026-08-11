@@ -53,7 +53,18 @@ type configBundleData struct {
 	Monitors             []core.Monitor             `json:"monitors,omitempty"`
 	NotificationChannels []core.NotificationChannel `json:"notification_channels,omitempty"`
 	StatusBoardItems     []core.StatusBoardItem     `json:"status_board_items,omitempty"`
+	StatusBoardShares    []configBundleShare        `json:"status_board_shares,omitempty"`
 	AdminKeyHash         string                     `json:"admin_key_hash,omitempty"`
+}
+
+type configBundleShare struct {
+	ID         string    `json:"id"`
+	Token      string    `json:"token"`
+	Name       string    `json:"name"`
+	MonitorIDs []string  `json:"monitor_ids"`
+	ItemIDs    []string  `json:"item_ids"`
+	Active     bool      `json:"active"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type encryptedPayload struct {
@@ -68,6 +79,7 @@ type configExportRequest struct {
 	Monitors             bool   `json:"monitors"`
 	NotificationChannels bool   `json:"notification_channels"`
 	StatusBoardItems     bool   `json:"status_board_items"`
+	StatusBoardShares    bool   `json:"status_board_shares"`
 	AdminKey             bool   `json:"admin_key"`
 	EncryptionKey        string `json:"encryption_key"`
 	EncryptionKeyConfirm string `json:"encryption_key_confirm"`
@@ -79,6 +91,7 @@ type configImportResult struct {
 	Monitors             int                   `json:"monitors"`
 	NotificationChannels int                   `json:"notification_channels"`
 	StatusBoardItems     int                   `json:"status_board_items"`
+	StatusBoardShares    int                   `json:"status_board_shares"`
 	RuntimeTypes         int                   `json:"runtime_types"`
 	Summary              configTransferSummary `json:"summary"`
 }
@@ -99,6 +112,8 @@ type configExportSummary struct {
 	NotificationChannelsIncluded bool `json:"notification_channels_included"`
 	StatusBoardItems             int  `json:"status_board_items"`
 	StatusBoardItemsIncluded     bool `json:"status_board_items_included"`
+	StatusBoardShares            int  `json:"status_board_shares"`
+	StatusBoardSharesIncluded    bool `json:"status_board_shares_included"`
 	AdminKey                     bool `json:"admin_key"`
 }
 
@@ -118,6 +133,7 @@ type configTransferSummary struct {
 	Monitors             configTransferChanges `json:"monitors"`
 	NotificationChannels configTransferChanges `json:"notification_channels"`
 	StatusBoardItems     configTransferChanges `json:"status_board_items"`
+	StatusBoardShares    configTransferChanges `json:"status_board_shares"`
 	AdminKey             configTransferChanges `json:"admin_key"`
 }
 
@@ -177,6 +193,15 @@ func (a *APIServer) exportConfiguration(c *gin.Context) {
 		}
 		payload.StatusBoardItems, payload.Contents = items, append(payload.Contents, "status_board_items")
 	}
+	if request.StatusBoardShares {
+		shares, err := a.store.ListStatusBoardShares(c.Request.Context())
+		if err != nil {
+			writeError(c.Writer, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		payload.StatusBoardShares = configBundleSharesFromDomain(shares)
+		payload.Contents = append(payload.Contents, "status_board_shares")
+	}
 	if request.AdminKey {
 		hash, err := a.store.AdminKeyHash(c.Request.Context())
 		if err != nil {
@@ -234,6 +259,8 @@ func (a *APIServer) exportConfiguration(c *gin.Context) {
 		NotificationChannelsIncluded: request.NotificationChannels,
 		StatusBoardItems:             len(payload.StatusBoardItems),
 		StatusBoardItemsIncluded:     request.StatusBoardItems,
+		StatusBoardShares:            len(payload.StatusBoardShares),
+		StatusBoardSharesIncluded:    request.StatusBoardShares,
 		AdminKey:                     payload.AdminKeyHash != "",
 	})
 	c.Header("Content-Type", "application/zip")
@@ -269,7 +296,7 @@ func (a *APIServer) importConfiguration(c *gin.Context) {
 	adminHash := payload.AdminKeyHash
 	config := payload.Runtime
 	_, err = a.runtime.Import(c.Request.Context(), config, func(ctx context.Context, domains map[string]json.RawMessage) (map[string]int, error) {
-		result, err := a.store.ImportConfiguration(ctx, store.ConfigurationImport{Runtime: domains, Monitors: payload.Monitors, NotificationChannels: payload.NotificationChannels, StatusBoardItems: payload.StatusBoardItems, Replace: mode == "replace", AdminKeyHash: adminHash})
+		result, err := a.store.ImportConfiguration(ctx, store.ConfigurationImport{Runtime: domains, Monitors: payload.Monitors, NotificationChannels: payload.NotificationChannels, StatusBoardItems: payload.StatusBoardItems, StatusBoardShares: configBundleSharesToDomain(payload.StatusBoardShares), Replace: mode == "replace", AdminKeyHash: adminHash})
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +309,7 @@ func (a *APIServer) importConfiguration(c *gin.Context) {
 	if a.statusBoard != nil {
 		a.statusBoard.Publish(statusboard.StreamEvent{Type: "configuration_imported"})
 	}
-	writeJSON(c.Writer, http.StatusOK, configImportResult{Imported: true, AdminKeyImported: adminHash != "", Monitors: len(payload.Monitors), NotificationChannels: len(payload.NotificationChannels), StatusBoardItems: len(payload.StatusBoardItems), RuntimeTypes: 5, Summary: summary})
+	writeJSON(c.Writer, http.StatusOK, configImportResult{Imported: true, AdminKeyImported: adminHash != "", Monitors: len(payload.Monitors), NotificationChannels: len(payload.NotificationChannels), StatusBoardItems: len(payload.StatusBoardItems), StatusBoardShares: len(payload.StatusBoardShares), RuntimeTypes: 5, Summary: summary})
 }
 
 func (a *APIServer) parseConfigurationImport(c *gin.Context) (*parsedConfigImport, bool) {
@@ -350,6 +377,10 @@ func (a *APIServer) buildConfigImportSummary(ctx context.Context, payload config
 	if err != nil {
 		return configTransferSummary{}, err
 	}
+	existingShares, err := a.store.ListStatusBoardShares(ctx)
+	if err != nil {
+		return configTransferSummary{}, err
+	}
 
 	monitorItems := make([]configTransferItem, 0, len(payload.Monitors))
 	for _, monitor := range payload.Monitors {
@@ -381,6 +412,14 @@ func (a *APIServer) buildConfigImportSummary(ctx context.Context, payload config
 	for _, item := range existingStatusItems {
 		existingStatusBoardItems = append(existingStatusBoardItems, configTransferItem{ID: item.ID, Name: item.Name})
 	}
+	existingShareItems := make([]configTransferItem, 0, len(existingShares))
+	for _, share := range existingShares {
+		existingShareItems = append(existingShareItems, configTransferItem{ID: share.ID, Name: share.Name})
+	}
+	shareItems := make([]configTransferItem, 0, len(payload.StatusBoardShares))
+	for _, share := range payload.StatusBoardShares {
+		shareItems = append(shareItems, configTransferItem{ID: share.ID, Name: share.Name})
+	}
 
 	summary := configTransferSummary{
 		Runtime: configTransferChanges{Overwritten: []configTransferItem{
@@ -393,6 +432,7 @@ func (a *APIServer) buildConfigImportSummary(ctx context.Context, payload config
 		Monitors:             compareConfigTransferItems(monitorItems, existingMonitorItems, replace),
 		NotificationChannels: compareConfigTransferItems(channelItems, existingChannelItems, replace),
 		StatusBoardItems:     compareConfigTransferItems(statusItems, existingStatusBoardItems, replace),
+		StatusBoardShares:    compareConfigTransferItems(shareItems, existingShareItems, replace),
 	}
 	if payload.AdminKeyHash != "" {
 		summary.AdminKey.Overwritten = []configTransferItem{{ID: "administrator_access_key", Name: "管理员密钥"}}
@@ -435,6 +475,22 @@ func sortConfigTransferItems(items []configTransferItem) {
 		}
 		return items[left].Name < items[right].Name
 	})
+}
+
+func configBundleSharesFromDomain(values []core.StatusBoardShare) []configBundleShare {
+	result := make([]configBundleShare, 0, len(values))
+	for _, share := range values {
+		result = append(result, configBundleShare{ID: share.ID, Token: share.Token, Name: share.Name, MonitorIDs: share.MonitorIDs, ItemIDs: share.ItemIDs, Active: share.Active, CreatedAt: share.CreatedAt})
+	}
+	return result
+}
+
+func configBundleSharesToDomain(values []configBundleShare) []core.StatusBoardShare {
+	result := make([]core.StatusBoardShare, 0, len(values))
+	for _, share := range values {
+		result = append(result, core.StatusBoardShare{ID: share.ID, Token: share.Token, Name: share.Name, MonitorIDs: share.MonitorIDs, ItemIDs: share.ItemIDs, Active: share.Active, CreatedAt: share.CreatedAt})
+	}
+	return result
 }
 
 func (a *APIServer) validateConfigBundle(c *gin.Context, bundle configBundleData, replace bool) error {
@@ -533,14 +589,25 @@ func (a *APIServer) validateConfigBundle(c *gin.Context, bundle configBundleData
 	if err != nil {
 		return err
 	}
+	existingItems, err := a.store.ListStatusBoardItems(c.Request.Context())
+	if err != nil {
+		return err
+	}
+	existingShares, err := a.store.ListStatusBoardShares(c.Request.Context())
+	if err != nil {
+		return err
+	}
 	if replace {
-		existingMonitors, existingChannels = nil, []core.NotificationChannel{{ID: core.BuiltInNotificationChannelID}}
+		existingMonitors, existingChannels, existingItems, existingShares = nil, []core.NotificationChannel{{ID: core.BuiltInNotificationChannelID}}, nil, nil
 	}
 	for _, monitor := range existingMonitors {
 		monitors[monitor.ID] = struct{}{}
 	}
 	for _, channel := range existingChannels {
 		channels[channel.ID] = struct{}{}
+	}
+	for _, item := range existingItems {
+		items[item.ID] = struct{}{}
 	}
 	for _, monitor := range bundle.Monitors {
 		for _, channelID := range monitor.NotificationChannelIDs {
@@ -557,6 +624,55 @@ func (a *APIServer) validateConfigBundle(c *gin.Context, bundle configBundleData
 			if _, ok := channels[channelID]; !ok {
 				return fmt.Errorf("看板项 %q 引用了不存在的通知渠道 %q", item.ID, channelID)
 			}
+		}
+	}
+	shareIDs := make(map[string]struct{}, len(bundle.StatusBoardShares))
+	tokens := make(map[string]string, len(existingShares)+len(bundle.StatusBoardShares))
+	for _, share := range existingShares {
+		tokens[share.Token] = share.ID
+	}
+	for index := range bundle.StatusBoardShares {
+		share := &bundle.StatusBoardShares[index]
+		if share.ID == "" || strings.TrimSpace(share.Name) == "" || share.Token == "" {
+			return errors.New("共享链接缺少必填字段")
+		}
+		if _, exists := shareIDs[share.ID]; exists {
+			return fmt.Errorf("共享链接 ID 重复：%s", share.ID)
+		}
+		shareIDs[share.ID] = struct{}{}
+		decodedToken, err := base64.RawURLEncoding.DecodeString(share.Token)
+		if err != nil || len(decodedToken) != 32 {
+			return fmt.Errorf("共享链接 %q 的令牌无效", share.ID)
+		}
+		if ownerID, exists := tokens[share.Token]; exists && ownerID != share.ID {
+			return fmt.Errorf("共享链接 %q 的令牌与其他链接重复", share.ID)
+		}
+		tokens[share.Token] = share.ID
+		if len(share.MonitorIDs) == 0 && len(share.ItemIDs) == 0 {
+			return fmt.Errorf("共享链接 %q 未选择任何看板内容", share.ID)
+		}
+		selectedMonitors := make(map[string]struct{}, len(share.MonitorIDs))
+		for _, monitorID := range share.MonitorIDs {
+			if _, duplicate := selectedMonitors[monitorID]; duplicate {
+				return fmt.Errorf("共享链接 %q 包含重复的监控分组", share.ID)
+			}
+			selectedMonitors[monitorID] = struct{}{}
+			if _, exists := monitors[monitorID]; !exists {
+				return fmt.Errorf("共享链接 %q 引用了不存在的监控项 %q", share.ID, monitorID)
+			}
+		}
+		selectedItems := make(map[string]struct{}, len(share.ItemIDs))
+		for _, itemID := range share.ItemIDs {
+			if _, duplicate := selectedItems[itemID]; duplicate {
+				return fmt.Errorf("共享链接 %q 包含重复的看板项", share.ID)
+			}
+			selectedItems[itemID] = struct{}{}
+			if _, exists := items[itemID]; !exists {
+				return fmt.Errorf("共享链接 %q 引用了不存在的看板项 %q", share.ID, itemID)
+			}
+		}
+		if share.CreatedAt.IsZero() {
+			share.CreatedAt = now
 		}
 	}
 	return nil
@@ -635,7 +751,7 @@ func decodeConfigBundle(bundle configBundle, password string) (*configBundleData
 	}
 	contents := make(map[string]bool, len(payload.Contents))
 	for _, value := range payload.Contents {
-		if value != "runtime" && value != "monitors" && value != "notification_channels" && value != "status_board_items" && value != "admin_key" {
+		if value != "runtime" && value != "monitors" && value != "notification_channels" && value != "status_board_items" && value != "status_board_shares" && value != "admin_key" {
 			return nil, fmt.Errorf("配置包包含未知内容：%s", value)
 		}
 		if contents[value] {
@@ -646,7 +762,7 @@ func decodeConfigBundle(bundle configBundle, password string) (*configBundleData
 	if !contents["runtime"] {
 		return nil, errors.New("配置包必须包含动态配置")
 	}
-	if contents["admin_key"] != (payload.AdminKeyHash != "") || (len(payload.Monitors) > 0 && !contents["monitors"]) || (len(payload.NotificationChannels) > 0 && !contents["notification_channels"]) || (len(payload.StatusBoardItems) > 0 && !contents["status_board_items"]) {
+	if contents["admin_key"] != (payload.AdminKeyHash != "") || (len(payload.Monitors) > 0 && !contents["monitors"]) || (len(payload.NotificationChannels) > 0 && !contents["notification_channels"]) || (len(payload.StatusBoardItems) > 0 && !contents["status_board_items"]) || (len(payload.StatusBoardShares) > 0 && !contents["status_board_shares"]) {
 		return nil, errors.New("配置内容与清单不一致")
 	}
 	if err := payload.Runtime.Validate(); err != nil {

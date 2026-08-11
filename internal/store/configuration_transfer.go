@@ -48,6 +48,11 @@ func (s *Store) ImportConfiguration(ctx context.Context, input ConfigurationImpo
 			return ConfigurationImportResult{}, fmt.Errorf("import status board item %q: %w", item.ID, err)
 		}
 	}
+	for _, share := range input.StatusBoardShares {
+		if err := upsertStatusBoardShareTx(ctx, tx, share); err != nil {
+			return ConfigurationImportResult{}, fmt.Errorf("import status board share %q: %w", share.ID, err)
+		}
+	}
 	if input.AdminKeyHash != "" {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM admin_sessions`); err != nil {
 			return ConfigurationImportResult{}, err
@@ -110,33 +115,53 @@ func importRuntimeConfigTx(ctx context.Context, tx *sql.Tx, values map[string]js
 }
 
 func clearTransferableConfigurationTx(ctx context.Context, tx *sql.Tx, monitors []core.Monitor, channels []core.NotificationChannel) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM status_board_shares`); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM status_board_items`); err != nil {
 		return err
 	}
 	monitorIDs := make(map[string]struct{}, len(monitors))
-	for _, monitor := range monitors { monitorIDs[monitor.ID] = struct{}{} }
+	for _, monitor := range monitors {
+		monitorIDs[monitor.ID] = struct{}{}
+	}
 	if err := deleteRowsNotInImportTx(ctx, tx, "monitors", "", monitorIDs); err != nil {
 		return err
 	}
 	channelIDs := make(map[string]struct{}, len(channels))
-	for _, channel := range channels { channelIDs[channel.ID] = struct{}{} }
+	for _, channel := range channels {
+		channelIDs[channel.ID] = struct{}{}
+	}
 	return deleteRowsNotInImportTx(ctx, tx, "notification_channels", "builtin_key IS NULL", channelIDs)
 }
 
 func deleteRowsNotInImportTx(ctx context.Context, tx *sql.Tx, table, where string, retained map[string]struct{}) error {
 	query := `SELECT id FROM ` + table
-	if where != "" { query += ` WHERE ` + where }
+	if where != "" {
+		query += ` WHERE ` + where
+	}
 	rows, err := tx.QueryContext(ctx, query)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var stale []string
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil { _ = rows.Close(); return err }
-		if _, keep := retained[id]; !keep { stale = append(stale, id) }
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if _, keep := retained[id]; !keep {
+			stale = append(stale, id)
+		}
 	}
-	if err := rows.Close(); err != nil { return err }
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	for _, id := range stale {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE id=?`, id); err != nil { return err }
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE id=?`, id); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -191,5 +216,27 @@ func upsertStatusBoardItemTx(ctx context.Context, tx *sql.Tx, item core.StatusBo
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO status_board_items(id,name,monitor_id,enabled,source_json,invert,thresholds_json,history_limit,trend_rules_json,notification_channel_ids_json,runtime_state_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, model.ID, model.Name, model.MonitorID, model.Enabled, model.SourceJSON, model.Invert, model.ThresholdsJSON, model.HistoryLimit, model.TrendRulesJSON, model.NotificationChannelIDsJSON, model.RuntimeStateJSON, model.CreatedAt, model.UpdatedAt)
+	return err
+}
+
+func upsertStatusBoardShareTx(ctx context.Context, tx *sql.Tx, share core.StatusBoardShare) error {
+	model := statusBoardShareModel{
+		ID:             share.ID,
+		Name:           share.Name,
+		Token:          share.Token,
+		MonitorIDsJSON: jsonString(share.MonitorIDs),
+		ItemIDsJSON:    jsonString(share.ItemIDs),
+		Active:         share.Active,
+		CreatedAt:      timestamp(share.CreatedAt),
+	}
+	exists, err := rowExistsTx(ctx, tx, "status_board_shares", share.ID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		_, err = tx.ExecContext(ctx, `UPDATE status_board_shares SET name=?,token=?,monitor_ids_json=?,item_ids_json=?,active=?,created_at=? WHERE id=?`, model.Name, model.Token, model.MonitorIDsJSON, model.ItemIDsJSON, model.Active, model.CreatedAt, model.ID)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO status_board_shares(id,name,token,monitor_ids_json,item_ids_json,active,created_at) VALUES(?,?,?,?,?,?,?)`, model.ID, model.Name, model.Token, model.MonitorIDsJSON, model.ItemIDsJSON, model.Active, model.CreatedAt)
 	return err
 }

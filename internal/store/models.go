@@ -70,6 +70,17 @@ type statusBoardItemModel struct {
 	Monitor                    *monitorModel `bun:"rel:belongs-to,join:monitor_id=id,on_delete:cascade"`
 }
 
+type statusBoardShareModel struct {
+	bun.BaseModel  `bun:"table:status_board_shares"`
+	ID             string `bun:"id,pk,type:varchar(64)"`
+	Name           string `bun:"name,type:varchar(255),notnull"`
+	Token          string `bun:"token,type:varchar(128),notnull"`
+	MonitorIDsJSON string `bun:"monitor_ids_json,type:longtext,notnull"`
+	ItemIDsJSON    string `bun:"item_ids_json,type:longtext,notnull"`
+	Active         bool   `bun:"active,notnull"`
+	CreatedAt      string `bun:"created_at,type:varchar(35),notnull"`
+}
+
 type notificationChannelModel struct {
 	bun.BaseModel `bun:"table:notification_channels"`
 	ID            string  `bun:"id,pk,type:varchar(64)"`

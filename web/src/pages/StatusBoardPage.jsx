@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Activity, ChevronDown, Copy, Edit3, Plus, RadioTower, Trash2 } from "lucide-react";
+import { Activity, ChevronDown, Copy, Edit3, Plus, RadioTower, Share2, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { duplicateStatusBoardDraft } from "../lib/duplicates";
 import { formatDate } from "../lib/formatters";
@@ -12,6 +12,7 @@ import { DeleteConfirmDialog } from "../components/ui/DeleteConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
 import { IconButton } from "../components/ui/IconButton";
 import { StatusBoardDialog } from "../features/statusboard/StatusBoardDialog";
+import { StatusBoardShareDialog } from "../features/statusboard/StatusBoardShareDialog";
 
 const levelLabels = { success: "正常", warning: "警告", failure: "失败", unknown: "未知" };
 const STATUS_BAR_WIDTH = 5;
@@ -26,6 +27,7 @@ export function StatusBoardPage({ monitors, channels, refreshVersion = 0, onOpen
   const [editing, setEditing] = useState(undefined);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -88,14 +90,19 @@ export function StatusBoardPage({ monitors, channels, refreshVersion = 0, onOpen
   };
 
   const itemCount = snapshot.groups.reduce((total, group) => total + group.items.length, 0);
-  return <div className="page-stack status-board-page"><PageHeader eyebrow="STATUS BOARD" title="状态看板" description={`${snapshot.groups.length} 个监控分组 · ${itemCount} 个看板项`} actions={<Button onClick={() => setEditing(null)} disabled={!monitors.length}><Plus size={15} />添加看板项</Button>} />
-    {loading ? <div className="records-empty">正在加载状态看板...</div> : error ? <div className="records-empty field-error">{error}</div> : !snapshot.groups.length ? <Card className="section-card"><EmptyState icon={RadioTower} title="暂无看板项" description="添加一个监控结果或条件状态。" action={<Button onClick={() => setEditing(null)} disabled={!monitors.length}><Plus size={15} />添加看板项</Button>} /></Card> : <div className="status-board-groups">{snapshot.groups.map((group) => <StatusBoardGroup key={group.monitor.id} group={group} onEdit={setEditing} onDuplicate={(item) => setEditing(duplicateStatusBoardDraft(item))} onDelete={setDeleteTarget} onOpenExecution={onOpenExecution} />)}</div>}
+  return <div className="page-stack status-board-page"><PageHeader eyebrow="STATUS BOARD" title="状态看板" description={`${snapshot.groups.length} 个监控分组 · ${itemCount} 个看板项`} actions={<div className="page-heading-actions"><Button variant="outline" onClick={() => setShareDialogOpen(true)} disabled={!snapshot.groups.length}><Share2 size={15} />分享</Button><Button onClick={() => setEditing(null)} disabled={!monitors.length}><Plus size={15} />添加看板项</Button></div>} />
+    {loading ? <div className="records-empty">正在加载状态看板...</div> : error ? <div className="records-empty field-error">{error}</div> : !snapshot.groups.length ? <Card className="section-card"><EmptyState icon={RadioTower} title="暂无看板项" description="添加一个监控结果或条件状态。" action={<Button onClick={() => setEditing(null)} disabled={!monitors.length}><Plus size={15} />添加看板项</Button>} /></Card> : <StatusBoardSnapshotView snapshot={snapshot} onEdit={setEditing} onDuplicate={(item) => setEditing(duplicateStatusBoardDraft(item))} onDelete={setDeleteTarget} onOpenExecution={onOpenExecution} />}
     {editing !== undefined && <StatusBoardDialog item={editing || null} monitors={monitors} channels={channels} onClose={() => setEditing(undefined)} onSaved={saved} onError={reportError} />}
+    <StatusBoardShareDialog open={shareDialogOpen} snapshot={snapshot} onOpenChange={setShareDialogOpen} notify={notify} />
     <DeleteConfirmDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)} title="删除看板项" description={deleteTarget ? `将删除“${deleteTarget.name}”的看板配置和趋势状态，现有执行记录不会被删除。` : ""} busy={deleting} onConfirm={confirmDelete} />
   </div>;
 }
 
-function StatusBoardGroup({ group, onEdit, onDuplicate, onDelete, onOpenExecution }) {
+export function StatusBoardSnapshotView({ snapshot, readOnly = false, onEdit, onDuplicate, onDelete, onOpenExecution }) {
+  return <div className="status-board-groups">{(snapshot.groups || []).map((group) => <StatusBoardGroup key={group.monitor.id} group={group} readOnly={readOnly} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete} onOpenExecution={onOpenExecution} />)}</div>;
+}
+
+function StatusBoardGroup({ group, readOnly, onEdit, onDuplicate, onDelete, onOpenExecution }) {
   const [expanded, setExpanded] = useState(true);
   const contentID = useId();
   return <section className="status-board-group" data-state={expanded ? "open" : "closed"}>
@@ -104,23 +111,23 @@ function StatusBoardGroup({ group, onEdit, onDuplicate, onDelete, onOpenExecutio
       <div className="status-group-controls"><Badge tone={group.monitor.enabled ? "success" : "muted"}>{group.monitor.enabled ? "监控中" : "已停用"}</Badge><IconButton className="status-group-trigger" size="sm" title={expanded ? "收起分组" : "展开分组"} aria-label={`${expanded ? "收起" : "展开"}${group.monitor.name}`} aria-controls={contentID} aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}><ChevronDown className="status-group-chevron" size={16} /></IconButton></div>
     </header>
     <div id={contentID} className="status-group-content" aria-hidden={!expanded} inert={expanded ? undefined : ""}>
-      <div className="status-group-content-inner"><div className="status-item-list">{group.items.map((item) => <StatusItemRow key={item.id} item={item} monitor={group.monitor} onEdit={() => onEdit(item)} onDuplicate={() => onDuplicate(item)} onDelete={() => onDelete(item)} onOpenExecution={onOpenExecution} />)}</div></div>
+      <div className="status-group-content-inner"><div className="status-item-list">{group.items.map((item) => <StatusItemRow key={item.id} item={item} monitor={group.monitor} readOnly={readOnly} onEdit={() => onEdit?.(item)} onDuplicate={() => onDuplicate?.(item)} onDelete={() => onDelete?.(item)} onOpenExecution={onOpenExecution} />)}</div></div>
     </div>
   </section>;
 }
 
-function StatusItemRow({ item, monitor, onEdit, onDuplicate, onDelete, onOpenExecution }) {
+function StatusItemRow({ item, monitor, readOnly, onEdit, onDuplicate, onDelete, onOpenExecution }) {
   const current = item.current;
-  const activeRules = Object.values(item.runtime_state?.rules || {}).filter((rule) => rule.active).length;
-  return <article className="status-item-row">
+  const activeRules = item.active_trend_rules ?? Object.values(item.runtime_state?.rules || {}).filter((rule) => rule.active).length;
+  return <article className={`status-item-row${readOnly ? " is-read-only" : ""}`}>
     <div className="status-item-identity"><span className={`status-current-indicator ${sampleColorClass(current)}`} /><span><strong>{item.name}</strong><span className="status-item-subline"><small title={item.source_label}>{item.source_label}</small>{!item.enabled && <Badge tone="muted">已停用</Badge>}{activeRules > 0 && <Badge tone="warning">趋势告警 {activeRules}</Badge>}</span></span></div>
     <div className="status-item-current"><span>当前值</span><div><strong title={current?.display || "未知"}>{current?.display || "未知"}</strong><Badge tone={toneForLevel(current?.level)}>{current?.label || levelLabels[current?.level] || "未知"}</Badge></div></div>
-    <StatusBars item={item} monitorID={monitor.id} onOpenExecution={onOpenExecution} />
-    <div className="status-item-actions"><ActionMenu label={`${item.name} 操作`} items={[{ label: "编辑", icon: Edit3, onSelect: onEdit }, { label: "复制", icon: Copy, onSelect: onDuplicate }, { label: "删除", icon: Trash2, destructive: true, onSelect: onDelete }]} /></div>
+    <StatusBars item={item} monitorID={monitor.id} readOnly={readOnly} onOpenExecution={onOpenExecution} />
+    {!readOnly && <div className="status-item-actions"><ActionMenu label={`${item.name} 操作`} items={[{ label: "编辑", icon: Edit3, onSelect: onEdit }, { label: "复制", icon: Copy, onSelect: onDuplicate }, { label: "删除", icon: Trash2, destructive: true, onSelect: onDelete }]} /></div>}
   </article>;
 }
 
-function StatusBars({ item, monitorID, onOpenExecution }) {
+function StatusBars({ item, monitorID, readOnly, onOpenExecution }) {
   const viewportRef = useRef(null);
   const knownSampleIDsRef = useRef(null);
   const [activeSample, setActiveSample] = useState(null);
@@ -168,7 +175,7 @@ function StatusBars({ item, monitorID, onOpenExecution }) {
     <div className="status-bars-viewport" ref={viewportRef}>
       <div key={`bars-${latestSampleID}`} className={`status-bars${isShifting ? " is-shifting" : ""}`} style={{ "--status-bar-width": `${layout.barWidth}px`, "--status-bar-gap": `${layout.gap}px`, "--status-bars-shift": `${layout.shift}px`, "--status-bars-enter-offset": `${shiftOffset}px` }}>
         {displaySamples.length ? displaySamples.map((sample, index) => <span className={`status-bar-slot${barProximityClass(index, activeSampleIndex)}${enteringSampleIDs.has(sample.record_id) ? " is-entering" : ""}`} key={sample.record_id} onPointerEnter={() => setActiveSample(sample)} onFocus={() => setActiveSample(sample)} onBlur={hideSummary}>
-          <button type="button" className={`status-bar ${sampleColorClass(sample)}`} style={{ height: `${sample.height}%` }} title={`${formatDate(sample.started_at)} · ${sample.display} · ${sample.label || levelLabels[sample.level]}`} aria-label={`${formatDate(sample.started_at)}，${sample.display}，${sample.label || levelLabels[sample.level]}`} onClick={() => onOpenExecution?.(monitorID, sample.record_id)} />
+          {readOnly ? <span role="img" className={`status-bar ${sampleColorClass(sample)}`} style={{ height: `${sample.height}%` }} title={`${formatDate(sample.started_at)} · ${sample.display} · ${sample.label || levelLabels[sample.level]}`} aria-label={`${formatDate(sample.started_at)}，${sample.display}，${sample.label || levelLabels[sample.level]}`} /> : <button type="button" className={`status-bar ${sampleColorClass(sample)}`} style={{ height: `${sample.height}%` }} title={`${formatDate(sample.started_at)} · ${sample.display} · ${sample.label || levelLabels[sample.level]}`} aria-label={`${formatDate(sample.started_at)}，${sample.display}，${sample.label || levelLabels[sample.level]}`} onClick={() => onOpenExecution?.(monitorID, sample.record_id)} />}
         </span>) : <span className="status-no-samples">暂无执行数据</span>}
       </div>
     </div>
