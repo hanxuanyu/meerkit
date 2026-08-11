@@ -14,6 +14,8 @@ import { IconButton } from "../components/ui/IconButton";
 import { StatusBoardDialog } from "../features/statusboard/StatusBoardDialog";
 
 const levelLabels = { success: "正常", warning: "警告", failure: "失败", unknown: "未知" };
+const STATUS_BAR_WIDTH = 5;
+const STATUS_BAR_GAP = 3;
 
 export function StatusBoardPage({ monitors, channels, refreshVersion = 0, onOpenExecution, notify }) {
   const [snapshot, setSnapshot] = useState({ groups: [] });
@@ -122,13 +124,18 @@ function StatusBars({ item, monitorID, onOpenExecution }) {
   const [activeSample, setActiveSample] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const activeSampleIndex = activeSample ? item.samples.findIndex((sample) => sample.record_id === activeSample.record_id) : -1;
-  const layout = statusBarLayout(viewportWidth, item.history_limit, item.samples.length);
+  const layout = statusBarLayout(viewportWidth, item.samples.length);
 
   if (knownSampleIDsRef.current === null) {
     knownSampleIDsRef.current = new Set(item.samples.map((sample) => sample.record_id));
   }
   const enteringSampleIDs = new Set(item.samples.filter((sample) => !knownSampleIDsRef.current.has(sample.record_id)).map((sample) => sample.record_id));
-  const isShifting = layout.reachedEnd && enteringSampleIDs.size > 0;
+  const previousSampleCount = knownSampleIDsRef.current.size;
+  const previousLayout = statusBarLayout(viewportWidth, previousSampleCount);
+  const removedSampleCount = Math.max(0, previousSampleCount + enteringSampleIDs.size - item.samples.length);
+  const shiftOffset = removedSampleCount * (layout.barWidth + layout.gap) + Math.max(0, layout.shift - previousLayout.shift);
+  const isShifting = enteringSampleIDs.size === 1 && shiftOffset > 0;
+  const latestSampleID = item.samples.at(-1)?.record_id || "empty";
 
   useEffect(() => {
     knownSampleIDsRef.current = new Set(item.samples.map((sample) => sample.record_id));
@@ -156,7 +163,7 @@ function StatusBars({ item, monitorID, onOpenExecution }) {
       <span>{activeSample.label || levelLabels[activeSample.level] || "未知"} · {formatDate(activeSample.started_at)}</span>
     </div>}
     <div className="status-bars-viewport" ref={viewportRef}>
-      <div className={`status-bars${isShifting ? " is-shifting" : ""}`} style={{ "--status-bar-width": `${layout.barWidth}px`, "--status-bar-gap": `${layout.gap}px`, "--status-bars-shift": `${layout.shift}px`, "--status-bar-step": `${layout.barWidth + layout.gap}px` }}>
+      <div key={`bars-${latestSampleID}`} className={`status-bars${isShifting ? " is-shifting" : ""}`} style={{ "--status-bar-width": `${layout.barWidth}px`, "--status-bar-gap": `${layout.gap}px`, "--status-bars-shift": `${layout.shift}px`, "--status-bars-enter-offset": `${shiftOffset}px` }}>
         {item.samples.length ? item.samples.map((sample, index) => <span className={`status-bar-slot${barProximityClass(index, activeSampleIndex)}${enteringSampleIDs.has(sample.record_id) ? " is-entering" : ""}`} key={sample.record_id} onPointerEnter={() => setActiveSample(sample)} onFocus={() => setActiveSample(sample)} onBlur={hideSummary}>
           <button type="button" className={`status-bar ${sampleColorClass(sample)}`} style={{ height: `${sample.height}%` }} title={`${formatDate(sample.started_at)} · ${sample.display} · ${sample.label || levelLabels[sample.level]}`} aria-label={`${formatDate(sample.started_at)}，${sample.display}，${sample.label || levelLabels[sample.level]}`} onClick={() => onOpenExecution?.(monitorID, sample.record_id)} />
         </span>) : <span className="status-no-samples">暂无执行数据</span>}
@@ -172,16 +179,11 @@ function barProximityClass(index, activeIndex) {
   return distance <= 3 ? ` is-near-${distance}` : "";
 }
 
-function statusBarLayout(viewportWidth, historyLimit, sampleCount) {
-  if (!viewportWidth) return { barWidth: 5, gap: 3, shift: 0, reachedEnd: false };
-  const limit = Math.max(Number(historyLimit) || 0, 20);
-  const available = Math.max(0, viewportWidth - 4);
-  const idealCell = available / limit;
-  const barWidth = Math.min(7, Math.max(3, idealCell * .56));
-  const gap = limit > 1 ? Math.max(2, (available - limit * barWidth) / (limit - 1)) : 2;
+function statusBarLayout(viewportWidth, sampleCount) {
+  const barWidth = STATUS_BAR_WIDTH;
+  const gap = STATUS_BAR_GAP;
   const contentWidth = sampleCount > 0 ? sampleCount * barWidth + Math.max(0, sampleCount - 1) * gap + 4 : 0;
-  const reachedEnd = contentWidth >= viewportWidth - .5;
-  return { barWidth, gap, shift: Math.max(0, contentWidth - viewportWidth), reachedEnd };
+  return { barWidth, gap, shift: viewportWidth ? Math.max(0, contentWidth - viewportWidth) : 0 };
 }
 
 function appendStreamSamples(snapshot, event) {
