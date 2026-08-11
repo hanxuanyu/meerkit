@@ -17,6 +17,7 @@ import (
 
 	"meerkit/internal/app"
 	"meerkit/internal/auth"
+	"meerkit/internal/browser"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
@@ -42,9 +43,11 @@ type APIServer struct {
 	runtime      *runtimeconfig.Manager
 	loginLimiter *loginLimiter
 	statusBoard  *statusboard.Service
+	browser      *browser.Manager
 }
 
 func (a *APIServer) SetStatusBoard(service *statusboard.Service) { a.statusBoard = service }
+func (a *APIServer) SetBrowser(manager *browser.Manager)         { a.browser = manager }
 
 func NewAPIServer(store store.APIRepository, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
 	var runtimeManager *runtimeconfig.Manager
@@ -76,6 +79,7 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/auth/setup", a.authSetup)
 	api.POST("/auth/login", a.authLogin)
 	api.GET("/public/status-board/:token", a.getPublicStatusBoardShare)
+	api.GET("/browser/extension/ws", a.handleBrowserExtension)
 	api.Use(a.requireAuth())
 	api.POST("/auth/logout", a.authLogout)
 	api.POST("/auth/change-key", a.authChangeKey)
@@ -113,6 +117,8 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/system/config/transfer/export", a.exportConfiguration)
 	api.POST("/system/config/transfer/import/preview", a.previewConfigurationImport)
 	api.POST("/system/config/transfer/import", a.importConfiguration)
+	api.GET("/browser", a.getBrowserStatus)
+	api.POST("/browser/pairing-token/rotate", a.rotateBrowserPairingToken)
 
 	api.GET("/notification-channels", legacyParts(a.handleChannels))
 	api.POST("/notification-channels", legacyParts(a.handleChannels))

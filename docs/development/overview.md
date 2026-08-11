@@ -5,7 +5,7 @@ Meerkit 是一个带独立插件进程的 Go 单体服务。宿主拥有调度�
 ## 运行时结构
 
 ```text
-Browser
+Admin Browser
   | HTTP / WebSocket
   v
 Gin API + embedded React UI
@@ -15,10 +15,11 @@ Gin API + embedded React UI
   +-- Scheduler/Runner ---- cron, execution, condition state
   +-- Notification -------- in-app, Webhook, SMTP
   +-- Status board -------- sample mapping, trend state
-  +-- Plugin manager ------ package trust, process lifecycle
+  +-- Browser manager ----- extension pairing, agent routing, capabilities -- WebSocket --> Chrome Extension
+  +-- Plugin manager ------ package trust, process lifecycle --------------- local gRPC --> plugin child process
   +-- Bun store ----------- SQLite or MySQL
-          |
-          +-- local gRPC --> plugin child process
+
+plugin child process -- local capability gRPC --> Browser manager
 ```
 
 HTTP API 负责校验输入和组织资源；应用服务在启动时装配所有依赖；核心包定义不依赖传输的领域契约；Store 用 Bun 共享领域模型并针对 SQLite/MySQL 处理连接与迁移。
@@ -29,6 +30,8 @@ HTTP API 负责校验输入和组织资源；应用服务在启动时装配所�
 | --- | --- | --- |
 | 宿主 | 调度、持久化、条件、通知、认证、插件信任与进程 | 具体 HTTP/TCP 探测语义 |
 | 监控插件 | 参数描述、结果描述、校验、执行、配置迁移 | Cron、数据库、通知投递 |
+| Chrome Extension | 通用标签页、DOM、脚本、截图和 CDP 网络操作 | 站点地址、采集流程与结果语义 |
+| Browser Manager | 扩展配对、节点会话、指令路由和插件能力授权 | 站点专有业务流程 |
 | Web 前端 | 管理操作、动态表单、结果展示、实时流 | 独立业务状态或直接数据库访问 |
 | 文档站点 | 使用、运维、开发和参考文档 | 运行时管理界面 |
 
@@ -42,6 +45,7 @@ internal/api/              Gin 路由、认证中间件、HTTP/WebSocket
 internal/app/              启动与运行时配置定义
 internal/application/      服务装配和生命周期
 internal/auth/             管理密钥与会话
+internal/browser/          浏览器节点管理与插件能力服务
 internal/command/          Cobra 命令树
 internal/core/             领域模型、条件和结果契约
 internal/monitor/          模块注册表与远程插件适配器
@@ -52,18 +56,20 @@ internal/runtime/          执行器、调度器和清理任务
 internal/runtimeconfig/    数据库运行时配置管理
 internal/statusboard/      看板样本、趋势与实时 Hub
 internal/store/            SQLite/MySQL repository 与迁移
-plugins/                   HTTP、TCP 与模板独立 Go 模块
+plugins/                   HTTP、TCP、浏览器示例与模板独立 Go 模块
 sdk/                       Go SDK、Proto、JSON Schema
 web/                       React/Vite 管理界面
+browser-extension/         平台维护的通用 Chrome 执行端
 ```
 
 ## Go Workspace
 
-根 `go.work` 包含根模块、SDK 和三个插件模块。这样本地插件会使用工作区里的 SDK 代码，同时每个插件仍能独立测试与发布。
+根 `go.work` 包含根模块、SDK 和四个插件模块。这样本地插件会使用工作区里的 SDK 代码，同时每个插件仍能独立测试与发布。
 
 ```bash
 go test ./...
 (cd sdk && go test ./...)
+(cd plugins/browser-example && go test ./...)
 (cd plugins/http && go test ./...)
 (cd plugins/tcp && go test ./...)
 (cd plugins/template && go test ./...)

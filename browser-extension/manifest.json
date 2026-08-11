@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Meerkit Browser Agent",
+  "version": "0.1.0",
+  "description": "Provides browser automation capabilities to a paired Meerkit instance.",
+  "permissions": [
+    "alarms",
+    "debugger",
+    "scripting",
+    "storage",
+    "tabGroups",
+    "tabs"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Meerkit Browser Agent",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

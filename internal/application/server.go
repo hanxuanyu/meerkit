@@ -14,6 +14,7 @@ import (
 	"meerkit/internal/api"
 	"meerkit/internal/app"
 	"meerkit/internal/auth"
+	"meerkit/internal/browser"
 	"meerkit/internal/core"
 	"meerkit/internal/logging"
 	"meerkit/internal/monitor"
@@ -71,6 +72,19 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	logger.Info("Meerkit storage initialized", "database_type", config.Storage.Database.Type, "data_dir", config.Storage.DataDir, "auto_migrate", config.Storage.Database.AutoMigrate)
 	api.SetFrontendFS(frontend)
 	modules := monitor.NewRegistry()
+	browserManager, err := browser.OpenManager(config.Storage.DataDir)
+	if err != nil {
+		return err
+	}
+	capabilityToken, err := browser.GenerateToken()
+	if err != nil {
+		return err
+	}
+	browserCapability, err := browser.StartCapabilityServer(browserManager, capabilityToken)
+	if err != nil {
+		return err
+	}
+	defer browserCapability.Close()
 	trustedKeys := make(map[string]ed25519.PublicKey, len(config.Plugins.TrustedKeys))
 	for id, encoded := range config.Plugins.TrustedKeys {
 		value, decodeErr := base64.StdEncoding.DecodeString(encoded)
@@ -79,7 +93,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 		}
 		trustedKeys[id] = ed25519.PublicKey(value)
 	}
-	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: runtimeSnapshot.Plugins.LogLevel, LogFormat: runtimeSnapshot.Plugins.LogFormat})
+	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: runtimeSnapshot.Plugins.LogLevel, LogFormat: runtimeSnapshot.Plugins.LogFormat, BrowserCapabilityEndpoint: browserCapability.Endpoint, BrowserCapabilityToken: browserCapability.Token})
 	if err != nil {
 		return err
 	}
@@ -145,6 +159,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	authService := auth.NewService(database, runtimeSnapshot.SessionTTLDuration())
 	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger, runtimeManager)
 	apiServer.SetStatusBoard(statusBoardService)
+	apiServer.SetBrowser(browserManager)
 	runtimeManager.SetApply(func(applyCtx context.Context, oldConfig, newConfig app.RuntimeConfig) error {
 		if oldConfig.Logging != newConfig.Logging {
 			if err := loggingController.Apply(newConfig.Logging); err != nil {

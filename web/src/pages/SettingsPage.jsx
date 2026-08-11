@@ -13,6 +13,7 @@ import { Checkbox } from "../components/ui/Checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/Dialog";
+import { BrowserSettings } from "../features/browser/BrowserSettings";
 
 const sourceLabels = {
   command_line: "命令行",
@@ -30,6 +31,7 @@ const runtimeTypeLabels = {
 };
 
 export function SettingsPage() {
+  const [activeTab, setActiveTab] = useState("runtime");
   const [metadata, setMetadata] = useState(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -90,10 +92,11 @@ export function SettingsPage() {
     <PageHeader eyebrow="SYSTEM CONFIGURATION" title="系统设置" description="动态配置保存在数据库并可即时生效，启动配置由 YAML 和环境变量提供。" />
     {error && <div className="settings-config-error">{error}</div>}
     {unsavedCount > 0 && <div className="settings-unsaved-banner" role="alert"><AlertTriangle size={17} /><div><strong>有 {unsavedCount} 项配置尚未保存</strong><span>请点击对应配置项右侧的保存按钮，否则切换页面或刷新后修改会丢失。</span></div></div>}
-    <Tabs defaultValue="runtime" className="settings-config-tabs">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="settings-config-tabs">
       <TabsList>
         <TabsTrigger value="runtime">动态配置</TabsTrigger>
         <TabsTrigger value="startup">启动配置</TabsTrigger>
+        <TabsTrigger value="browser">浏览器</TabsTrigger>
       </TabsList>
       <TabsContent value="runtime" forceMount>
         <section className="settings-config-runtime">
@@ -106,6 +109,9 @@ export function SettingsPage() {
           <div className="section-header"><div><h2>启动配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "当前使用默认配置文件路径。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>
           {metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}
         </section>
+      </TabsContent>
+      <TabsContent value="browser">
+        <BrowserSettings />
       </TabsContent>
     </Tabs>
     <AdminKeyDialog open={keyDialogOpen} onOpenChange={setKeyDialogOpen} onDirtyChange={(count) => setUnsavedCounts((current) => current.auth === count ? current : { ...current, auth: count })} />

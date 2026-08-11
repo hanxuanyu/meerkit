@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meerkit Browser Agent</title><link rel="stylesheet" href="styles.css"></head>
+<body class="popup-page">
+  <main class="popup-shell">
+    <header><span class="brand-mark">M</span><div><h1>Browser Agent</h1><p id="agent-name">Meerkit</p></div></header>
+    <section id="popup-status" class="popup-status" data-state="disconnected"><span></span><div><strong>检查连接状态</strong><small id="endpoint"></small></div></section>
+    <dl><div><dt>版本</dt><dd id="version">-</dd></div><div><dt>运行任务</dt><dd id="active-runs">0</dd></div></dl>
+    <footer><button id="reconnect" class="secondary" type="button">重新连接</button><button id="settings" class="primary" type="button">连接设置</button></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

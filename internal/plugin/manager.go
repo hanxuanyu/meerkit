@@ -55,11 +55,13 @@ type signatureInfo struct {
 }
 
 type ManagerOptions struct {
-	DataDir     string
-	TrustedKeys map[string]ed25519.PublicKey
-	Logger      *slog.Logger
-	LogLevel    string
-	LogFormat   string
+	DataDir                   string
+	TrustedKeys               map[string]ed25519.PublicKey
+	Logger                    *slog.Logger
+	LogLevel                  string
+	LogFormat                 string
+	BrowserCapabilityEndpoint string
+	BrowserCapabilityToken    string
 }
 
 type process struct {
@@ -69,17 +71,19 @@ type process struct {
 	logFile *os.File
 }
 type Manager struct {
-	store              store.PluginRepository
-	registry           *monitor.Registry
-	root               string
-	logger             *slog.Logger
-	pluginLogLevel     string
-	pluginLogFormat    string
-	mu                 sync.Mutex
-	processes          map[string]*process
-	watcher            *fsnotify.Watcher
-	watchCancel        context.CancelFunc
-	developmentBuilder func(context.Context, string, string) error
+	store                     store.PluginRepository
+	registry                  *monitor.Registry
+	root                      string
+	logger                    *slog.Logger
+	pluginLogLevel            string
+	pluginLogFormat           string
+	browserCapabilityEndpoint string
+	browserCapabilityToken    string
+	mu                        sync.Mutex
+	processes                 map[string]*process
+	watcher                   *fsnotify.Watcher
+	watchCancel               context.CancelFunc
+	developmentBuilder        func(context.Context, string, string) error
 }
 
 func NewManager(database store.PluginRepository, registry *monitor.Registry, options ManagerOptions) (*Manager, error) {
@@ -95,7 +99,7 @@ func NewManager(database store.PluginRepository, registry *monitor.Registry, opt
 	if pluginLogFormat == "" {
 		pluginLogFormat = "simple"
 	}
-	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, pluginLogLevel: pluginLogLevel, pluginLogFormat: pluginLogFormat, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
+	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, pluginLogLevel: pluginLogLevel, pluginLogFormat: pluginLogFormat, browserCapabilityEndpoint: options.BrowserCapabilityEndpoint, browserCapabilityToken: options.BrowserCapabilityToken, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
 	for _, directory := range []string{"inbox", "staging", "packages", "installed", "development", "rejected", "logs"} {
 		if err := os.MkdirAll(filepath.Join(manager.root, directory), 0o750); err != nil {
 			return nil, err
@@ -326,6 +330,9 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		"MEERKIT_PLUGIN_LOG_LEVEL="+m.pluginLogLevel,
 		"MEERKIT_PLUGIN_LOG_FORMAT="+m.pluginLogFormat,
 	)
+	if m.browserCapabilityEndpoint != "" && m.browserCapabilityToken != "" {
+		command.Env = append(command.Env, sdk.BrowserCapabilityEndpointEnv+"="+m.browserCapabilityEndpoint, sdk.BrowserCapabilityTokenEnv+"="+m.browserCapabilityToken)
+	}
 	client := hplugin.NewClient(&hplugin.ClientConfig{HandshakeConfig: sdk.Handshake, Plugins: map[string]hplugin.Plugin{"monitor": &sdk.MonitorPlugin{}}, Cmd: command, AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC}, Managed: true, Stderr: logFile, SyncStdout: logFile, SyncStderr: logFile, Logger: hclog.NewNullLogger()})
 	cleanupCandidate := func() { client.Kill(); _ = logFile.Close() }
 	rpcClient, err := client.Client()

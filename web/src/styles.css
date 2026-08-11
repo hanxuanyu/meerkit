@@ -377,6 +377,41 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .settings-config-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .settings-config-startup { min-width: 0; }
 .settings-config-startup > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
+.browser-settings { min-width: 0; }
+.browser-settings > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
+.browser-settings-status { display: flex; flex: none; align-items: center; gap: 8px; }
+.browser-settings-status .badge { min-height: 22px; gap: 4px; padding: 0 7px; font-size: 9px; }
+.browser-settings-error { margin: 16px 20px 0; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 7px; color: #991b1b; background: #fef2f2; font-size: 11px; }
+.browser-settings-body { display: grid; gap: 14px; padding: 16px 20px 22px; }
+.browser-connection-panel, .browser-agents-panel { overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.browser-settings-subheading { display: flex; min-height: 56px; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 13px; border-bottom: 1px solid var(--border); background: var(--panel-subtle); }
+.browser-settings-subheading > div { display: grid; min-width: 0; gap: 3px; }
+.browser-settings-subheading strong { font-size: 12px; font-weight: 650; }
+.browser-settings-subheading span { color: var(--muted); font-size: 10px; }
+.browser-connection-fields { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 12px; padding: 13px; }
+.browser-connection-fields > label { display: grid; min-width: 0; gap: 6px; }
+.browser-connection-fields > label > span { color: var(--muted); font-size: 10px; font-weight: 600; }
+.browser-connection-fields > label > div { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 5px; min-width: 0; }
+.browser-connection-fields code { height: 36px; padding: 0 10px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--panel-subtle); font-size: 10px; line-height: 34px; text-overflow: ellipsis; white-space: nowrap; }
+.browser-connection-fields .password-input { min-width: 0; }
+.browser-connection-fields .password-input .field-control { height: 36px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.browser-agent-list { display: grid; }
+.browser-agent-row { display: grid; grid-template-columns: 32px minmax(150px, 1.2fr) 90px minmax(150px, 1fr) 115px; align-items: center; gap: 10px; min-height: 70px; padding: 10px 13px; }
+.browser-agent-row + .browser-agent-row { border-top: 1px solid var(--border); }
+.browser-agent-icon { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--panel-subtle); }
+.browser-agent-copy, .browser-agent-version, .browser-agent-capabilities, .browser-agent-seen { display: grid; min-width: 0; gap: 3px; }
+.browser-agent-copy > div { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.browser-agent-copy strong { min-width: 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.browser-agent-copy code { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.browser-agent-copy .badge { min-height: 18px; gap: 3px; padding: 0 5px; font-size: 8px; }
+.browser-agent-version > span, .browser-agent-capabilities > span, .browser-agent-seen > span { color: var(--muted); font-size: 9px; }
+.browser-agent-version > strong, .browser-agent-capabilities > strong, .browser-agent-seen > strong { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.browser-agent-capabilities { grid-template-columns: auto minmax(0, 1fr); }
+.browser-agent-capabilities > span { align-self: center; }
+.browser-agent-capabilities > strong { justify-self: start; padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-subtle); }
+.browser-agent-capabilities > small { grid-column: 1 / -1; overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.browser-agent-seen small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.browser-agent-empty { display: flex; min-height: 92px; align-items: center; justify-content: center; gap: 8px; padding: 16px; color: var(--muted); font-size: 10px; }
 .startup-config-items { display: grid; gap: 0; margin: 16px 20px 22px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
 .startup-config-item { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.4fr) max-content; grid-template-areas: "header values source"; align-items: center; gap: 12px; min-width: 0; padding: 10px 14px; }
 .startup-config-item + .startup-config-item { border-top: 1px solid var(--border); }
@@ -432,7 +467,7 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .dark .runtime-config-path > span, .dark .runtime-config-item-alert { color: #fbbf24; }
 
 @media (max-width: 640px) {
-  .settings-config-runtime > .section-header, .settings-config-startup > .section-header, .runtime-config-group-header { padding: 15px; }
+  .settings-config-runtime > .section-header, .settings-config-startup > .section-header, .browser-settings > .section-header, .runtime-config-group-header { padding: 15px; }
   .settings-config-runtime > .section-header { flex-wrap: wrap; }
   .settings-config-runtime > .section-header .settings-config-actions { width: 100%; justify-content: flex-start; }
   .startup-config-items { margin: 14px 15px 18px; }
@@ -442,6 +477,17 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
   .runtime-config-item { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "header footer" "fields fields"; gap: 8px 10px; padding: 11px 12px; }
   .runtime-config-item-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .settings-config-error { margin: 0 15px 15px; }
+  .browser-settings-body { padding: 14px 15px 18px; }
+  .browser-settings-error { margin: 14px 15px 0; }
+  .browser-connection-fields { grid-template-columns: minmax(0, 1fr); }
+  .browser-agent-row { grid-template-columns: 32px minmax(0, 1fr) max-content; grid-template-areas: "icon copy seen" "icon version version" "capabilities capabilities capabilities"; gap: 7px 10px; padding: 11px 12px; }
+  .browser-agent-icon { grid-area: icon; align-self: start; }
+  .browser-agent-copy { grid-area: copy; }
+  .browser-agent-version { display: flex; grid-area: version; gap: 5px; }
+  .browser-agent-capabilities { grid-area: capabilities; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; padding-top: 3px; }
+  .browser-agent-capabilities > small { grid-column: 3; }
+  .browser-agent-seen { grid-area: seen; justify-items: end; }
+  .browser-agent-seen small { display: none; }
 }
 
 @media (max-width: 480px) {
