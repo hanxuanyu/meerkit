@@ -3,6 +3,7 @@ SHELL := /bin/sh
 
 GO ?= go
 NPM ?= npm
+CURL ?= curl
 AIR_VERSION ?= v1.67.4
 AIR_BIN ?= $(CURDIR)/.tools/bin/air
 
@@ -18,6 +19,8 @@ KEY_ID ?= $(MEERKIT_PLUGIN_KEY_ID)
 VERSION ?= $(MEERKIT_VERSION)
 BACKEND_ARGS ?=
 FRONTEND_ARGS ?=
+DEV_BACKEND_READY_URL ?= http://127.0.0.1:8080/readyz
+DEV_BACKEND_WAIT_SECONDS ?= 60
 
 .PHONY: help deps dev dev-backend dev-frontend dev-tools frontend-build prepare-frontend-assets \
 	docs-dev docs-build docs-preview \
@@ -28,7 +31,7 @@ help:
 		'Meerkit development and release commands:' \
 		'' \
 		'  make deps               Install frontend and Go dependencies' \
-		'  make dev                Start the backend and Vite frontend' \
+		'  make dev                Start the backend, then the Vite frontend' \
 		'  make dev-backend        Start only the Go backend' \
 		'  make dev-tools          Install the pinned backend hot-reload tool' \
 		'  make dev-frontend       Start only the Vite frontend' \
@@ -47,6 +50,7 @@ help:
 		'  TARGETS=linux/amd64,linux/arm64  SIGN_KEY=path  KEY_ID=name' \
 		'  VERSION=v0.1.0  KEY_PREFIX=keys/meerkit-official' \
 		'  BACKEND_ARGS="--config config.yaml"  FRONTEND_ARGS="--host 0.0.0.0"' \
+		'  DEV_BACKEND_READY_URL=http://127.0.0.1:8080/readyz  DEV_BACKEND_WAIT_SECONDS=60' \
 		'  AIR_VERSION=v1.67.4  AIR_BIN=/path/to/air'
 
 deps: dev-tools
@@ -82,7 +86,29 @@ dev: prepare-frontend-assets
 	}; \
 	trap cleanup EXIT; \
 	trap 'exit 130' HUP INT TERM; \
+	if ! command -v "$(CURL)" >/dev/null 2>&1; then \
+		echo "Readiness probe command not found: $(CURL)" >&2; \
+		exit 127; \
+	fi; \
 	$(MAKE) --no-print-directory dev-backend & backend_pid=$$!; \
+	echo "Waiting for backend readiness at $(DEV_BACKEND_READY_URL)..."; \
+	elapsed=0; \
+	until $(CURL) --fail --silent --max-time 1 "$(DEV_BACKEND_READY_URL)" >/dev/null 2>&1; do \
+		if ! kill -0 "$$backend_pid" 2>/dev/null; then \
+			status=0; \
+			wait "$$backend_pid" || status=$$?; \
+			[ "$$status" -ne 0 ] || status=1; \
+			echo "Backend exited before becoming ready." >&2; \
+			exit "$$status"; \
+		fi; \
+		if [ "$$elapsed" -ge "$(DEV_BACKEND_WAIT_SECONDS)" ]; then \
+			echo "Backend did not become ready within $(DEV_BACKEND_WAIT_SECONDS) seconds." >&2; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+		elapsed=$$((elapsed + 1)); \
+	done; \
+	echo 'Backend is ready; starting Vite frontend...'; \
 	$(MAKE) --no-print-directory dev-frontend & frontend_pid=$$!; \
 	while kill -0 "$$backend_pid" 2>/dev/null && kill -0 "$$frontend_pid" 2>/dev/null; do \
 		sleep 1; \
