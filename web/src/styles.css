@@ -1999,3 +1999,65 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
   .overview-section-header { flex-wrap: wrap; }
   .overview-section-actions { margin-left: auto; }
 }
+
+/* List pages share a bounded search region and a right-aligned command
+   region. They become stacked work areas only on mobile. */
+.list-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: 20px; }
+.list-toolbar-search { width: clamp(260px, 31vw, 390px); min-width: 240px; max-width: 390px; flex: 0 1 390px; }
+.list-toolbar-actions { display: flex; min-width: 0; flex: 0 1 auto; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 8px; margin-left: auto; }
+.list-toolbar-actions > * { flex: none; }
+.channel-search { flex: 0 1 390px; }
+.notification-center-toolbar { justify-content: space-between; gap: 20px; }
+.notification-center-search { display: flex; width: clamp(300px, 35vw, 430px); min-width: 300px; max-width: 430px; flex: 0 1 430px; }
+.notification-center-search .notification-status-select { flex: none; }
+.notification-center-toolbar-actions { flex-wrap: nowrap; }
+
+@media (max-width: 640px) {
+  .list-toolbar { align-items: stretch; flex-direction: column; gap: 10px; }
+  .list-toolbar-search, .notification-center-search { width: 100%; min-width: 0; max-width: none; flex: none; }
+  .list-toolbar-actions, .notification-center-toolbar-actions { width: 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
+  .monitor-filters.list-toolbar-actions { width: 100%; }
+  .monitor-filters.list-toolbar-actions .monitor-filter-select { flex: 1 1 120px; width: auto; min-width: 0; }
+  .notification-center-toolbar-actions .browser-notification-heading-control { margin-right: auto; }
+}
+
+@media (max-width: 420px) {
+  .notification-center-search { align-items: stretch; flex-wrap: wrap; }
+  .notification-center-search .field-control { flex-basis: calc(100% - 23px); }
+  .notification-center-search .notification-status-select { width: 100%; margin-left: 23px; }
+}
+
+/* Unified list surfaces: search/action toolbars, column headings, and data
+   rows use one vertical rhythm across monitors, channels, plugins, and inbox. */
+.section-card:has(> .list-toolbar) > .list-toolbar {
+  min-height: 62px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.section-card:has(> .list-toolbar) > .table-wrap,
+.records-filters + .table-wrap {
+  padding-top: 12px;
+}
+.section-card:has(> .list-toolbar) > .table-wrap th,
+.records-filters + .table-wrap th {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.channel-list-head {
+  min-height: 52px;
+  padding: 12px 20px 10px;
+  color: var(--muted);
+}
+.channel-list-head + .channel-list { padding-top: 0; }
+
+@media (max-width: 640px) {
+  .section-card:has(> .list-toolbar) > .list-toolbar { min-height: 0; padding: 14px 16px; }
+  .section-card:has(> .list-toolbar) > .table-wrap,
+  .records-filters + .table-wrap { padding-top: 0; }
+  .channel-list-head { min-height: 0; padding: 0; }
+}
