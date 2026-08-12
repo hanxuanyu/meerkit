@@ -106,6 +106,8 @@ Action 报错时：
 - `requires tab_id`：该 Action 必须绑定标签页。
 - `Selected tab does not belong to the selected window`：目标列表已变化，刷新后重新选择。
 - `browser agent concurrency limit reached`：扩展设置的最大并发已满。
+- `Browser result exceeds 60 MiB`：完整页面截图过大，改用 WebP/JPEG 并降低图片质量。
+- `response chunks exceeded limits or arrived out of order`：大响应超过宿主 64 MiB 重组上限或传输顺序异常；重试并检查反向代理 WebSocket 稳定性。
 - Selector 找不到或等待超时：先用 `dom.document`/`dom.query` 验证页面、frame 和选择器；当前原子能力只操作目标标签页主文档。
 
 网络捕获报错时：

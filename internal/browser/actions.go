@@ -10,40 +10,19 @@ import (
 	"github.com/hanxuanyu/meerkit/sdk"
 )
 
-type ActionParameterOption struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-}
-
-type ActionParameterDefinition struct {
-	Key         string                  `json:"key"`
-	Label       string                  `json:"label"`
-	Type        string                  `json:"type"`
-	Required    bool                    `json:"required,omitempty"`
-	Default     any                     `json:"default,omitempty"`
-	Placeholder string                  `json:"placeholder,omitempty"`
-	Description string                  `json:"description,omitempty"`
-	Min         *float64                `json:"min,omitempty"`
-	Max         *float64                `json:"max,omitempty"`
-	Step        *float64                `json:"step,omitempty"`
-	Wide        bool                    `json:"wide,omitempty"`
-	Options     []ActionParameterOption `json:"options,omitempty"`
-	VisibleWhen map[string]any          `json:"visible_when,omitempty"`
-}
-
 type ActionDefinition struct {
-	Type                   string                      `json:"type"`
-	Label                  string                      `json:"label"`
-	Description            string                      `json:"description"`
-	Category               string                      `json:"category"`
-	CategoryLabel          string                      `json:"category_label"`
-	Icon                   string                      `json:"icon"`
-	Capability             string                      `json:"capability"`
-	ResultType             string                      `json:"result_type"`
-	TargetMode             string                      `json:"target_mode"`
-	Destructive            bool                        `json:"destructive,omitempty"`
-	DefaultContinueOnError bool                        `json:"default_continue_on_error,omitempty"`
-	Parameters             []ActionParameterDefinition `json:"parameters"`
+	Type                   string                    `json:"type"`
+	Label                  string                    `json:"label"`
+	Description            string                    `json:"description"`
+	Category               string                    `json:"category"`
+	CategoryLabel          string                    `json:"category_label"`
+	Icon                   string                    `json:"icon"`
+	Capability             string                    `json:"capability"`
+	ResultType             string                    `json:"result_type"`
+	TargetMode             string                    `json:"target_mode"`
+	Destructive            bool                      `json:"destructive,omitempty"`
+	DefaultContinueOnError bool                      `json:"default_continue_on_error,omitempty"`
+	Parameters             []sdk.ParameterDescriptor `json:"parameters"`
 }
 
 type ActionCatalog struct {
@@ -60,7 +39,11 @@ var actionSpecs = buildActionSpecs()
 func BrowserActionCatalog() ActionCatalog {
 	actions := make([]ActionDefinition, 0, len(actionSpecs))
 	for _, spec := range actionSpecs {
-		actions = append(actions, spec.definition)
+		definition := spec.definition
+		if definition.Parameters == nil {
+			definition.Parameters = []sdk.ParameterDescriptor{}
+		}
+		actions = append(actions, definition)
 	}
 	sort.Slice(actions, func(i, j int) bool {
 		if actions[i].Category == actions[j].Category {
@@ -100,55 +83,18 @@ func actionCapability(actionType string) string {
 }
 
 func buildActionSpecs() map[string]actionSpec {
-	minZero, minOne, minHundred, min256, min1024 := number(0), number(1), number(100), number(256), number(1024)
-	maxQuality, maxContent, maxWait := number(100), number(1048576), number(300000)
-	stepThousand := number(1000)
-	colors := options("grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange")
 	specs := []actionSpec{
-		newAction("tab.open", "打开标签页", "在指定窗口或当前窗口创建新标签页。", "tab", "标签页", "panel-top-open", "tab", "window_optional", false, []ActionParameterDefinition{
-			{Key: "url", Label: "页面地址", Type: "url", Default: "about:blank", Placeholder: "https://example.com", Wide: true},
-			{Key: "active", Label: "前台打开", Type: "boolean", Default: true},
-			{Key: "wait", Label: "等待加载完成", Type: "boolean", Default: true},
-		}, validateTabOpen),
-		newAction("tab.navigate", "导航标签页", "将指定标签页导航到对应地址。", "tab", "标签页", "globe", "tab", "tab_required", false, []ActionParameterDefinition{
-			{Key: "url", Label: "导航地址", Type: "url", Required: true, Placeholder: "https://example.com", Wide: true},
-			{Key: "wait", Label: "等待加载完成", Type: "boolean", Default: true},
-		}, func(params map[string]any) error { return validateHTTPURL(stringParam(params, "url"), false) }),
-		newAction("tab.group", "加入标签页分组", "将指定标签页加入或复用 Chrome 分组。", "tab", "标签页", "group", "tab", "tab_required", false, []ActionParameterDefinition{
-			{Key: "title", Label: "分组名称", Type: "string", Required: true, Default: "Meerkit", Wide: true},
-			{Key: "color", Label: "分组颜色", Type: "select", Default: "blue", Options: colors},
-			{Key: "collapsed", Label: "折叠分组", Type: "boolean", Default: false},
-			{Key: "reuse_group", Label: "复用同名分组", Type: "boolean", Default: true},
-		}, validateTabGroup),
-		newAction("tab.close", "关闭标签页", "关闭指定标签页。", "tab", "标签页", "trash-2", "tab", "tab_required", true, nil, noValidation),
-		newAction("page.wait", "等待页面", "等待页面加载、CSS 元素出现或固定时长。", "page", "页面", "timer", "status", "tab_required", false, []ActionParameterDefinition{
-			{Key: "mode", Label: "等待方式", Type: "select", Default: "load", Options: []ActionParameterOption{{Value: "load", Label: "页面加载"}, {Value: "selector", Label: "CSS 元素"}, {Value: "duration", Label: "固定时长"}}},
-			{Key: "selector", Label: "CSS Selector", Type: "string", Placeholder: "#app, main", Wide: true, VisibleWhen: map[string]any{"mode": "selector"}},
-			{Key: "timeout_ms", Label: "最长等待", Type: "number", Default: 60000, Min: minHundred, Max: maxWait, Step: stepThousand, VisibleWhen: map[string]any{"mode": "selector"}},
-			{Key: "duration_ms", Label: "等待时长", Type: "number", Default: 1000, Min: minZero, Max: maxWait, Step: minHundred, VisibleWhen: map[string]any{"mode": "duration"}},
-		}, validatePageWait),
-		newAction("page.screenshot", "页面截图", "使用 CDP 截取指定标签页。", "page", "页面", "camera", "screenshot", "tab_required", false, []ActionParameterDefinition{
-			{Key: "format", Label: "图片格式", Type: "select", Default: "png", Options: []ActionParameterOption{{Value: "png", Label: "PNG"}, {Value: "jpeg", Label: "JPEG"}}},
-			{Key: "quality", Label: "JPEG 质量", Type: "number", Default: 90, Min: minOne, Max: maxQuality, VisibleWhen: map[string]any{"format": "jpeg"}},
-			{Key: "full_page", Label: "完整页面", Type: "boolean", Default: false},
-		}, validateScreenshot),
-		newAction("dom.document", "获取页面 HTML", "读取指定标签页文档的完整 HTML。", "dom", "DOM", "file-code-2", "document", "tab_required", false, []ActionParameterDefinition{
-			{Key: "max_length", Label: "最大 HTML 长度", Type: "number", Default: 262144, Min: min1024, Max: maxContent, Step: min1024},
-		}, func(params map[string]any) error {
-			return validateNumberRange(params, "max_length", 1024, 1048576, true)
-		}),
-		newAction("dom.query", "查询元素", "通过 CSS Selector 读取元素文本、HTML 和属性。", "dom", "DOM", "search", "element", "tab_required", false, []ActionParameterDefinition{
-			{Key: "selector", Label: "CSS Selector", Type: "string", Required: true, Placeholder: "#app, main, [data-id]", Description: "最多 4096 个字符", Wide: true},
-			{Key: "max_length", Label: "最大返回长度", Type: "number", Default: 65536, Min: min256, Max: maxContent, Step: min1024},
-		}, validateDOMQuery),
-		newAction("dom.click", "点击元素", "点击 CSS Selector 匹配的第一个元素。", "dom", "DOM", "mouse-pointer-click", "status", "tab_required", false, selectorParameters(), validateSelector),
-		newAction("dom.input", "填写控件", "设置输入框、文本域、下拉框或可编辑元素的值。", "dom", "DOM", "keyboard", "status", "tab_required", false, []ActionParameterDefinition{
-			{Key: "selector", Label: "CSS Selector", Type: "string", Required: true, Placeholder: "input[name=email]", Wide: true},
-			{Key: "value", Label: "输入内容", Type: "textarea", Default: "", Wide: true},
-		}, validateSelector),
-		newAction("runtime.evaluate", "执行 JavaScript", "在页面主世界执行表达式并返回可序列化结果。", "runtime", "运行时", "code-2", "script", "tab_required", false, []ActionParameterDefinition{
-			{Key: "expression", Label: "JavaScript 表达式", Type: "code", Required: true, Default: "({ title: document.title, url: location.href })", Wide: true},
-		}, validateExpression),
+		tabOpenAction(),
+		tabNavigateAction(),
+		tabGroupAction(),
+		tabCloseAction(),
+		pageWaitAction(),
+		pageScreenshotAction(),
+		domDocumentAction(),
+		domQueryAction(),
+		domClickAction(),
+		domInputAction(),
+		runtimeEvaluateAction(),
 	}
 	result := make(map[string]actionSpec, len(specs))
 	for _, spec := range specs {
@@ -157,7 +103,7 @@ func buildActionSpecs() map[string]actionSpec {
 	return result
 }
 
-func newAction(actionType, label, description, category, categoryLabel, icon, resultType, targetMode string, destructive bool, parameters []ActionParameterDefinition, validate func(map[string]any) error) actionSpec {
+func newAction(actionType, label, description, category, categoryLabel, icon, resultType, targetMode string, destructive bool, parameters []sdk.ParameterDescriptor, validate func(map[string]any) error) actionSpec {
 	return actionSpec{definition: ActionDefinition{Type: actionType, Label: label, Description: description, Category: category, CategoryLabel: categoryLabel, Icon: icon, Capability: actionType, ResultType: resultType, TargetMode: targetMode, Destructive: destructive, Parameters: parameters}, validate: validate}
 }
 
@@ -211,8 +157,8 @@ func validatePageWait(params map[string]any) error {
 
 func validateScreenshot(params map[string]any) error {
 	format := stringParam(params, "format")
-	if format != "" && format != "png" && format != "jpeg" {
-		return errors.New("format must be png or jpeg")
+	if format != "" && format != "png" && format != "jpeg" && format != "webp" {
+		return errors.New("format must be png, jpeg, or webp")
 	}
 	return validateNumberRange(params, "quality", 1, 100, true)
 }
@@ -292,20 +238,24 @@ func numberParam(params map[string]any, key string) (float64, bool) {
 	}
 }
 
-func selectorParameters() []ActionParameterDefinition {
-	return []ActionParameterDefinition{{Key: "selector", Label: "CSS Selector", Type: "string", Required: true, Placeholder: "#app, button[type=submit]", Wide: true}}
+func selectorParameters() []sdk.ParameterDescriptor {
+	return []sdk.ParameterDescriptor{{Key: "selector", Label: "CSS Selector", Description: "点击页面中第一个匹配元素。", Type: sdk.ParameterString, Required: true, Placeholder: "#app, button[type=submit]", FullWidth: true}}
 }
 
-func options(values ...string) []ActionParameterOption {
-	result := make([]ActionParameterOption, 0, len(values))
+func options(values ...string) []sdk.ParameterOption {
+	result := make([]sdk.ParameterOption, 0, len(values))
 	for _, value := range values {
 		label := value
 		if label == "" {
 			label = "全部"
 		}
-		result = append(result, ActionParameterOption{Value: value, Label: label})
+		result = append(result, sdk.ParameterOption{Value: value, Label: label})
 	}
 	return result
+}
+
+func visibleWhen(field string, value any) []sdk.ParameterCondition {
+	return []sdk.ParameterCondition{{Field: field, Operator: "equals", Value: value}}
 }
 
 func number(value float64) *float64 { return &value }

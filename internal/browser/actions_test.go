@@ -19,6 +19,17 @@ func TestActionCatalogExcludesNetworkCapture(t *testing.T) {
 		if action.TargetMode == "" {
 			t.Fatalf("action %s has no target mode", action.Type)
 		}
+		if action.Parameters == nil {
+			t.Fatalf("action %s has nil parameters", action.Type)
+		}
+		for _, parameter := range action.Parameters {
+			if strings.TrimSpace(parameter.Key) == "" || strings.TrimSpace(parameter.Label) == "" || parameter.Type == "" {
+				t.Fatalf("action %s contains an incomplete parameter descriptor: %#v", action.Type, parameter)
+			}
+			if strings.TrimSpace(parameter.Description) == "" {
+				t.Fatalf("action %s parameter %s has no description", action.Type, parameter.Key)
+			}
+		}
 	}
 }
 

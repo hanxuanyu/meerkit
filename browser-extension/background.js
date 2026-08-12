@@ -12,6 +12,9 @@ const CAPABILITIES = [
   "dom.document", "dom.query", "dom.click", "dom.input",
   "runtime.evaluate", "network.start", "network.stop", "browser.targets"
 ];
+const RESPONSE_CHUNK_SIZE = 512 * 1024;
+const MAX_RESPONSE_SIZE = 60 * 1024 * 1024;
+const MAX_SOCKET_BUFFER = 4 * 1024 * 1024;
 
 let socket = null;
 let reconnectTimer = null;
@@ -193,13 +196,41 @@ async function handleMessage(raw) {
   activeRuns++;
   try {
     const result = await executeCommand(message.command, message.payload || {});
-    send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, payload: result });
+    await sendCommandResult(message.id, result);
   } catch (error) {
     send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, error: safeError(error) });
   } finally {
     activeRuns--;
   }
 }
+
+async function sendCommandResult(id, result) {
+  const serialized = JSON.stringify(result);
+  if (serialized.length <= RESPONSE_CHUNK_SIZE) {
+    send({ protocol: PROTOCOL_VERSION, type: "response", id, payload: result });
+    return;
+  }
+  if (serialized.length > MAX_RESPONSE_SIZE) throw new Error("Browser result exceeds 60 MiB. Use WebP or JPEG for a smaller full-page screenshot.");
+  const boundaries = [0];
+  const sendDeadline = Date.now() + 60000;
+  for (let offset = 0; offset < serialized.length;) {
+    let end = Math.min(serialized.length, offset + RESPONSE_CHUNK_SIZE);
+    if (end < serialized.length && isHighSurrogate(serialized.charCodeAt(end - 1))) end--;
+    boundaries.push(end);
+    offset = end;
+  }
+  const total = boundaries.length - 1;
+  for (let sequence = 0; sequence < total; sequence++) {
+    while (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount > MAX_SOCKET_BUFFER) {
+      if (Date.now() >= sendDeadline) throw new Error("Timed out while sending the browser result to Meerkit.");
+      await sleep(10);
+    }
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Meerkit connection closed while sending the browser result.");
+    send({ protocol: PROTOCOL_VERSION, type: "response_chunk", id, sequence, total, chunk: serialized.slice(boundaries[sequence], boundaries[sequence + 1]) });
+  }
+}
+
+function isHighSurrogate(value) { return value >= 0xD800 && value <= 0xDBFF; }
 
 async function executeCommand(command, request) {
   if (command === "browser.targets") return listTargets();
@@ -309,7 +340,7 @@ async function executeAction(state, action, _captureRules, deadline) {
     }
     case "page.screenshot": {
       requireTab(state);
-      const format = params.format === "jpeg" ? "jpeg" : "png";
+      const format = ["jpeg", "webp"].includes(params.format) ? params.format : "png";
       const target = { tabId: state.tabId };
       let attachedHere = false;
       if (!state.debuggerAttached) {
@@ -319,10 +350,10 @@ async function executeAction(state, action, _captureRules, deadline) {
       try {
         const screenshot = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
           format,
-          ...(format === "jpeg" ? { quality: clamp(Number(params.quality) || 90, 1, 100) } : {}),
+          ...(format !== "png" ? { quality: clamp(Number(params.quality) || 90, 1, 100) } : {}),
           captureBeyondViewport: Boolean(params.full_page)
         });
-        return { data_url: `data:image/${format};base64,${screenshot.data}` };
+        return { data_url: `data:image/${format};base64,${screenshot.data}`, format, full_page: Boolean(params.full_page), size_bytes: Math.floor(screenshot.data.length * 3 / 4) };
       } finally {
         if (attachedHere) await chrome.debugger.detach(target).catch(() => {});
       }

@@ -53,7 +53,7 @@ npm --prefix web run build
 
 ## 动态模块表单
 
-监控和通知表单不是为 HTTP/TCP 硬编码的。`DynamicFields` 根据后端描述器渲染参数：类型、默认值、范围、选项、显隐和启用条件均来自插件或通知器。
+监控、通知和浏览器 Action 表单不为具体类型硬编码。`DynamicFields` 根据后端描述器渲染参数：类型、默认值、范围、选项、显隐和启用条件均来自插件、通知器或 Action Catalog。单行输入、选择和时间控件使用一致高度，字段描述与标题同行；布尔字段使用左右布局的切换卡片，标题和描述在左、Switch 在右；多行文本、JSON 和 Map 按内容自然扩展。
 
 结果展示、条件编辑和状态看板同样读取 `ResultSets`。新增字段类型时要同步检查：
 
@@ -63,7 +63,7 @@ npm --prefix web run build
 - `components/results/`
 - 状态看板字段类型推断
 
-浏览器调试页从 `GET /api/v1/browser/actions` 获取 action 分类、目标要求、参数、默认值、显隐规则和结果类型。页面通过 HTTP 执行单个 Action，通过 WebSocket 接收目标变化与网络事件；网络捕获拥有独立的启停 API，不属于 Action Catalog。新增浏览器 action 时，应先在 `internal/browser/actions.go` 注册并校验，再在扩展执行端实现；前端只为新的参数控件或特殊结果类型增加适配，不维护 action 清单。
+浏览器调试页从 `GET /api/v1/browser/actions` 获取 action 分类、目标要求、参数、默认值、显隐规则和结果类型。页面通过 HTTP 执行单个 Action，通过 WebSocket 接收目标变化与网络事件；网络捕获拥有独立的启停 API，不属于 Action Catalog。新增浏览器 action 时，应创建独立的 `internal/browser/action_*.go` 定义文件，为每个参数提供清晰的用途、边界和副作用描述，并加入 `actions.go` 的显式注册表和校验逻辑，再在扩展执行端实现；前端只为新的参数控件或特殊结果类型增加适配，不维护 action 清单。
 
 调试 WebSocket 断开后页面自动重连，并在目标变化时重新获取 Agent 与目标快照。网络事件必须按当前 `session_id` 过滤；捕获启动后保留返回的目标，不能因顶部选择变化而迁移。完整通信和清理规则见[浏览器自动化架构](/development/browser-automation)。
 

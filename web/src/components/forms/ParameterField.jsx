@@ -8,11 +8,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../ui/Switch";
 
 function FieldHint({ parameter }) {
-  return parameter.description ? <small>{parameter.description}</small> : null;
+  return parameter.description ? <small title={parameter.description}>{parameter.description}</small> : null;
 }
 
 function FieldLabel({ parameter }) {
   return <Label>{parameter.label}{parameter.required && <span className="field-required">*</span>}</Label>;
+}
+
+function FieldHeading({ parameter }) {
+  return <span className="parameter-field-heading"><FieldLabel parameter={parameter} /><FieldHint parameter={parameter} /></span>;
 }
 
 function MapField({ value, onChange, disabled, parameter }) {
@@ -34,7 +38,7 @@ function MapField({ value, onChange, disabled, parameter }) {
   const update = (index, patch) => emit(entries.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
 
   const addEntry = () => setEntries((current) => [...current, { id: idRef.current++, key: "", value: "" }]);
-  return <div className="map-editor"><div className="map-editor-title"><FieldLabel parameter={parameter} /><IconButton disabled={disabled} className="map-editor-add" size="sm" title="添加一行" aria-label="添加一行" onClick={addEntry}><Plus size={14} /></IconButton></div>{entries.length ? <div className="map-editor-table"><div className="map-editor-head"><span>键</span><span>值</span><span /></div>{entries.map((entry, index) => <div className="map-editor-row" key={entry.id}><Input disabled={disabled} aria-label={`第 ${index + 1} 行键`} value={entry.key} onChange={(event) => update(index, { key: event.target.value })} placeholder="名称" /><Input disabled={disabled} aria-label={`第 ${index + 1} 行值`} value={entry.value} onChange={(event) => update(index, { value: event.target.value })} placeholder="值" /><IconButton disabled={disabled} className="map-editor-remove" size="sm" title="删除此行" aria-label="删除此行" onClick={() => emit(entries.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={14} /></IconButton></div>)}</div> : <div className="map-editor-empty">点击右上角 + 添加项目</div>}</div>;
+  return <div className="map-editor"><div className="map-editor-title"><FieldHeading parameter={parameter} /><IconButton disabled={disabled} className="map-editor-add" size="sm" title="添加一行" aria-label="添加一行" onClick={addEntry}><Plus size={14} /></IconButton></div>{entries.length ? <div className="map-editor-table"><div className="map-editor-head"><span>键</span><span>值</span><span /></div>{entries.map((entry, index) => <div className="map-editor-row" key={entry.id}><Input disabled={disabled} aria-label={`第 ${index + 1} 行键`} value={entry.key} onChange={(event) => update(index, { key: event.target.value })} placeholder="名称" /><Input disabled={disabled} aria-label={`第 ${index + 1} 行值`} value={entry.value} onChange={(event) => update(index, { value: event.target.value })} placeholder="值" /><IconButton disabled={disabled} className="map-editor-remove" size="sm" title="删除此行" aria-label="删除此行" onClick={() => emit(entries.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={14} /></IconButton></div>)}</div> : <div className="map-editor-empty">点击右上角 + 添加项目</div>}</div>;
 }
 
 function JsonField({ value, onChange, parameter, asObject, disabled }) {
@@ -96,12 +100,12 @@ export function ParameterField({ parameter, value, values, onChange }) {
   const fieldClass = `field${wide ? " parameter-field-wide" : ""}`;
   const inputType = parameter.type === "url" || parameter.type === "email" ? parameter.type : parameter.secret ? "password" : numberType ? "number" : parameter.type === "date" ? "date" : parameter.type === "datetime" ? "datetime-local" : "text";
 
-  if (parameter.type === "boolean") return <div className={`${fieldClass} parameter-boolean-field`}><FieldLabel parameter={parameter} /><div className="parameter-switch-control"><Switch checked={Boolean(value)} onCheckedChange={onChange} disabled={!enabled} aria-label={parameter.label} /><span>{value ? "已开启" : "已关闭"}</span></div><FieldHint parameter={parameter} /></div>;
-  if (parameter.type === "map") return <div className={fieldClass}><MapField parameter={parameter} disabled={!enabled} value={value} onChange={onChange} /><FieldHint parameter={parameter} /></div>;
-  if (parameter.type === "list") return <label className={fieldClass}><FieldLabel parameter={parameter} /><Select value={value === "" || value == null ? undefined : String(value)} onValueChange={onChange} disabled={!enabled}><SelectTrigger><SelectValue placeholder={parameter.placeholder || "请选择"} /></SelectTrigger><SelectContent>{getParameterOptions(parameter, values).map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label || option.value}</SelectItem>)}</SelectContent></Select><FieldHint parameter={parameter} /></label>;
-  if (parameter.type === "time") return <label className={fieldClass}><FieldLabel parameter={parameter} /><TimeField disabled={!enabled} value={value} onChange={onChange} parameter={parameter} /><FieldHint parameter={parameter} /></label>;
-  if (parameter.type === "text" || parameter.type === "json" || parameter.format === "json") return <label className={fieldClass}><FieldLabel parameter={parameter} />{parameter.type === "json" || parameter.format === "json" ? <JsonField value={value} onChange={onChange} parameter={parameter} asObject={parameter.type === "json"} disabled={!enabled} /> : <textarea className="field-textarea" rows={parameter.rows || 5} value={value ?? ""} onChange={(event) => onChange(event.target.value)} {...common} placeholder={parameter.placeholder} />}<FieldHint parameter={parameter} /></label>;
+  if (parameter.type === "boolean") return <div className={`${fieldClass} parameter-boolean-field`}><span className="parameter-boolean-copy"><FieldLabel parameter={parameter} /><FieldHint parameter={parameter} /></span><Switch checked={Boolean(value)} onCheckedChange={onChange} disabled={!enabled} aria-label={parameter.label} /></div>;
+  if (parameter.type === "map") return <div className={fieldClass}><MapField parameter={parameter} disabled={!enabled} value={value} onChange={onChange} /></div>;
+  if (parameter.type === "list") return <label className={fieldClass}><FieldHeading parameter={parameter} /><Select value={value === "" || value == null ? undefined : String(value)} onValueChange={onChange} disabled={!enabled}><SelectTrigger><SelectValue placeholder={parameter.placeholder || "请选择"} /></SelectTrigger><SelectContent>{getParameterOptions(parameter, values).map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label || option.value}</SelectItem>)}</SelectContent></Select></label>;
+  if (parameter.type === "time") return <label className={fieldClass}><FieldHeading parameter={parameter} /><TimeField disabled={!enabled} value={value} onChange={onChange} parameter={parameter} /></label>;
+  if (parameter.type === "text" || parameter.type === "json" || parameter.format === "json") return <label className={fieldClass}><FieldHeading parameter={parameter} />{parameter.type === "json" || parameter.format === "json" ? <JsonField value={value} onChange={onChange} parameter={parameter} asObject={parameter.type === "json"} disabled={!enabled} /> : <textarea className={`field-textarea${parameter.format === "code" ? " is-code" : ""}`} rows={parameter.rows || 5} value={value ?? ""} onChange={(event) => onChange(event.target.value)} {...common} placeholder={parameter.placeholder} />}</label>;
 
   const ValueInput = parameter.secret ? PasswordInput : Input;
-  return <label className={fieldClass}><FieldLabel parameter={parameter} /><div className={parameter.unit ? "input-with-suffix" : ""}><ValueInput {...common} type={inputType} min={parameter.minimum} max={parameter.maximum} step={parameter.step || (numberType ? 1 : undefined)} value={value ?? ""} onChange={(event) => onChange(numberType ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} placeholder={parameter.placeholder} />{parameter.unit && <span>{parameter.unit}</span>}</div><FieldHint parameter={parameter} /></label>;
+  return <label className={fieldClass}><FieldHeading parameter={parameter} /><div className={parameter.unit ? "input-with-suffix" : ""}><ValueInput {...common} type={inputType} min={parameter.minimum} max={parameter.maximum} step={parameter.step || (numberType ? 1 : undefined)} value={value ?? ""} onChange={(event) => onChange(numberType ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} placeholder={parameter.placeholder} />{parameter.unit && <span>{parameter.unit}</span>}</div></label>;
 }

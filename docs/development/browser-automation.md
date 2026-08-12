@@ -62,15 +62,18 @@ Meerkit 主进程
 | 方向 | 类型 | 命令/用途 |
 | --- | --- | --- |
 | 宿主到扩展 | `command` | `browser.targets`、`browser.action`、`browser.network.start`、`browser.network.stop` |
-| 扩展到宿主 | `response` | 使用相同 `id` 返回 payload 或 error |
+| 扩展到宿主 | `response` | 使用相同 `id` 返回较小的 payload 或 error |
+| 扩展到宿主 | `response_chunk` | 使用相同 `id`、`sequence`、`total` 和 `chunk` 顺序返回大结果 |
 | 扩展到宿主 | `event` | `browser.targets.changed`、`browser.network`、`browser.network.status` |
 | 双向 | `ping` / `pong` | 应用层连接活性；宿主还发送 WebSocket Ping frame |
 
 协议版本保持 `1`，当前实现不解析旧 `browser.run` 工作流消息。新增命令时应直接更新宿主、扩展和测试，不增加旧结构兼容分支。
 
+完整页面截图等大结果不会作为一个超大 WebSocket frame 发送。扩展将超过 512 KiB 的序列化响应拆为有序 `response_chunk`，并在浏览器发送缓冲区超过 4 MiB 时等待背压释放；宿主按请求 ID 重组。单 frame 最大 8 MiB，重组结果最大 64 MiB、最多 128 块；扩展主动把结果限制为 60 MiB。超过上限时只终止当前请求，并提示改用 WebP/JPEG，不会断开整个 Agent。
+
 ## 目标与原子 Action
 
-Action Catalog 的事实来源是 `internal/browser/actions.go`，通过 `GET /api/v1/browser/actions` 提供给前端。每个定义包含分类、能力名、结果类型、`target_mode`、参数、默认值、范围、选项和显隐条件。后端先校验 Action，再检查 Agent 声明的 capability，扩展仍需校验 Chrome 中的真实目标状态。
+Action Catalog 的注册表位于 `internal/browser/actions.go`，具体定义按 Action 文件维护，并通过 `GET /api/v1/browser/actions` 提供给前端。参数直接使用监控模块和通知渠道共用的 `sdk.ParameterDescriptor`，支持默认值、范围、选项、单位、全宽、显隐和启用条件；前端统一交给 `DynamicFields` 渲染。后端先校验 Action，再检查 Agent 声明的 capability，扩展仍需校验 Chrome 中的真实目标状态。
 
 当前 Action：
 
@@ -78,7 +81,7 @@ Action Catalog 的事实来源是 `internal/browser/actions.go`，通过 `GET /a
 | --- | --- | --- | --- |
 | 标签页 | `tab.open` | 可选窗口 | 新窗口/标签页 ID、URL、标题 |
 | 标签页 | `tab.navigate`、`tab.group`、`tab.close` | 必选标签页 | 更新后的目标或状态 |
-| 页面 | `page.wait`、`page.screenshot` | 必选标签页 | 等待状态或图片数据 |
+| 页面 | `page.wait`、`page.screenshot` | 必选标签页 | 等待状态或 PNG/JPEG/WebP 图片数据 |
 | DOM | `dom.document`、`dom.query`、`dom.click`、`dom.input` | 必选标签页 | HTML、元素信息或操作状态 |
 | 运行时 | `runtime.evaluate` | 必选标签页 | 可 JSON 序列化的表达式结果 |
 
@@ -86,11 +89,11 @@ Action Catalog 的事实来源是 `internal/browser/actions.go`，通过 `GET /a
 
 新增 Action 时需要：
 
-1. 在 `internal/browser/actions.go` 注册定义和校验函数。
+1. 新增一个 Action 定义文件，并在 `internal/browser/actions.go` 的显式注册表添加一项。
 2. 在扩展 `CAPABILITIES` 与 `executeAction` 中实现。
 3. 明确目标模式、超时、返回结构和资源上限。
 4. 为后端 Catalog/校验和扩展执行补测试。
-5. 只有无法用 Catalog 通用控件或 JSON 结果承接时才增加前端适配。
+5. 参数优先使用 `sdk.ParameterDescriptor`；只有无法用 `DynamicFields` 或通用结果预览承接时才增加前端适配。
 
 ## 网络捕获生命周期
 
@@ -157,7 +160,7 @@ runtime.Serve(sdk.NewProvider(
 
 ## 调试 API 与前端
 
-浏览器工具先通过 HTTP 获取状态、目标和 Catalog，再分别调用单 Action 与捕获 API。`/api/v1/browser/debug/ws` 推送目标变化、网络事件与捕获状态，连接时先发送当前捕获快照，并每 20 秒发送 WebSocket Ping。
+浏览器工具先通过 HTTP 获取状态、目标和 Catalog，再分别调用单 Action 与捕获 API。桌面端使用可滚动的分组 Action 列表、参数配置和结果三栏布局；移动端自动改用 Action 下拉列表。三栏标题保持相同高度；Action 标题右侧的目标下拉默认选择“无”并继承顶部目标，也可以直接切换到具体标签页或窗口。结果区提供 UI 预览、原始请求和原始响应，原始数据支持快速复制。`/api/v1/browser/debug/ws` 推送目标变化、网络事件与捕获状态，连接时先发送当前捕获快照，并每 20 秒发送 WebSocket Ping。
 
 捕获事件必须按 `session_id` 过滤。前端切换顶部标签页不会修改已启动捕获；扩展断线或目标关闭产生的 stopped 状态会同步结束界面中的活动状态。完整端点和载荷见 [HTTP API 参考](/reference/http-api#浏览器自动化)。
 

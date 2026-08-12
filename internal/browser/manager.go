@@ -25,8 +25,12 @@ const (
 	ExtensionWebSocketPath = "/api/v1/browser/extension/ws"
 	maxActions             = 64
 	maxNetworkCaptures     = 32
-	maxWireMessageBytes    = 16 << 20
-	maxAgentCapabilities   = 128
+	// Large action results use response chunks. Individual frames stay bounded
+	// while the assembled response has its own aggregate limit below.
+	maxWireMessageBytes     = 8 << 20
+	maxChunkedResponseBytes = 64 << 20
+	maxResponseChunks       = 128
+	maxAgentCapabilities    = 128
 )
 
 type AgentInfo struct {
@@ -47,6 +51,9 @@ type wireMessage struct {
 	Token    string          `json:"token,omitempty"`
 	Payload  json.RawMessage `json:"payload,omitempty"`
 	Error    string          `json:"error,omitempty"`
+	Sequence int             `json:"sequence,omitempty"`
+	Total    int             `json:"total,omitempty"`
+	Chunk    string          `json:"chunk,omitempty"`
 }
 
 type helloPayload struct {
@@ -69,8 +76,16 @@ type agentConnection struct {
 	sendMu    sync.Mutex
 	pendingMu sync.Mutex
 	pending   map[string]chan pendingResponse
+	chunks    map[string]*responseAssembly
 	done      chan struct{}
 	closeOnce sync.Once
+}
+
+type responseAssembly struct {
+	total int
+	next  int
+	size  int
+	parts []string
 }
 
 type Manager struct {
@@ -182,7 +197,7 @@ func (m *Manager) HandleExtension(w http.ResponseWriter, request *http.Request) 
 		return
 	}
 	info := AgentInfo{ID: payload.ID, Name: payload.Name, Version: payload.Version, Protocol: hello.Protocol, Capabilities: payload.Capabilities, ConnectedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC()}
-	agent := &agentConnection{manager: m, websocket: connection, info: info, pending: make(map[string]chan pendingResponse), done: make(chan struct{})}
+	agent := &agentConnection{manager: m, websocket: connection, info: info, pending: make(map[string]chan pendingResponse), chunks: make(map[string]*responseAssembly), done: make(chan struct{})}
 	if err := m.addAgent(agent); err != nil {
 		_ = connection.Close()
 		return
@@ -261,6 +276,7 @@ func (m *Manager) sendCommand(ctx context.Context, agentID, command string, requ
 	defer func() {
 		agent.pendingMu.Lock()
 		delete(agent.pending, requestID)
+		delete(agent.chunks, requestID)
 		agent.pendingMu.Unlock()
 	}()
 	if err := agent.write(wireMessage{Protocol: ProtocolVersion, Type: "command", ID: requestID, Command: command, Payload: data}); err != nil {
@@ -700,10 +716,14 @@ func (agent *agentConnection) write(message wireMessage) error {
 }
 
 func (agent *agentConnection) readLoop() {
-	defer agent.close(errors.New("browser extension disconnected"))
 	for {
 		var message wireMessage
 		if err := agent.websocket.ReadJSON(&message); err != nil {
+			cause := fmt.Errorf("browser extension disconnected: %w", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				cause = fmt.Errorf("browser extension connection closed unexpectedly: %w", err)
+			}
+			agent.close(cause)
 			return
 		}
 		agent.infoMu.Lock()
@@ -717,18 +737,69 @@ func (agent *agentConnection) readLoop() {
 			agent.pendingMu.Lock()
 			response := agent.pending[message.ID]
 			delete(agent.pending, message.ID)
+			delete(agent.chunks, message.ID)
 			agent.pendingMu.Unlock()
-			if response != nil {
-				select {
-				case response <- pendingResponse{message: message}:
-				default:
-				}
-			}
+			notifyPending(response, pendingResponse{message: message})
+		case "response_chunk":
+			agent.handleResponseChunk(message)
 		case "ping":
 			_ = agent.write(wireMessage{Protocol: ProtocolVersion, Type: "pong"})
 		case "event":
 			agent.manager.handleEvent(agent, message)
 		}
+	}
+}
+
+func (agent *agentConnection) handleResponseChunk(message wireMessage) {
+	if message.Protocol != ProtocolVersion || message.ID == "" {
+		return
+	}
+	agent.pendingMu.Lock()
+	response := agent.pending[message.ID]
+	if response == nil {
+		delete(agent.chunks, message.ID)
+		agent.pendingMu.Unlock()
+		return
+	}
+	assembly := agent.chunks[message.ID]
+	if assembly == nil {
+		if message.Sequence != 0 || message.Total <= 0 || message.Total > maxResponseChunks {
+			delete(agent.pending, message.ID)
+			agent.pendingMu.Unlock()
+			notifyPending(response, pendingResponse{err: errors.New("browser extension returned invalid response chunks")})
+			return
+		}
+		assembly = &responseAssembly{total: message.Total, parts: make([]string, 0, message.Total)}
+		agent.chunks[message.ID] = assembly
+	}
+	if message.Total != assembly.total || message.Sequence != assembly.next || assembly.size+len(message.Chunk) > maxChunkedResponseBytes {
+		delete(agent.chunks, message.ID)
+		delete(agent.pending, message.ID)
+		agent.pendingMu.Unlock()
+		notifyPending(response, pendingResponse{err: errors.New("browser extension response chunks exceeded limits or arrived out of order")})
+		return
+	}
+	assembly.parts = append(assembly.parts, message.Chunk)
+	assembly.size += len(message.Chunk)
+	assembly.next++
+	if assembly.next != assembly.total {
+		agent.pendingMu.Unlock()
+		return
+	}
+	delete(agent.chunks, message.ID)
+	delete(agent.pending, message.ID)
+	payload := json.RawMessage(strings.Join(assembly.parts, ""))
+	agent.pendingMu.Unlock()
+	notifyPending(response, pendingResponse{message: wireMessage{Protocol: ProtocolVersion, Type: "response", ID: message.ID, Payload: payload}})
+}
+
+func notifyPending(response chan pendingResponse, value pendingResponse) {
+	if response == nil {
+		return
+	}
+	select {
+	case response <- value:
+	default:
 	}
 }
 
@@ -805,6 +876,7 @@ func (agent *agentConnection) close(cause error) {
 			}
 		}
 		agent.pending = make(map[string]chan pendingResponse)
+		agent.chunks = make(map[string]*responseAssembly)
 		agent.pendingMu.Unlock()
 	})
 }

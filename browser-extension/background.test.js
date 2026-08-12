@@ -28,9 +28,31 @@ test("detaches active network captures when the Meerkit connection closes", asyn
   assert.equal(harness.stats.detached, 1);
 });
 
+test("chunks large command responses without losing payload data", async () => {
+  const harness = createHarness();
+  harness.context.sentMessages = [];
+  vm.runInContext("socket = { readyState: WebSocket.OPEN, bufferedAmount: 0, send(value) { sentMessages.push(JSON.parse(value)); } }", harness.context);
+  const result = { type: "page.screenshot", success: true, data: { data_url: `data:image/png;base64,${"A".repeat(1200000)}` } };
+  await harness.context.sendCommandResult("request-1", result);
+  const messages = harness.context.sentMessages;
+  assert.ok(messages.length > 1);
+  assert.ok(messages.every((message) => message.type === "response_chunk" && message.id === "request-1"));
+  assert.deepEqual(JSON.parse(messages.map((message) => message.chunk).join("")), result);
+});
+
+test("captures full-page WebP screenshots with bounded image metadata", async () => {
+  const harness = createHarness();
+  const result = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { id: "shot", type: "page.screenshot", params: { format: "webp", quality: 72, full_page: true } } });
+  assert.equal(result.data.data_url, "data:image/webp;base64,AAAA");
+  assert.equal(result.data.format, "webp");
+  assert.equal(result.data.full_page, true);
+  assert.equal(harness.stats.lastCommand.method, "Page.captureScreenshot");
+  assert.equal(JSON.stringify(harness.stats.lastCommand.params), JSON.stringify({ format: "webp", quality: 72, captureBeyondViewport: true }));
+});
+
 function createHarness() {
   const tabs = new Map([[21, { id: 21, windowId: 4, index: 0, active: true, title: "Meerkit", url: "https://example.com", status: "complete", groupId: -1 }]]);
-  const stats = { attached: 0, detached: 0 };
+  const stats = { attached: 0, detached: 0, lastCommand: null };
   const event = { addListener() {}, removeListener() {} };
   const chrome = {
     runtime: { getManifest: () => ({ version: "test" }), onInstalled: event, onStartup: event, onMessage: event, openOptionsPage() {} },
@@ -40,10 +62,10 @@ function createHarness() {
     windows: { onCreated: event, onRemoved: event, onFocusChanged: event, async getAll() { return [{ id: 4, focused: true, type: "normal", tabs: [...tabs.values()] }]; } },
     tabs: { onCreated: event, onUpdated: event, onMoved: event, onAttached: event, onDetached: event, onRemoved: event, async get(id) { const value = tabs.get(id); if (!value) throw new Error("No tab"); return { ...value }; }, async query() { return [...tabs.values()]; }, async create(options) { const value = { id: 22, windowId: options.windowId || 4, url: options.url, title: "", status: "complete" }; tabs.set(value.id, value); return { ...value }; }, async update(id, values) { Object.assign(tabs.get(id), values, { status: "complete" }); return { ...tabs.get(id) }; }, async remove(id) { tabs.delete(id); }, async group() { return 1; } },
     tabGroups: { TAB_GROUP_ID_NONE: -1, onCreated: event, onUpdated: event, onRemoved: event, async query() { return []; }, async get() { return null; }, async update() {} },
-    debugger: { onEvent: event, async attach() { stats.attached++; }, async detach() { stats.detached++; }, async sendCommand() { return {}; } },
+    debugger: { onEvent: event, async attach() { stats.attached++; }, async detach() { stats.detached++; }, async sendCommand(_target, method, params) { stats.lastCommand = { method, params }; return method === "Page.captureScreenshot" ? { data: "AAAA" } : {}; } },
     scripting: { async executeScript() { return [{ result: { text: "ok" } }]; } }
   };
-  const context = vm.createContext({ chrome, console, crypto: { randomUUID: () => "test-agent" }, performance, setInterval, clearInterval, setTimeout, clearTimeout, URL, WebSocket: class {} });
+  const context = vm.createContext({ chrome, console, crypto: { randomUUID: () => "test-agent" }, performance, setInterval, clearInterval, setTimeout, clearTimeout, URL, WebSocket: class { static OPEN = 1; } });
   vm.runInContext(source, context, { filename: "background.js" });
   return { context, stats };
 }

@@ -2,15 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Camera, Check, Clipboard, Code2, FileText, Globe2, Group, Image, Keyboard, LoaderCircle, MousePointerClick, Network, PanelTopOpen, Play, RefreshCw, Search, Settings2, SquareTerminal, Timer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "../components/layout/PageHeader";
+import { DynamicFields } from "../components/forms/DynamicFields";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/Select";
-import { Switch } from "../components/ui/Switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { api } from "../lib/api";
+import { getDefaultValues, sanitizeValues } from "../lib/parameterSchema";
 
 const icons = { "panel-top-open": PanelTopOpen, globe: Globe2, group: Group, "trash-2": Trash2, timer: Timer, camera: Camera, "file-code-2": Code2, search: Search, "mouse-pointer-click": MousePointerClick, keyboard: Keyboard, "code-2": Code2 };
 
@@ -47,7 +48,6 @@ export function BrowserDebugPage() {
   const selectedTab = tabs.find((item) => String(item.id) === String(tabID));
   const allTabs = useMemo(() => windows.flatMap((window) => (window.tabs || []).map((tab) => ({ ...tab, window }))), [windows]);
   const categories = useMemo(() => definitions.reduce((list, item) => { let category = list.find((entry) => entry.key === item.category); if (!category) { category = { key: item.category, label: item.category_label, actions: [] }; list.push(category); } category.actions.push(item); return list; }, []), [definitions]);
-  const selectedCategory = categories.find((item) => item.key === definition?.category) || categories[0];
 
   const loadTargets = useCallback(async (id) => {
     if (!id) { setTargets(null); return; }
@@ -112,10 +112,6 @@ export function BrowserDebugPage() {
   }, [loadStatus, loadTargets]);
 
   const chooseAction = (item) => { setActionType(item.type); setResult(null); setLastRequest(null); setParams(defaultParams(item)); };
-  const chooseCategory = (key) => {
-    const category = categories.find((item) => item.key === key);
-    if (category?.actions?.[0]) chooseAction(category.actions[0]);
-  };
   const updateParam = (key, value) => setParams((current) => ({ ...current, [key]: value }));
   const actionNeedsTab = definition?.target_mode === "tab_required";
   const actionNeedsWindow = definition?.target_mode === "window_optional";
@@ -134,7 +130,7 @@ export function BrowserDebugPage() {
         const tab = allTabs.find((item) => String(item.id) === String(effectiveTabID));
         if (tab) target.window_id = tab.window_id;
       }
-      const request = { timeout_ms: Number(timeoutMS) || 60000, target, action: { id: actionType.replaceAll(".", "-"), type: actionType, params } };
+      const request = { timeout_ms: Number(timeoutMS) || 60000, target, action: { id: actionType.replaceAll(".", "-"), type: actionType, params: sanitizeValues(definition.parameters || [], params) } };
       setLastRequest(request);
       setResult(null);
       const value = await api("/api/v1/browser/action", { method: "POST", body: JSON.stringify(request) });
@@ -159,41 +155,29 @@ export function BrowserDebugPage() {
 
   return <div className="page-stack browser-debug-page">
     <PageHeader eyebrow="BROWSER TOOLS" title="浏览器操作调试" description="" />
-    <div className="browser-target-toolbar">
-      <Field label="执行节点"><Select value={agentID || undefined} onValueChange={setAgentID}><SelectTrigger><SelectValue placeholder="选择在线节点" /></SelectTrigger><SelectContent>{agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name || agent.id}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="窗口"><Select value={windowID || undefined} onValueChange={(value) => { setWindowID(value); setTabID(""); }}><SelectTrigger><SelectValue placeholder="选择窗口" /></SelectTrigger><SelectContent>{windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}{item.focused ? " · 当前" : ""}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="标签页"><Select value={tabID || undefined} onValueChange={setTabID}><SelectTrigger><SelectValue placeholder="选择标签页" /></SelectTrigger><SelectContent>{tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} {item.title || item.url || "未命名"}</SelectItem>)}</SelectContent></Select></Field>
-      <IconButton title="刷新窗口和标签页" aria-label="刷新窗口和标签页" onClick={() => void loadTargets(agentID)}><RefreshCw size={14} /></IconButton>
-      {selectedTab && <div className="browser-target-summary"><strong>{selectedTab.title || "未命名标签页"}</strong><span>{selectedTab.url}</span></div>}
-    </div>
     <Tabs defaultValue="actions" className="browser-debug-mode-tabs">
-      <TabsList><TabsTrigger value="actions"><Settings2 size={13} />浏览器操作</TabsTrigger><TabsTrigger value="network"><Network size={13} />网络捕获 {capture ? <Badge tone="success">{network.length}</Badge> : null}</TabsTrigger></TabsList>
+      <div className="browser-debug-toolbar">
+        <TabsList><TabsTrigger value="actions"><Settings2 size={13} />浏览器操作</TabsTrigger><TabsTrigger value="network"><Network size={13} />网络捕获 {capture ? <Badge tone="success">{network.length}</Badge> : null}</TabsTrigger></TabsList>
+        <div className="browser-target-toolbar">
+          <Field label="执行节点"><Select value={agentID || undefined} onValueChange={setAgentID}><SelectTrigger><SelectValue placeholder="选择在线节点" /></SelectTrigger><SelectContent>{agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name || agent.id}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="窗口"><Select value={windowID || undefined} onValueChange={(value) => { setWindowID(value); setTabID(""); }}><SelectTrigger><SelectValue placeholder="选择窗口" /></SelectTrigger><SelectContent>{windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}{item.focused ? " · 当前" : ""}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="标签页"><Select value={tabID || undefined} onValueChange={setTabID}><SelectTrigger><SelectValue placeholder="选择标签页" /></SelectTrigger><SelectContent>{tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} {item.title || item.url || "未命名"}</SelectItem>)}</SelectContent></Select></Field>
+          <IconButton title="刷新窗口和标签页" aria-label="刷新窗口和标签页" onClick={() => void loadTargets(agentID)}><RefreshCw size={14} /></IconButton>
+        </div>
+      </div>
       <TabsContent value="actions">
         <div className="browser-debug-workbench">
+          <div className="browser-mobile-action-select"><Field label="原子 Action"><Select value={definition?.type} onValueChange={(value) => { const item = definitions.find((entry) => entry.type === value); if (item) chooseAction(item); }}><SelectTrigger><SelectValue placeholder="选择操作" /></SelectTrigger><SelectContent>{categories.flatMap((category) => category.actions.map((item) => <SelectItem key={item.type} value={item.type}>{category.label} · {item.label}</SelectItem>))}</SelectContent></Select></Field></div>
+          <ActionNavigation categories={categories} selectedType={definition?.type} onSelect={chooseAction} />
           <section className="browser-action-console">
-            <div className="browser-action-selector">
-              <Field label="能力分类">
-                <Select value={selectedCategory?.key} onValueChange={chooseCategory}>
-                  <SelectTrigger><SelectValue placeholder="选择分类" /></SelectTrigger>
-                  <SelectContent>{categories.map((category) => <SelectItem key={category.key} value={category.key}>{category.label}</SelectItem>)}</SelectContent>
-                </Select>
-              </Field>
-              <Field label="原子 Action">
-                <Select value={definition?.type} onValueChange={(value) => { const item = definitions.find((entry) => entry.type === value); if (item) chooseAction(item); }}>
-                  <SelectTrigger><SelectValue placeholder="选择操作" /></SelectTrigger>
-                  <SelectContent>{(selectedCategory?.actions || []).map((item) => <SelectItem key={item.type} value={item.type}>{item.label}</SelectItem>)}</SelectContent>
-                </Select>
-              </Field>
-              <Badge tone={agents.length ? "success" : "muted"}>{agents.length ? `${agents.length} 个节点在线` : "无可用节点"}</Badge>
-            </div>
             <ActionConfiguration
               definition={definition}
               params={params}
               onParamChange={updateParam}
               timeoutMS={timeoutMS}
               onTimeoutChange={setTimeoutMS}
-              overrideTarget={overrideTarget}
-              onOverrideTarget={setOverrideTarget}
+              customTarget={overrideTarget}
+              onCustomTarget={setOverrideTarget}
               windows={windows}
               tabs={allTabs}
               windowID={effectiveWindowID}
@@ -217,31 +201,37 @@ export function BrowserDebugPage() {
 }
 
 function Field({ label, children }) { return <label className="browser-debug-field"><span>{label}</span>{children}</label>; }
-function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onTimeoutChange, overrideTarget, onOverrideTarget, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow, statusText, canRun, running, onExecute }) {
+function ActionNavigation({ categories, selectedType, onSelect }) {
+  return <aside className="browser-action-navigation"><div><strong>原子 Action</strong></div><nav>{categories.map((category) => <section key={category.key}><h3>{category.label}</h3>{category.actions.map((item) => { const Icon = icons[item.icon] || Settings2; return <button type="button" key={item.type} data-selected={item.type === selectedType} onClick={() => onSelect(item)}><Icon size={14} /><span><strong>{item.label}</strong><small>{item.type}</small></span></button>; })}</section>)}</nav></aside>;
+}
+function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onTimeoutChange, customTarget, onCustomTarget, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow, statusText, canRun, running, onExecute }) {
   if (!definition) return <div className="browser-debug-empty"><Settings2 size={22} /><span>暂无可用 Action</span></div>;
   const Icon = icons[definition.icon] || Settings2;
   const parameters = Array.isArray(definition.parameters) ? definition.parameters : [];
   return <div className="browser-action-config">
-    <div className="browser-action-title"><div><span className="browser-action-title-icon"><Icon size={15} /></span><strong>{definition.label}</strong><code>{definition.type}</code></div><span>{definition.description}</span></div>
+    <div className="browser-action-title"><div className="browser-action-title-copy"><span className="browser-action-title-icon"><Icon size={15} /></span><span><strong>{definition.label}</strong><code>{definition.type}</code><small>{definition.description}</small></span></div><TargetEditor definition={definition} custom={customTarget} onCustom={onCustomTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} /></div>
     <div className="browser-debug-form">
-      <TargetEditor definition={definition} override={overrideTarget} onOverride={onOverrideTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} />
-      {parameters.map((parameter) => <Parameter key={parameter.key} definition={parameter} params={params} onChange={onParamChange} />)}
+      <DynamicFields parameters={parameters} values={params} onChange={onParamChange} />
       <Field label="超时 (ms)"><Input type="number" min="1000" value={timeoutMS} onChange={(event) => onTimeoutChange(event.target.value)} /></Field>
     </div>
     <div className="browser-debug-runbar"><span>{statusText}</span><Button disabled={!canRun} onClick={() => void onExecute()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{running ? "执行中" : "执行 Action"}</Button></div>
   </div>;
 }
-function TargetEditor({ definition, override, onOverride, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow }) {
+function TargetEditor({ definition, custom, onCustom, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow }) {
   if (definition.target_mode === "none") return null;
-  return <div className="browser-action-target"><label><span>覆盖顶部目标</span><Switch checked={override} onCheckedChange={onOverride} /></label>{override ? <div>{definition.target_mode === "window_optional" ? <Field label="执行窗口"><Select value={windowID || "current"} onValueChange={(value) => onWindow(value === "current" ? "" : value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="current">当前浏览器窗口</SelectItem>{windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}</SelectItem>)}</SelectContent></Select></Field> : <Field label="执行标签页"><Select value={tabID || undefined} onValueChange={onTab}><SelectTrigger><SelectValue placeholder="选择标签页" /></SelectTrigger><SelectContent>{tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} · 窗口 {item.window_id} · {item.title || item.url}</SelectItem>)}</SelectContent></Select></Field>}</div> : <p>{definition.target_mode === "tab_required" ? (defaultTab ? `使用顶部标签页 #${defaultTab.id}` : "顶部尚未选择标签页") : (defaultWindow ? `使用顶部窗口 ${defaultWindow.id}` : "使用当前浏览器窗口")}</p>}</div>;
-}
-function Parameter({ definition, params, onChange }) {
-  if (definition.visible_when && !Object.entries(definition.visible_when).every(([key, value]) => params[key] === value)) return null;
-  const value = params[definition.key] ?? "";
-  if (definition.type === "boolean") return <label className="browser-parameter-switch"><span>{definition.label}</span><Switch checked={Boolean(value)} onCheckedChange={(checked) => onChange(definition.key, checked)} /></label>;
-  if (definition.type === "select") return <Field label={definition.label}><Select value={String(value)} onValueChange={(next) => onChange(definition.key, next)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(definition.options || []).map((option) => <SelectItem key={option.value} value={String(option.value)}>{option.label}</SelectItem>)}</SelectContent></Select></Field>;
-  if (["textarea", "code"].includes(definition.type)) return <Field label={definition.label}><textarea className={`browser-debug-textarea ${definition.type === "code" ? "is-code" : ""}`} value={value} placeholder={definition.placeholder} onChange={(event) => onChange(definition.key, event.target.value)} /></Field>;
-  return <Field label={definition.label}><Input type={definition.type === "number" ? "number" : definition.type === "url" ? "url" : "text"} value={value} placeholder={definition.placeholder} min={definition.min} max={definition.max} step={definition.step} onChange={(event) => onChange(definition.key, definition.type === "number" ? Number(event.target.value) : event.target.value)} /></Field>;
+  const isTab = definition.target_mode === "tab_required";
+  const value = custom ? (isTab ? tabID : windowID) : "none";
+  const changeTarget = (next) => {
+    if (next === "none") {
+      onCustom(false);
+      if (isTab) onTab(""); else onWindow("");
+      return;
+    }
+    onCustom(true);
+    if (isTab) onTab(next); else onWindow(next);
+  };
+  const inherited = isTab ? (defaultTab ? `无 · 顶部 #${defaultTab.id}` : "无 · 顶部未选择") : (defaultWindow ? `无 · 顶部窗口 ${defaultWindow.id}` : "无 · 当前窗口");
+  return <div className="browser-action-target"><span>{isTab ? "自定义标签页" : "自定义窗口"}</span><Select value={value || "none"} onValueChange={changeTarget}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{inherited}</SelectItem>{isTab ? tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} · 窗口 {item.window_id} · {item.title || item.url}</SelectItem>) : windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}</SelectItem>)}</SelectContent></Select></div>;
 }
 function ResultPanel({ request, result, onClear }) {
   const [copied, setCopied] = useState("");
@@ -314,4 +304,4 @@ function NetworkList({ items, selected, onSelect }) { return <div className="bro
 function NetworkDetail({ item }) { if (!item) return <div className="browser-network-detail-empty">选择请求查看标头、正文和时序</div>; return <div className="browser-network-detail"><div><strong>{item.method || "GET"} {item.url}</strong><span>{item.status || "ERR"} · {item.mime_type || item.resource_type || "未知类型"} · {item.duration_ms || 0} ms</span></div><Tabs defaultValue="response"><TabsList><TabsTrigger value="response">响应</TabsTrigger><TabsTrigger value="request">请求</TabsTrigger><TabsTrigger value="timing">时序</TabsTrigger></TabsList><TabsContent value="response"><DetailObject title="响应标头" value={item.headers} /><DetailBody value={item.body} error={item.error} truncated={item.truncated} /></TabsContent><TabsContent value="request"><DetailObject title="请求标头" value={item.request_headers} /><DetailBody value={item.request_body} truncated={item.request_body_truncated} /></TabsContent><TabsContent value="timing"><DetailObject title="连接与时序" value={{ protocol: item.protocol, remote_address: [item.remote_ip_address, item.remote_port].filter(Boolean).join(":"), encoded_data_length: item.encoded_data_length, from_disk_cache: item.from_disk_cache, from_service_worker: item.from_service_worker, ...(item.timing || {}) }} /></TabsContent></Tabs></div>; }
 function DetailObject({ title, value }) { const entries = Object.entries(value || {}).filter(([, item]) => item !== undefined && item !== ""); return <section className="browser-network-detail-section"><h4>{title}</h4>{entries.length ? <dl>{entries.map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{String(item)}</dd></div>)}</dl> : <div className="browser-network-detail-empty">无数据</div>}</section>; }
 function DetailBody({ value, error, truncated }) { return <section className="browser-network-body"><pre className={error ? "is-error" : ""}>{value || error || "无正文"}</pre>{truncated ? <span>正文已按配置上限截断</span> : null}</section>; }
-function defaultParams(definition) { return Object.fromEntries((definition?.parameters || []).filter((item) => Object.prototype.hasOwnProperty.call(item, "default")).map((item) => [item.key, item.default])); }
+function defaultParams(definition) { return getDefaultValues({ parameters: definition?.parameters || [] }); }
