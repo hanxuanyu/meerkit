@@ -91,7 +91,22 @@ function TimeField({ value, onChange, parameter, disabled }) {
   return <div className="time-field"><Select value={hour || undefined} onValueChange={(next) => update(next, minute)} disabled={disabled}><SelectTrigger><SelectValue placeholder="小时" /></SelectTrigger><SelectContent>{Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0")).map((item) => <SelectItem key={item} value={item}>{item} 时</SelectItem>)}</SelectContent></Select><span>:</span><Select value={minute || undefined} onValueChange={(next) => update(hour, next)} disabled={disabled}><SelectTrigger><SelectValue placeholder="分钟" /></SelectTrigger><SelectContent>{minutes.map((item) => { const option = String(item).padStart(2, "0"); return <SelectItem key={option} value={option}>{option} 分</SelectItem>; })}</SelectContent></Select></div>;
 }
 
-export function ParameterField({ parameter, value, values, onChange }) {
+const emptyBrowserTarget = "__meerkit_browser_target_none__";
+
+function BrowserTargetField({ parameter, value, onChange, disabled, browserTargets }) {
+  const isWindow = parameter.type === "browser_window";
+  const windows = browserTargets?.windows || [];
+  const tabs = browserTargets?.tabs || [];
+  const options = isWindow
+    ? windows.map((window) => ({ id: window.id, label: `窗口 ${window.id}${window.focused ? " · 当前" : ""}` }))
+    : tabs.map((tab) => ({ id: tab.id, label: `#${tab.id} · 窗口 ${tab.window_id} · ${tab.title || tab.url || "未命名"}` }));
+  const selected = value === "" || value == null ? (parameter.required ? undefined : emptyBrowserTarget) : String(value);
+  const unavailable = !browserTargets;
+  if (unavailable) return <label className="field"><FieldHeading parameter={parameter} /><Input disabled={disabled} required={parameter.required} type="number" min="1" value={value ?? ""} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} placeholder={parameter.placeholder} /></label>;
+  return <label className="field"><FieldHeading parameter={parameter} /><Select value={selected} onValueChange={(next) => onChange(next === emptyBrowserTarget ? "" : Number(next))} disabled={disabled}><SelectTrigger><SelectValue placeholder={isWindow ? "选择窗口" : "选择标签页"} /></SelectTrigger><SelectContent>{!parameter.required && <SelectItem value={emptyBrowserTarget}>{parameter.placeholder || (isWindow ? "当前窗口" : "不指定标签页")}</SelectItem>}{options.map((option) => <SelectItem key={option.id} value={String(option.id)}>{option.label}</SelectItem>)}</SelectContent></Select></label>;
+}
+
+export function ParameterField({ parameter, value, values, onChange, browserTargets }) {
   if (!isParameterVisible(parameter, values)) return null;
   const enabled = isParameterEnabled(parameter, values);
   const common = { disabled: !enabled, required: parameter.required };
@@ -100,6 +115,7 @@ export function ParameterField({ parameter, value, values, onChange }) {
   const fieldClass = `field${wide ? " parameter-field-wide" : ""}`;
   const inputType = parameter.type === "url" || parameter.type === "email" ? parameter.type : parameter.secret ? "password" : numberType ? "number" : parameter.type === "date" ? "date" : parameter.type === "datetime" ? "datetime-local" : "text";
 
+  if (["browser_window", "browser_tab"].includes(parameter.type)) return <BrowserTargetField parameter={parameter} value={value} onChange={onChange} disabled={!enabled} browserTargets={browserTargets} />;
   if (parameter.type === "boolean") return <div className={`${fieldClass} parameter-boolean-field`}><span className="parameter-boolean-copy"><FieldLabel parameter={parameter} /><FieldHint parameter={parameter} /></span><Switch checked={Boolean(value)} onCheckedChange={onChange} disabled={!enabled} aria-label={parameter.label} /></div>;
   if (parameter.type === "map") return <div className={fieldClass}><MapField parameter={parameter} disabled={!enabled} value={value} onChange={onChange} /></div>;
   if (parameter.type === "list") return <label className={fieldClass}><FieldHeading parameter={parameter} /><Select value={value === "" || value == null ? undefined : String(value)} onValueChange={onChange} disabled={!enabled}><SelectTrigger><SelectValue placeholder={parameter.placeholder || "请选择"} /></SelectTrigger><SelectContent>{getParameterOptions(parameter, values).map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label || option.value}</SelectItem>)}</SelectContent></Select></label>;

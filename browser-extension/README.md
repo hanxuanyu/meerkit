@@ -15,10 +15,12 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 ## 能力
 
 - 枚举 Chrome 窗口、标签页和标签分组
-- 创建、导航、关闭和分组标签页
-- 等待页面、时间或 CSS Selector
-- 获取完整 DOM 或选择器对应元素
-- 点击元素和填写表单控件
+- 创建、聚焦、调整状态/尺寸和关闭窗口
+- 创建、激活、导航、刷新、历史前进/后退、复制、移动、固定、静音、缩放、分组和关闭标签页
+- 获取页面信息，等待页面、时间或 CSS Selector，并滚动页面或元素
+- 获取完整 DOM、单个或多个选择器对应元素，操作常用表单控件
+- 通过 DOM 快速操作或 CDP 发送真实鼠标、键盘和滚轮输入
+- 查询和修改当前标签页 URL 的 Cookie、localStorage 与 sessionStorage
 - 在页面主世界执行 JavaScript
 - 以 PNG、JPEG 或 WebP 截取当前可见区域或完整页面
 - 通过 `chrome.debugger` 和 CDP 捕获匹配的网络请求、响应正文、标头、连接、缓存与时序信息
@@ -29,4 +31,10 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 
 扩展与 Meerkit 使用协议版本 `1` 的 WebSocket 长连接。连接或目标标签页断开时，扩展会停止相关 CDP 会话并释放 debugger attachment。
 
+截图、真实输入和网络捕获按标签页共享同一个 CDP attachment，并使用引用计数释放。同一标签页的输入序列串行执行；多个网络捕获共享 Network 域，停止一个捕获不会中断其他捕获。
+
+Cookie 和页面存储属于敏感能力，只作用于显式选择标签页的当前 URL。扩展不会把读取值写入本地存储或日志。页面存储单值最多返回 1 MiB，单次总响应最多返回 4 MiB，超出部分会标记截断。
+
 完整页面截图等超过 512 KiB 的结果会自动拆成有界 `response_chunk`，并根据 WebSocket 发送缓冲区施加背压。结果超过 60 MiB 时只会终止当前请求，不会主动断开 Agent；超长页面应优先使用 WebP 或 JPEG 并降低图片质量。
+
+扩展图标由项目根目录执行 `go run ./browser-extension/tools/generate_icons.go` 生成。脚本从主应用高分辨率品牌图标派生角标版本，角标复用前端插件列表所使用的 Lucide `Package` 图标资源，并输出 Chrome Manifest 所需尺寸。提取资源位于 `assets/plugin-package.svg`，沿用 Lucide ISC 许可。

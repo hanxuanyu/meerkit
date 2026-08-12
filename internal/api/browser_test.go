@@ -31,7 +31,7 @@ func TestGetBrowserActionsReturnsAtomicCatalog(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Actions) != 11 {
+	if len(payload.Actions) != 46 {
 		t.Fatalf("unexpected action count: %d", len(payload.Actions))
 	}
 }

@@ -226,7 +226,7 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 }
 ```
 
-`timeout_ms` 默认 60 秒，最小 1 秒、最大 5 分钟。`tab.open` 只能携带可选 `window_id`；`tab_required` Action 必须携带 `tab_id`。成功响应包含 `id`、`type`、`success`、`target`、`duration_ms` 和 Action 特定的 `data`。
+`timeout_ms` 默认 60 秒，最小 1 秒、最大 5 分钟。`tab.open` 只能携带可选 `window_id`；`window_required` Action 必须携带 `window_id`，`tab_required` Action 必须携带 `tab_id`。Catalog 同时返回 `sensitive` 和 `destructive` 元数据；成功响应包含 `id`、`type`、`success`、`target`、`duration_ms` 和 Action 特定的 `data`。
 
 `page.screenshot` 支持 `png`、`jpeg` 和 `webp`，完整页面通过 `full_page: true` 开启。图片位于 `data.data_url`，并返回 `format`、`full_page` 和估算的 `size_bytes`。扩展 WebSocket 会自动分块传输大结果，HTTP API 对调用方仍返回一个完整 JSON 响应；结果超过 60 MiB 时当前请求失败。
 

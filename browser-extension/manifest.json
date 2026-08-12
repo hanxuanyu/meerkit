@@ -3,8 +3,15 @@
   "name": "Meerkit Browser Agent",
   "version": "0.2.1",
   "description": "Provides browser automation capabilities to a paired Meerkit instance.",
+  "icons": {
+    "16": "icons/browser-agent-16.png",
+    "32": "icons/browser-agent-32.png",
+    "48": "icons/browser-agent-48.png",
+    "128": "icons/browser-agent-128.png"
+  },
   "permissions": [
     "alarms",
+    "cookies",
     "debugger",
     "scripting",
     "storage",
@@ -17,7 +24,11 @@
   },
   "action": {
     "default_title": "Meerkit Browser Agent",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/browser-agent-16.png",
+      "32": "icons/browser-agent-32.png"
+    }
   },
   "options_page": "options.html",
   "content_security_policy": {

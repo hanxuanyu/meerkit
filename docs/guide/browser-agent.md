@@ -34,16 +34,20 @@ Meerkit 首次启动时生成 32 字节随机配对令牌，保存在 `${storage
 | --- | --- |
 | `none` | Action 不使用窗口或标签页 |
 | `window_optional` | 可选择窗口；不选择时使用 Chrome 当前窗口 |
+| `window_required` | 必须显式选择窗口 |
 | `tab_required` | 必须显式选择标签页；同时提供窗口时校验归属 |
 
-`tab.open` 属于 `window_optional`，成功后页面刷新目标列表并选中新标签页。其他页面、DOM 和脚本 Action 通常要求 `tab_id`。每个 Action 标题右侧都有固定位置的目标下拉，“无”表示使用顶部目标，选择具体标签页或窗口后则仅覆盖当前 Action 的执行目标。
+`tab.open` 属于 `window_optional`，窗口管理操作使用 `window_required`，页面、DOM、输入、Cookie、Storage 和脚本 Action 通常要求 `tab_id`。每个 Action 标题右侧都有固定位置的目标下拉，“无”表示使用顶部目标，选择具体标签页或窗口后则仅覆盖当前 Action 的执行目标。
 
 当前提供：
 
-- 打开、导航、分组和关闭标签页。
-- 等待页面加载、CSS Selector 或固定时长。
-- PNG/JPEG/WebP 页面截图、完整 HTML 和元素查询。
-- 点击元素、填写控件和执行 JavaScript 表达式。
+- 窗口生命周期、标签页状态和导航历史。
+- 页面信息、等待、滚动和 PNG/JPEG/WebP 截图。
+- DOM 单项/多项查询、表单控件和滚动操作。
+- CDP 真实鼠标、键盘和滚轮输入。
+- Cookie、localStorage、sessionStorage 和 JavaScript 表达式。
+
+Cookie 与 Storage 标记为敏感能力；调试页对读取操作直接显示结果，对写入、删除、清空及窗口/标签页关闭等破坏性操作要求二次确认。
 
 `runtime.evaluate` 在页面主世界执行表达式，拥有目标页面上下文。只应在受控页面和可信表达式上使用。
 

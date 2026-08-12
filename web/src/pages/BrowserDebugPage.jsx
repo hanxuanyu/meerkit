@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, Clipboard, Code2, FileText, Globe2, Group, Image, Keyboard, LoaderCircle, MousePointerClick, Network, PanelTopOpen, Play, RefreshCw, Search, Settings2, SquareTerminal, Timer, Trash2 } from "lucide-react";
+import { AlertTriangle, AppWindow, ArrowLeft, ArrowRight, Camera, Check, Clipboard, Code2, Cookie, Copy, Database, FileText, Focus, Globe2, Group, Image, Info, Keyboard, ListTree, LoaderCircle, LocateFixed, Mouse, MousePointer2, MousePointerClick, MoveDiagonal2, MoveHorizontal, MoveVertical, Network, PanelTopOpen, PanelsTopLeft, Pin, Play, RefreshCw, Scan, Search, Settings2, SquareCheckBig, SquareTerminal, Timer, Trash2, Ungroup, VolumeX, X, ZoomIn } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DynamicFields } from "../components/forms/DynamicFields";
@@ -10,10 +10,11 @@ import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/Select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { api } from "../lib/api";
 import { getDefaultValues, sanitizeValues } from "../lib/parameterSchema";
 
-const icons = { "panel-top-open": PanelTopOpen, globe: Globe2, group: Group, "trash-2": Trash2, timer: Timer, camera: Camera, "file-code-2": Code2, search: Search, "mouse-pointer-click": MousePointerClick, keyboard: Keyboard, "code-2": Code2 };
+const icons = { "app-window": AppWindow, scan: Scan, "panels-top-left": PanelsTopLeft, "move-diagonal-2": MoveDiagonal2, x: X, "panel-top-open": PanelTopOpen, "mouse-pointer-2": MousePointer2, globe: Globe2, "refresh-cw": RefreshCw, "arrow-left": ArrowLeft, "arrow-right": ArrowRight, copy: Copy, "move-horizontal": MoveHorizontal, pin: Pin, "volume-x": VolumeX, group: Group, ungroup: Ungroup, "zoom-in": ZoomIn, "trash-2": Trash2, info: Info, timer: Timer, "move-vertical": MoveVertical, camera: Camera, "file-code-2": Code2, search: Search, "list-tree": ListTree, focus: Focus, "mouse-pointer-click": MousePointerClick, keyboard: Keyboard, "square-check-big": SquareCheckBig, "locate-fixed": LocateFixed, mouse: Mouse, cookie: Cookie, "cookie-off": Cookie, database: Database, "database-zap": Database, "database-x": Database, "database-backup": Database, "code-2": Code2 };
 
 export function BrowserDebugPage() {
   const [status, setStatus] = useState(null);
@@ -36,6 +37,7 @@ export function BrowserDebugPage() {
   const [overrideWindowID, setOverrideWindowID] = useState("");
   const [overrideTabID, setOverrideTabID] = useState("");
   const [selectedNetwork, setSelectedNetwork] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(false);
   const agentRef = useRef(agentID);
   const captureIDRef = useRef("");
 
@@ -114,17 +116,19 @@ export function BrowserDebugPage() {
   const chooseAction = (item) => { setActionType(item.type); setResult(null); setLastRequest(null); setParams(defaultParams(item)); };
   const updateParam = (key, value) => setParams((current) => ({ ...current, [key]: value }));
   const actionNeedsTab = definition?.target_mode === "tab_required";
-  const actionNeedsWindow = definition?.target_mode === "window_optional";
+  const actionNeedsWindow = ["window_optional", "window_required"].includes(definition?.target_mode);
   const effectiveWindowID = overrideTarget ? overrideWindowID : windowID;
   const effectiveTabID = overrideTarget ? overrideTabID : tabID;
-  const canRun = Boolean(definition && agentID && !running && (!actionNeedsTab || effectiveTabID));
+  const canRun = Boolean(definition && agentID && !running && (!actionNeedsTab || effectiveTabID) && (definition?.target_mode !== "window_required" || effectiveWindowID));
 
-  const execute = async () => {
+  const execute = async (confirmed = false) => {
     if (!definition) return;
+    if (definition.destructive && !confirmed) { setConfirmAction(true); return; }
+    setConfirmAction(false);
     setRunning(true);
     try {
       const target = { agent_id: agentID };
-      if (definition.target_mode === "window_optional" && effectiveWindowID) target.window_id = Number(effectiveWindowID);
+      if (["window_optional", "window_required"].includes(definition.target_mode) && effectiveWindowID) target.window_id = Number(effectiveWindowID);
       if (definition.target_mode === "tab_required") {
         target.tab_id = Number(effectiveTabID);
         const tab = allTabs.find((item) => String(item.id) === String(effectiveTabID));
@@ -136,6 +140,7 @@ export function BrowserDebugPage() {
       const value = await api("/api/v1/browser/action", { method: "POST", body: JSON.stringify(request) });
       setResult(value);
       if (actionType === "tab.open" && value?.data?.tab_id) { await loadTargets(agentID); setWindowID(String(value.data.window_id || "")); setTabID(String(value.data.tab_id)); }
+      if (actionType === "window.open" && value?.data?.window_id) { await loadTargets(agentID); setWindowID(String(value.data.window_id)); setTabID(String(value.data.tabs?.[0]?.tab_id || "")); }
     } catch (err) {
       notifyBrowserError(err);
       setResult({ type: definition.type, success: false, duration_ms: 0, error: err.message, data: {} });
@@ -186,7 +191,7 @@ export function BrowserDebugPage() {
               onTab={(value) => { setOverrideTabID(value); const tab = allTabs.find((item) => String(item.id) === String(value)); if (tab) setOverrideWindowID(String(tab.window_id)); }}
               defaultTab={selectedTab}
               defaultWindow={selectedWindow}
-              statusText={actionNeedsTab && !effectiveTabID ? "请选择目标标签页" : actionNeedsWindow && !effectiveWindowID ? "未指定时使用当前浏览器窗口" : "准备执行当前 Action"}
+              statusText={actionNeedsTab && !effectiveTabID ? "请选择目标标签页" : definition?.target_mode === "window_required" && !effectiveWindowID ? "请选择目标窗口" : actionNeedsWindow && !effectiveWindowID ? "未指定时使用当前浏览器窗口" : "准备执行当前 Action"}
               canRun={canRun}
               running={running}
               onExecute={execute}
@@ -197,6 +202,7 @@ export function BrowserDebugPage() {
       </TabsContent>
       <TabsContent value="network"><Card className="browser-network-card"><div className="browser-network-control"><div><Network size={16} /><strong>持续网络捕获</strong><span>{capture ? `固定绑定标签页 #${capture.target?.tab_id}` : "未启动"}</span></div><Button variant={capture ? "secondary" : "default"} onClick={() => void (capture ? stopCapture() : startCapture())}>{capture ? "停止捕获" : "开始捕获"}</Button></div><div className="browser-network-filters"><Field label="URL 包含"><Input disabled={Boolean(capture)} value={captureRules.url_contains} onChange={(event) => setCaptureRules((value) => ({ ...value, url_contains: event.target.value }))} /></Field><Field label="资源类型"><Input disabled={Boolean(capture)} value={captureRules.resource_type} onChange={(event) => setCaptureRules((value) => ({ ...value, resource_type: event.target.value }))} placeholder="XHR / Fetch" /></Field><Field label="正文上限"><Input disabled={Boolean(capture)} type="number" value={captureRules.max_body_bytes} onChange={(event) => setCaptureRules((value) => ({ ...value, max_body_bytes: Number(event.target.value) }))} /></Field><Field label="筛选"><Input value={networkFilter} onChange={(event) => setNetworkFilter(event.target.value)} placeholder="筛选 URL" /></Field></div><div className="browser-network-workspace"><NetworkList items={filteredNetwork} selected={selectedNetwork} onSelect={setSelectedNetwork} /><NetworkDetail item={selectedNetwork} /></div></Card></TabsContent>
     </Tabs>
+    <AlertDialog open={confirmAction} onOpenChange={(open) => !running && setConfirmAction(open)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><AlertTriangle size={18} /></div><AlertDialogTitle>确认执行“{definition?.label}”？</AlertDialogTitle><AlertDialogDescription>{definition?.description} 此操作会修改浏览器状态或页面认证数据，请确认目标窗口和标签页无误。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={running}>取消</AlertDialogCancel><AlertDialogAction disabled={running} onClick={(event) => { event.preventDefault(); void execute(true); }}>{running ? "执行中..." : "确认执行"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>;
 }
 
@@ -209,9 +215,9 @@ function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onT
   const Icon = icons[definition.icon] || Settings2;
   const parameters = Array.isArray(definition.parameters) ? definition.parameters : [];
   return <div className="browser-action-config">
-    <div className="browser-action-title"><div className="browser-action-title-copy"><span className="browser-action-title-icon"><Icon size={15} /></span><span><strong>{definition.label}</strong><code>{definition.type}</code><small>{definition.description}</small></span></div><TargetEditor definition={definition} custom={customTarget} onCustom={onCustomTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} /></div>
+    <div className="browser-action-title"><div className="browser-action-title-copy"><span className="browser-action-title-icon"><Icon size={15} /></span><span className="browser-action-title-text"><span className="browser-action-title-line"><strong>{definition.label}</strong><code>{definition.type}</code>{definition.sensitive ? <Badge tone="warning">敏感</Badge> : null}</span><small title={definition.description}>{definition.description}</small></span></div><TargetEditor definition={definition} custom={customTarget} onCustom={onCustomTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} /></div>
     <div className="browser-debug-form">
-      <DynamicFields parameters={parameters} values={params} onChange={onParamChange} />
+      <DynamicFields parameters={parameters} values={params} onChange={onParamChange} browserTargets={{ windows, tabs }} />
       <Field label="超时 (ms)"><Input type="number" min="1000" value={timeoutMS} onChange={(event) => onTimeoutChange(event.target.value)} /></Field>
     </div>
     <div className="browser-debug-runbar"><span>{statusText}</span><Button disabled={!canRun} onClick={() => void onExecute()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{running ? "执行中" : "执行 Action"}</Button></div>
@@ -230,7 +236,7 @@ function TargetEditor({ definition, custom, onCustom, windows, tabs, windowID, t
     onCustom(true);
     if (isTab) onTab(next); else onWindow(next);
   };
-  const inherited = isTab ? (defaultTab ? `无 · 顶部 #${defaultTab.id}` : "无 · 顶部未选择") : (defaultWindow ? `无 · 顶部窗口 ${defaultWindow.id}` : "无 · 当前窗口");
+  const inherited = isTab ? (defaultTab ? `无 · 顶部 #${defaultTab.id}` : "无 · 顶部未选择") : (defaultWindow ? `无 · 顶部窗口 ${defaultWindow.id}` : definition.target_mode === "window_required" ? "无 · 顶部未选择" : "无 · 当前窗口");
   return <div className="browser-action-target"><span>{isTab ? "自定义标签页" : "自定义窗口"}</span><Select value={value || "none"} onValueChange={changeTarget}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{inherited}</SelectItem>{isTab ? tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} · 窗口 {item.window_id} · {item.title || item.url}</SelectItem>) : windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}</SelectItem>)}</SelectContent></Select></div>;
 }
 function ResultPanel({ request, result, onClear }) {

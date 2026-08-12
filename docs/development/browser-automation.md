@@ -39,6 +39,8 @@ Meerkit 主进程
 
 所有 Chrome 命令最终经同一个 Agent WebSocket 写锁发送。待响应请求以随机 ID 关联；HTTP Context 取消后宿主停止等待，不会让其他请求相互影响。
 
+扩展按标签页维护共享 CDP attachment。截图、真实输入和网络捕获通过引用计数复用连接；同一标签页的输入队列串行执行。Network 域单独计数，最后一个捕获停止后才禁用，最后一个 CDP 使用方结束后才 detach。
+
 ## Chrome WebSocket 协议
 
 扩展端点是 `/api/v1/browser/extension/ws`。该路由不使用管理会话认证，第一条消息必须是协议版本 `1` 的 `hello`：
@@ -75,17 +77,23 @@ Meerkit 主进程
 
 Action Catalog 的注册表位于 `internal/browser/actions.go`，具体定义按 Action 文件维护，并通过 `GET /api/v1/browser/actions` 提供给前端。参数直接使用监控模块和通知渠道共用的 `sdk.ParameterDescriptor`，支持默认值、范围、选项、单位、全宽、显隐和启用条件；前端统一交给 `DynamicFields` 渲染。后端先校验 Action，再检查 Agent 声明的 capability，扩展仍需校验 Chrome 中的真实目标状态。
 
-当前 Action：
+Action Catalog 当前包含 46 个原子能力：
 
 | 分类 | Action | 目标 | 结果重点 |
 | --- | --- | --- | --- |
-| 标签页 | `tab.open` | 可选窗口 | 新窗口/标签页 ID、URL、标题 |
-| 标签页 | `tab.navigate`、`tab.group`、`tab.close` | 必选标签页 | 更新后的目标或状态 |
-| 页面 | `page.wait`、`page.screenshot` | 必选标签页 | 等待状态或 PNG/JPEG/WebP 图片数据 |
-| DOM | `dom.document`、`dom.query`、`dom.click`、`dom.input` | 必选标签页 | HTML、元素信息或操作状态 |
+| 窗口 | `window.open/focus/state/resize/close` | 无目标或必选窗口 | 窗口、尺寸、状态或关闭结果 |
+| 标签页 | 创建、激活、导航、刷新、历史、复制、移动、固定、静音、分组、缩放、关闭 | 可选窗口或必选标签页 | 更新后的标签页目标或状态 |
+| 页面 | `page.info/wait/scroll/screenshot` | 必选标签页 | 页面指标、等待/滚动状态或图片数据 |
+| DOM | 文档、单项/多项查询、聚焦、点击、填写、选中、下拉和滚动到元素 | 必选标签页 | HTML、元素信息或操作状态 |
+| 输入 | `input.click/hover/type/key/wheel` | 必选标签页 | CDP 真实输入坐标和执行状态 |
+| 认证态 | `cookie.*`、`storage.*` | 必选标签页 | 当前 URL 的 Cookie 或 Web Storage 数据 |
 | 运行时 | `runtime.evaluate` | 必选标签页 | 可 JSON 序列化的表达式结果 |
 
-`tab.open` 不能携带已有 `tab_id`。页面 Action 必须携带 `tab_id`；若同时携带 `window_id`，扩展通过 `chrome.tabs.get` 校验归属。目标 ID 是 Chrome 运行时标识，不应写入长期插件配置。
+`tab.open` 不能携带已有 `tab_id`。`window_required` 必须携带窗口 ID；`tab_required` 必须携带标签页 ID，若同时携带窗口 ID，扩展通过 `chrome.tabs.get` 校验归属。目标 ID 是 Chrome 运行时标识，不应写入长期插件配置。
+
+Action 参数可以使用 `browser_window` 和 `browser_tab` 类型声明运行时目标 ID。浏览器调试页会使用当前 Agent 返回的目标列表渲染下拉框，并在请求中仍以数字 ID 写入原参数键；该 UI 类型不会改变扩展命令或 Action 参数结构。没有浏览器目标上下文的通用参数表单会退化为数字输入。
+
+Cookie 与 Storage Action 标记 `sensitive`，写入、删除和清空同时标记 `destructive`。管理前端只对 destructive Action 二次确认；监控插件通过 SDK 调用时不引入交互确认。敏感值不进入宿主日志或持久化，调试结果只保留在浏览器页面内存。
 
 新增 Action 时需要：
 
@@ -103,13 +111,13 @@ Action Catalog 的注册表位于 `internal/browser/actions.go`，具体定义�
 StartNetworkCapture
   -> BrowserManager 预注册 session 与 owner
   -> browser.network.start
-  -> 扩展 attach chrome.debugger + Network.enable
+  -> 扩展复用或 attach chrome.debugger + Network.enable
   -> 扩展持续发送 browser.network 事件
   -> BrowserManager 缓存并分发到 owner/前端
 StopNetworkCapture
   -> browser.network.stop
   -> 扩展 flush 正在读取的 response body
-  -> detach debugger
+  -> 释放 Network/CDP 引用，最后一个使用方结束时 detach
   -> 返回 session 摘要与缓存事件
 ```
 

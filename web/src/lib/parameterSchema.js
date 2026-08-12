@@ -43,7 +43,7 @@ function orderParameters(parameters) {
 function emptyValue(parameter) {
   if (parameter.type === "boolean") return false;
   if (parameter.type === "map") return {};
-  if (["integer", "number", "duration"].includes(parameter.type)) return "";
+  if (["integer", "number", "duration", "browser_window", "browser_tab"].includes(parameter.type)) return "";
   return "";
 }
 

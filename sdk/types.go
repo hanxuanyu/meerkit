@@ -48,16 +48,18 @@ type ParameterOptionSet struct {
 type ParameterType string
 
 const (
-	ParameterString   ParameterType = "string"
-	ParameterText     ParameterType = "text"
-	ParameterList     ParameterType = "list"
-	ParameterMap      ParameterType = "map"
-	ParameterBoolean  ParameterType = "boolean"
-	ParameterInteger  ParameterType = "integer"
-	ParameterNumber   ParameterType = "number"
-	ParameterURL      ParameterType = "url"
-	ParameterJSON     ParameterType = "json"
-	ParameterDuration ParameterType = "duration"
+	ParameterString        ParameterType = "string"
+	ParameterText          ParameterType = "text"
+	ParameterList          ParameterType = "list"
+	ParameterMap           ParameterType = "map"
+	ParameterBoolean       ParameterType = "boolean"
+	ParameterInteger       ParameterType = "integer"
+	ParameterNumber        ParameterType = "number"
+	ParameterURL           ParameterType = "url"
+	ParameterJSON          ParameterType = "json"
+	ParameterDuration      ParameterType = "duration"
+	ParameterBrowserWindow ParameterType = "browser_window"
+	ParameterBrowserTab    ParameterType = "browser_tab"
 )
 
 type ParameterDescriptor struct {
