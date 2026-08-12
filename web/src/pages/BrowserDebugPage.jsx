@@ -164,7 +164,7 @@ export function BrowserDebugPage() {
   const filteredNetwork = network.filter((item) => !networkFilter || String(item.url || "").toLowerCase().includes(networkFilter.toLowerCase()));
 
   return <div className="page-stack browser-debug-page">
-    <PageHeader eyebrow="LAB / BROWSER" title="浏览器" description="" />
+    <PageHeader eyebrow="LAB / BROWSER" title="浏览器控制" description="" />
     <Tabs defaultValue="actions" className="browser-debug-mode-tabs">
       <div className="browser-debug-toolbar">
         <TabsList><TabsTrigger value="actions"><Settings2 size={13} />浏览器操作</TabsTrigger><TabsTrigger value="network"><Network size={13} />网络捕获 {capture ? <Badge tone="success">{network.length}</Badge> : null}</TabsTrigger></TabsList>
@@ -227,8 +227,9 @@ function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onT
   const Icon = icons[definition.icon] || Settings2;
   const parameters = Array.isArray(definition.parameters) ? definition.parameters : [];
   return <div className="browser-action-config">
-    <div className="browser-action-title"><div className="browser-action-title-copy"><span className="browser-action-title-icon"><Icon size={15} /></span><span className="browser-action-title-text"><span className="browser-action-title-line"><strong>{definition.label}</strong><code>{definition.type}</code>{definition.sensitive ? <Badge tone="warning">敏感</Badge> : null}</span><small title={definition.description}>{definition.description}</small></span></div><TargetEditor definition={definition} custom={customTarget} onCustom={onCustomTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} /></div>
+    <div className="browser-action-title"><div className="browser-action-title-copy"><span className="browser-action-title-icon"><Icon size={15} /></span><span className="browser-action-title-text"><span className="browser-action-title-line"><strong>{definition.label}</strong><code>{definition.type}</code>{definition.sensitive ? <Badge tone="warning">敏感</Badge> : null}</span><small title={definition.description}>{definition.description}</small></span></div></div>
     <div className="browser-debug-form">
+      <TargetEditor definition={definition} custom={customTarget} onCustom={onCustomTarget} windows={windows} tabs={tabs} windowID={windowID} tabID={tabID} onWindow={onWindow} onTab={onTab} defaultTab={defaultTab} defaultWindow={defaultWindow} />
       <DynamicFields parameters={parameters} values={params} onChange={onParamChange} browserTargets={{ windows, tabs }} />
       <Field label="超时 (ms)"><Input type="number" min="1000" value={timeoutMS} onChange={(event) => onTimeoutChange(event.target.value)} /></Field>
     </div>
@@ -238,19 +239,37 @@ function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onT
 function TargetEditor({ definition, custom, onCustom, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow }) {
   if (definition.target_mode === "none") return null;
   const isTab = definition.target_mode === "tab_required";
-  const value = custom ? (isTab ? tabID : windowID) : "none";
-  const changeTarget = (next) => {
-    if (next === "none") {
-      onCustom(false);
-      if (isTab) onTab(""); else onWindow("");
-      return;
-    }
-    onCustom(true);
-    if (isTab) onTab(next); else onWindow(next);
+  const value = isTab ? tabID : windowID;
+  const selectedOverrideTab = isTab ? tabs.find((item) => String(item.id) === String(tabID)) : null;
+  const inheritedWindow = defaultWindow ? `跟随全局目标 · 窗口 ${defaultWindow.id}${defaultWindow.focused ? " · 当前窗口" : ""}` : definition.target_mode === "window_required" ? "顶部尚未选择窗口" : "跟随全局目标 · 浏览器当前窗口";
+  const selectMode = (override) => {
+    onCustom(override);
+    if (!override) return;
+    if (isTab) onTab(String(defaultTab?.id || tabs[0]?.id || ""));
+    else onWindow(String(defaultWindow?.id || windows[0]?.id || ""));
   };
-  const inherited = isTab ? (defaultTab ? `无 · 顶部 #${defaultTab.id}` : "无 · 顶部未选择") : (defaultWindow ? `无 · 顶部窗口 ${defaultWindow.id}` : definition.target_mode === "window_required" ? "无 · 顶部未选择" : "无 · 当前窗口");
-  return <div className="browser-action-target"><span>{isTab ? "自定义标签页" : "自定义窗口"}</span><Select value={value || "none"} onValueChange={changeTarget}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{inherited}</SelectItem>{isTab ? tabs.map((item) => <SelectItem key={item.id} value={String(item.id)}>#{item.id} · 窗口 {item.window_id} · {item.title || item.url}</SelectItem>) : windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}</SelectItem>)}</SelectContent></Select></div>;
+  return <section className="browser-action-target" data-custom={custom}>
+    <div className="browser-action-target-main">
+      <div className="browser-action-target-copy"><span><LocateFixed size={14} /></span><div><strong>执行目标</strong>{!custom && isTab && defaultTab ? <TabTargetLabel tab={defaultTab} prefix="跟随全局" /> : <small>{custom ? `本次 Action 使用指定${isTab ? "标签页" : "窗口"}` : isTab ? "顶部尚未选择标签页" : inheritedWindow}</small>}</div></div>
+      {custom && <Select value={value || undefined} onValueChange={isTab ? onTab : onWindow}><SelectTrigger aria-label={`选择执行${isTab ? "标签页" : "窗口"}`} title={isTab ? tabTargetTooltip(selectedOverrideTab) : undefined}><SelectValue placeholder={`选择${isTab ? "标签页" : "窗口"}`}>{selectedOverrideTab ? <TabTargetLabel tab={selectedOverrideTab} /> : undefined}</SelectValue></SelectTrigger><SelectContent className="browser-action-target-select-content">{isTab ? tabs.map((item) => <SelectItem className="browser-action-target-option" key={item.id} value={String(item.id)} textValue={tabTargetText(item)}><TabTargetLabel tab={item} /></SelectItem>) : windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}{item.focused ? " · 当前" : ""}</SelectItem>)}</SelectContent></Select>}
+    </div>
+    <div className="browser-action-target-controls">
+      {custom && <Badge tone="warning" className="browser-action-target-override">已覆盖全局目标</Badge>}
+      <div className="browser-action-target-mode" role="group" aria-label="执行目标来源">
+        <button type="button" data-active={!custom} aria-pressed={!custom} onClick={() => selectMode(false)}>跟随全局</button>
+        <button type="button" data-active={custom} aria-pressed={custom} onClick={() => selectMode(true)}>单次覆盖</button>
+      </div>
+    </div>
+  </section>;
 }
+function TabTargetLabel({ tab, prefix = "" }) {
+  const title = tab?.title || tab?.url || "未命名标签页";
+  const windowID = tab?.window_id || tab?.window?.id;
+  const url = tab?.url && tab.url !== title ? tab.url : "";
+  return <span className="browser-tab-target-label" title={tabTargetTooltip(tab)}><span>{title}</span><small>{[prefix, `#${tab?.id ?? "-"}`, windowID ? `窗口 ${windowID}` : "", url].filter(Boolean).join(" · ")}</small></span>;
+}
+function tabTargetText(tab) { return [tab?.title, tab?.url, tab?.id ? `标签页 ${tab.id}` : "", tab?.window_id ? `窗口 ${tab.window_id}` : ""].filter(Boolean).join(" "); }
+function tabTargetTooltip(tab) { return tab ? [`标签页 #${tab.id}`, tab.title, tab.url].filter(Boolean).join("\n") : undefined; }
 function ResultPanel({ request, result, onClear }) {
   const [copied, setCopied] = useState("");
   const [activeTab, setActiveTab] = useState("preview");

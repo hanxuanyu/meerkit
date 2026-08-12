@@ -883,11 +883,15 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .dark .switch-thumb { background: #f4f4f5; }
 .dynamic-fields .field-label { color: var(--foreground); font-size: 11px; font-weight: 600; line-height: 1.35; }
 .dynamic-fields .field-control, .dynamic-fields .select-trigger, .dynamic-fields .input-with-suffix, .dynamic-fields .time-field { width: 100%; min-height: 36px; height: 36px; }
-.parameter-boolean-field { display: flex !important; min-height: 62px; align-items: center !important; justify-content: space-between; gap: 12px !important; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-subtle); }
+.parameter-boolean-field { display: flex !important; min-height: 62px; align-items: center !important; justify-content: space-between; gap: 12px !important; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--border) 88%, var(--foreground)); border-radius: 6px; background: var(--panel); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 7%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent); transition: border-color .18s ease, box-shadow .18s ease; }
+.parameter-boolean-field:hover { border-color: color-mix(in srgb, var(--muted) 42%, var(--border)); box-shadow: 0 2px 5px color-mix(in srgb, var(--foreground) 8%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent); }
+.parameter-boolean-field:has(.switch-control[data-state="checked"]) { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 9%, transparent), inset 3px 0 var(--primary); }
 .parameter-boolean-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .parameter-boolean-copy .field-label { white-space: nowrap; }
 .parameter-boolean-copy small { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 400; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .parameter-boolean-field .switch-control { margin-left: auto; }
+.dark .parameter-boolean-field { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.035); }
+.dark .parameter-boolean-field:hover { box-shadow: 0 2px 6px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.045); }
 .field-required { margin-left: 3px; color: #b91c1c; }
 .field-textarea { width: 100%; min-height: 96px; resize: vertical; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--foreground); background: var(--panel); font-size: 12px; line-height: 1.55; transition: border-color .18s ease, box-shadow .18s ease; }
 .field-textarea:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(113,113,122,.12); }
@@ -1987,10 +1991,37 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .browser-action-config .browser-debug-form { display: grid; align-content: start; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; overflow: auto; }
 .browser-action-config .browser-debug-form > .dynamic-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
 .browser-action-config .browser-debug-form > .browser-debug-field { width: min(180px, 100%); }
-.browser-action-target { display: flex; width: clamp(152px, 29%, 205px); min-width: 0; flex: none; align-items: center; gap: 6px; }
-.browser-action-target > span { flex: none; overflow: hidden; color: var(--muted); font-size: 8px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.browser-action-target .select-trigger { width: 100%; min-width: 0; height: 28px; min-height: 28px; padding-right: 7px; padding-left: 8px; font-size: 8px; }
-.browser-action-target .select-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-action-target { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--border) 88%, var(--foreground)); border-radius: 6px; background: var(--panel); box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 8%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent); }
+.browser-action-target[data-custom="true"] { border-color: color-mix(in srgb, #d97706 60%, var(--border)); background: var(--panel); box-shadow: 0 2px 6px color-mix(in srgb, #d97706 11%, transparent), inset 3px 0 #d97706; }
+.browser-action-target-main { display: flex; min-width: 0; flex: 1 1 300px; align-items: center; gap: 10px; }
+.browser-action-target-copy { display: flex; min-width: 0; flex: 1 1 240px; align-items: center; gap: 8px; }
+.browser-action-target[data-custom="true"] .browser-action-target-copy { min-width: 112px; flex: 0 0 112px; }
+.browser-action-target-copy > span { display: grid; width: 25px; height: 25px; flex: none; place-items: center; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; background: color-mix(in srgb, var(--panel) 92%, var(--foreground)); }
+.browser-action-target-copy > div { display: grid; min-width: 0; gap: 2px; }
+.browser-action-target-copy strong { font-size: 9px; font-weight: 650; }
+.browser-action-target-copy > div > small { color: var(--muted); font-size: 8px; line-height: 1.35; }
+.browser-action-target-controls { display: flex; min-width: 0; flex: none; align-items: center; gap: 7px; margin-left: auto; }
+.browser-action-target-override.badge { min-height: 20px; padding: 0 6px; font-size: 8px; letter-spacing: 0; white-space: nowrap; }
+.browser-action-target-mode { display: flex; height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+.browser-action-target-mode button { min-width: 62px; padding: 0 8px; border: 0; border-radius: 3px; color: var(--muted); background: transparent; font-size: 8px; font-weight: 600; }
+.browser-action-target-mode button:hover { color: var(--foreground); }
+.browser-action-target-mode button[data-active="true"] { color: var(--primary-foreground); background: var(--primary); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.browser-action-target-mode button:nth-child(2)[data-active="true"] { color: #78350f; background: #fef3c7; box-shadow: inset 0 0 0 1px #f59e0b; }
+.browser-action-target-mode button:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--ring-soft); }
+.browser-action-target-main > .select-root, .browser-action-target-main > button { min-width: 0; flex: 1 1 240px; }
+.browser-action-target .select-trigger { width: auto; min-width: 0; height: 42px; min-height: 42px; padding: 4px 7px 4px 8px; font-size: 8px; }
+.browser-action-target .select-trigger > span { display: block; min-width: 0; overflow: hidden; text-overflow: clip; white-space: normal; }
+.browser-tab-target-label { display: grid; min-width: 0; gap: 2px; color: var(--foreground); text-align: left; }
+.browser-tab-target-label > span { display: -webkit-box; min-width: 0; overflow: hidden; font-size: 9px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.browser-tab-target-label > small { display: block; min-width: 0; overflow: hidden; color: var(--muted); font: 7px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.browser-action-target-copy .browser-tab-target-label > span { font-size: 8px; font-weight: 500; }
+.browser-action-target-select-content { width: min(520px, calc(100vw - 24px)); min-width: var(--radix-select-trigger-width); }
+.browser-action-target-option { min-height: 42px; align-items: flex-start; padding-top: 6px; padding-bottom: 6px; }
+.browser-action-target-option > span:last-child { display: block; min-width: 0; flex: 1; }
+.browser-action-target-option .browser-tab-target-label > span { -webkit-line-clamp: 2; }
+.dark .browser-action-target { background: var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.035); }
+.dark .browser-action-target[data-custom="true"] { border-color: #92400e; background: var(--panel); box-shadow: 0 2px 7px rgba(0,0,0,.28), inset 3px 0 #f59e0b; }
+.dark .browser-action-target-mode button:nth-child(2)[data-active="true"] { color: #fef3c7; background: #78350f; box-shadow: inset 0 0 0 1px #d97706; }
 .browser-debug-panel-header { height: 48px; min-height: 48px; padding: 5px 10px; }
 .browser-debug-page .browser-debug-output .browser-debug-json { height: 100%; min-height: 0; max-height: none; }
 .browser-network-card { display: grid; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); border-right: 0; border-left: 0; }
@@ -2041,8 +2072,14 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
   .browser-target-toolbar, .browser-network-filters { grid-template-columns: minmax(0, 1fr); }
   .browser-target-toolbar .browser-debug-field { align-items: stretch; flex-direction: column; gap: 4px; }
   .browser-target-toolbar > .icon-button { justify-self: end; }
-  .browser-action-title { height: auto; min-height: 82px; align-items: stretch; flex-direction: column; }
-  .browser-action-target { width: 100%; min-width: 0; }
+  .browser-action-title { height: auto; min-height: 64px; }
+  .browser-action-target { align-items: stretch; flex-direction: column; }
+  .browser-action-target-main { align-items: stretch; flex-direction: column; }
+  .browser-action-target[data-custom="true"] .browser-action-target-copy { min-width: 0; flex-basis: auto; }
+  .browser-action-target-controls { width: 100%; justify-content: space-between; margin-left: 0; }
+  .browser-action-target-override.badge { align-self: center; }
+  .browser-action-target-mode, .browser-action-target .select-trigger { width: 100%; }
+  .browser-action-target-mode button { flex: 1; }
   .browser-action-config .browser-debug-form > .dynamic-fields { grid-template-columns: minmax(0, 1fr); }
   .browser-result-tabs > .tabs-list { overflow-x: auto; }
   .browser-result-tabs > .tabs-list .tabs-trigger { min-width: max-content; }

@@ -37,4 +37,4 @@ Cookie 和页面存储属于敏感能力，只作用于显式选择标签页的�
 
 完整页面截图等超过 512 KiB 的结果会自动拆成有界 `response_chunk`，并根据 WebSocket 发送缓冲区施加背压。结果超过 60 MiB 时只会终止当前请求，不会主动断开 Agent；超长页面应优先使用 WebP 或 JPEG 并降低图片质量。
 
-扩展图标由项目根目录执行 `go run ./browser-extension/tools/generate_icons.go` 生成。脚本从主应用高分辨率品牌图标派生角标版本，角标复用前端插件列表所使用的 Lucide `Package` 图标资源，并输出 Chrome Manifest 所需尺寸。提取资源位于 `assets/plugin-package.svg`，沿用 Lucide ISC 许可。
+扩展直接使用主应用的 2048×2048 品牌原图，不再生成缩放图或叠加角标。修改 `web/MeerKit.png` 后，可在项目根目录执行 `go run ./browser-extension/tools/generate_icons.go`，将原图原样同步到 `browser-extension/icons/meerkit.png`。

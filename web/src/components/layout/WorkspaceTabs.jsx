@@ -10,7 +10,7 @@ const tabDefinitions = {
   notifications: { title: "通知渠道", icon: Bell, closable: true },
   inbox: { title: "通知中心", icon: Inbox, closable: true },
   plugins: { title: "监控插件", icon: PackageOpen, closable: true },
-  browserDebug: { title: "浏览器", icon: Globe2, closable: true },
+  browserDebug: { title: "浏览器控制", icon: Globe2, closable: true },
   logs: { title: "日志", icon: ScrollText, closable: true },
   settings: { title: "系统设置", icon: Settings2, closable: true }
 };
