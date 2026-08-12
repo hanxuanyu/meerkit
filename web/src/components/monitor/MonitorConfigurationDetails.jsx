@@ -11,8 +11,8 @@ export function MonitorConfigurationDetails({ monitor, descriptor, channels = []
   const values = monitor?.module_config || {};
   const parameters = getParameters(descriptor || {}).filter((parameter) => isParameterVisible(parameter, values));
   return <div className="monitor-configuration-details">
-    <CompactSection title={`${descriptor?.name || monitor?.module_type?.toUpperCase() || "监控"} 参数`} count={parameters.length || Object.keys(values).length}>
-      <div className="monitor-compact-values">{parameters.length ? parameters.map((parameter) => <ParameterValue key={parameter.key} parameter={parameter} value={values[parameter.key]} values={values} />) : <FallbackParameters values={values} />}</div>
+    <CompactSection title={`${descriptor?.name || monitor?.module_type?.toUpperCase() || "监控"} 参数`} count={parameters.length}>
+      <div className="monitor-compact-values">{parameters.length ? parameters.map((parameter) => <ParameterValue key={parameter.key} parameter={parameter} value={values[parameter.key]} values={values} />) : <EmptyBadge>没有模块参数</EmptyBadge>}</div>
     </CompactSection>
     <ScheduleDetails schedules={monitor?.schedules || []} />
     <ConditionDetails conditionConfig={monitor?.condition_config || {}} descriptor={descriptor} />
@@ -38,11 +38,6 @@ function ParameterValue({ parameter, value, values }) {
   const optionLabel = type === "list" ? getParameterOptions(parameter, values).find((option) => String(option.value) === String(value))?.label : "";
   const display = type === "boolean" ? (value ? "是" : "否") : optionLabel || formatValue(value, parameter.unit);
   return <ValueBadge label={label} value={display} tone={type === "boolean" ? (value ? "success" : "muted") : "neutral"} mono={["json", "text"].includes(type) || parameter.format === "json"} numeric={["number", "integer", "duration"].includes(type)} />;
-}
-
-function FallbackParameters({ values }) {
-  const entries = Object.entries(values || {});
-  return entries.length ? entries.map(([key, value]) => <ParameterValue key={key} parameter={{ key, label: key, type: Array.isArray(value) ? "array" : typeof value === "object" ? "map" : typeof value }} value={value} values={values} />) : <EmptyBadge>没有模块参数</EmptyBadge>;
 }
 
 function ScheduleDetails({ schedules }) {

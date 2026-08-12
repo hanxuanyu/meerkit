@@ -54,6 +54,9 @@ type monitorServer struct{ provider Provider }
 
 func (s *monitorServer) ListModules(ctx context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 	modules, err := s.provider.ListModules()
+	if err == nil {
+		err = validateModuleDescriptors(modules)
+	}
 	return marshalResponse(response{Modules: modules}, err)
 }
 func (s *monitorServer) ValidateConfig(ctx context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {

@@ -44,7 +44,7 @@ A Provider may include multiple modules, but every runtime descriptor type and v
 - `Parameters` drives the management UI form and should declare types, defaults, constraints, options, and conditional visibility.
 - `ResultSets` drives result presentation, the condition editor, and the status board. Declare only operators a field truly supports.
 - Structured JSON can enable `Path`; large text or binary results should also expose hashes, lengths, or summaries.
-- `ConfigSchema` and `ResultSchema` provide structural constraints but do not replace UI capability descriptors.
+- `Parameters` are the only field source for dynamic forms and must match `ConfigSchema.properties`, including required declarations; `ResultSets` likewise define result UI capabilities.
 - `Execute` must honor `context.Context` deadlines and cancellation. Never log secrets, tokens, complete headers, or sensitive bodies.
 
 ## Test and run

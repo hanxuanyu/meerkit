@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { api } from "../lib/api";
-import { getDefaultValues, sanitizeValues } from "../lib/parameterSchema";
+import { findMissingRequiredParameters, getDefaultValues, sanitizeValues } from "../lib/parameterSchema";
 
 const icons = { "app-window": AppWindow, scan: Scan, "panels-top-left": PanelsTopLeft, "move-diagonal-2": MoveDiagonal2, x: X, "panel-top-open": PanelTopOpen, "mouse-pointer-2": MousePointer2, globe: Globe2, "refresh-cw": RefreshCw, "arrow-left": ArrowLeft, "arrow-right": ArrowRight, copy: Copy, "move-horizontal": MoveHorizontal, pin: Pin, "volume-x": VolumeX, group: Group, ungroup: Ungroup, "zoom-in": ZoomIn, "trash-2": Trash2, info: Info, timer: Timer, "move-vertical": MoveVertical, camera: Camera, "file-code-2": Code2, search: Search, "list-tree": ListTree, focus: Focus, "mouse-pointer-click": MousePointerClick, keyboard: Keyboard, "square-check-big": SquareCheckBig, "locate-fixed": LocateFixed, mouse: Mouse, cookie: Cookie, "cookie-off": Cookie, database: Database, "database-zap": Database, "database-x": Database, "database-backup": Database, "code-2": Code2 };
 
@@ -123,6 +123,11 @@ export function BrowserDebugPage() {
 
   const execute = async (confirmed = false) => {
     if (!definition) return;
+    const missing = findMissingRequiredParameters(definition.parameters || [], params);
+    if (missing.length) {
+      toast.error(`请填写必填参数：${missing.map((parameter) => parameter.label || parameter.key).join("、")}`, { id: "browser-action-required" });
+      return;
+    }
     if (definition.destructive && !confirmed) { setConfirmAction(true); return; }
     setConfirmAction(false);
     setRunning(true);

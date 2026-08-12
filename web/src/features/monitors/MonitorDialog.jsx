@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Bell, Check, LoaderCircle, PlayCircle, Plus, Radio } from "lucide-react";
-import { getDefaultValues, getParameters, sanitizeValues } from "../../lib/parameterSchema";
+import { findMissingRequiredParameters, getDefaultValues, getParameters, sanitizeValues } from "../../lib/parameterSchema";
 import { api } from "../../lib/api";
 import { Button } from "../../components/ui/Button";
 import { Checkbox } from "../../components/ui/Checkbox";
@@ -53,6 +53,9 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
 
   const submit = async (event) => {
     event.preventDefault();
+    if (!name.trim()) { onError("请输入监控名称"); return; }
+    const missing = findMissingRequiredParameters(parameters, config);
+    if (missing.length) { onError(`请填写必填参数：${missing.map((parameter) => parameter.label || parameter.key).join("、")}`); return; }
     setSaving(true);
     try {
       const normalizedSchedules = schedules.map((schedule) => schedule.trim());
@@ -69,6 +72,8 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
 
   const test = async () => {
     if (!onTest || testing || saving) return;
+    const missing = findMissingRequiredParameters(parameters, config);
+    if (missing.length) { onError(`请填写必填参数：${missing.map((parameter) => parameter.label || parameter.key).join("、")}`); return; }
     setTesting(true);
     try {
       await onTest({ module_type: moduleType, module_config: sanitizeValues(parameters, config) });
@@ -82,7 +87,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
       <DialogHeader>
         <div><span className="eyebrow">{isEditing ? "EDIT MONITOR" : isDuplicate ? "DUPLICATE MONITOR" : "NEW MONITOR"}</span><DialogTitle>{isEditing ? "编辑监控项" : isDuplicate ? "复制监控项" : "创建监控项"}</DialogTitle><DialogDescription>{isDuplicate ? "基于现有监控配置创建副本，可在保存前调整差异。" : "使用采集模块定期获取结果并评估触发条件。"}</DialogDescription></div>
       </DialogHeader>
-      <form onSubmit={submit}>
+      <form noValidate onSubmit={submit}>
         <div className="modal-body">
           <div className="form-grid">
             <label className="field"><Label>名称</Label><Input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：生产 API 响应" /></label>

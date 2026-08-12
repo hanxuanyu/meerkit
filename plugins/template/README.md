@@ -44,7 +44,7 @@ func main() {
 - `Parameters` 驱动管理界面的动态表单，应声明类型、默认值、约束、选项和条件显示规则。
 - `ResultSets` 驱动结果展示、条件编辑器和状态看板，应只声明字段实际支持的操作符。
 - 结构化 JSON 字段可启用 `Path`；大文本或二进制结果应同时提供哈希、长度或摘要字段。
-- `ConfigSchema` 与 `ResultSchema` 提供结构约束，但不能替代用于界面能力的参数和结果描述器。
+- `Parameters` 是动态表单的唯一字段来源，必须与 `ConfigSchema.properties` 逐项对应且必填声明一致；`ResultSets` 同理负责结果界面能力。
 - `Execute` 必须尊重 `context.Context` 的截止时间和取消信号，并避免记录密钥、Token、完整请求头或敏感正文。
 
 ## 测试与运行

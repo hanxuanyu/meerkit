@@ -68,8 +68,8 @@ func main() {
 
 参数类型包括 `string`、`text`、`list`、`map`、`boolean`、`integer`、`number`、`url`、`json` 和 `duration`。可以声明必填、默认值、范围、步长、固定选项、条件选项、显示/启用条件、敏感标记、格式和单位。
 
-::: warning Schema 不能替代描述器
-当前动态表单和结果 UI 主要消费 `Parameters` 与 `ResultSets`。只提供 JSON Schema 会得到不完整的编辑和展示能力。
+::: warning 参数描述器必须完整
+动态表单只消费 `Parameters`，不会从 `ConfigSchema` 推导控件。`ConfigSchema.properties` 与 `Parameters` 必须逐项对应，必填声明也必须一致；插件返回不一致的描述器时，SDK 会拒绝 `ListModules`。
 :::
 
 ## 配置校验
