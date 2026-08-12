@@ -23,7 +23,6 @@ import (
 const (
 	ProtocolVersion        = 1
 	ExtensionWebSocketPath = "/api/v1/browser/extension/ws"
-	maxActions             = 64
 	maxNetworkCaptures     = 32
 	// Large action results use response chunks. Individual frames stay bounded
 	// while the assembled response has its own aggregate limit below.
@@ -31,6 +30,8 @@ const (
 	maxChunkedResponseBytes = 64 << 20
 	maxResponseChunks       = 128
 	maxAgentCapabilities    = 128
+	maxSelectorQueries      = 16
+	maxSelectorCandidates   = 200
 )
 
 type AgentInfo struct {
@@ -303,6 +304,7 @@ func (m *Manager) sendCommand(ctx context.Context, agentID, command string, requ
 }
 
 func (m *Manager) ExecuteAction(ctx context.Context, request sdk.BrowserActionRequest) (sdk.BrowserActionResult, error) {
+	request = normalizeBrowserActionRequest(request)
 	if err := ValidateBrowserActionRequest(request); err != nil {
 		return sdk.BrowserActionResult{}, err
 	}
@@ -322,6 +324,43 @@ func (m *Manager) Targets(ctx context.Context, agentID string) (sdk.BrowserTarge
 	var result sdk.BrowserTargets
 	err := m.sendCommand(ctx, agentID, "browser.targets", sdk.BrowserTarget{AgentID: agentID}, &result)
 	return result, err
+}
+
+func (m *Manager) SelectorCandidates(ctx context.Context, request sdk.BrowserSelectorCandidatesRequest) (sdk.BrowserSelectorCandidates, error) {
+	if err := ValidateBrowserSelectorCandidatesRequest(request); err != nil {
+		return sdk.BrowserSelectorCandidates{}, err
+	}
+	agent := m.selectAgent(request.Target.AgentID)
+	if agent == nil {
+		return sdk.BrowserSelectorCandidates{}, errors.New("browser extension is not connected")
+	}
+	if !agent.supportsCapability("browser.selector_candidates") {
+		return sdk.BrowserSelectorCandidates{}, fmt.Errorf("browser agent %q does not support selector candidates", agent.info.ID)
+	}
+	var result sdk.BrowserSelectorCandidates
+	err := m.sendCommand(ctx, request.Target.AgentID, "browser.selector_candidates", request, &result)
+	return result, err
+}
+
+func ValidateBrowserSelectorCandidatesRequest(request sdk.BrowserSelectorCandidatesRequest) error {
+	if request.Target.TabID <= 0 {
+		return errors.New("selector candidates require tab_id")
+	}
+	if request.Target.WindowID < 0 {
+		return errors.New("selector candidates window_id is invalid")
+	}
+	if len(request.Queries) == 0 || len(request.Queries) > maxSelectorQueries {
+		return fmt.Errorf("selector candidate query count must be between 1 and %d", maxSelectorQueries)
+	}
+	for _, query := range request.Queries {
+		if length := len(strings.TrimSpace(query)); length == 0 || length > 4096 {
+			return errors.New("selector candidate query must be between 1 and 4096 characters")
+		}
+	}
+	if request.Limit < 0 || request.Limit > maxSelectorCandidates {
+		return fmt.Errorf("selector candidate limit must be between 0 and %d", maxSelectorCandidates)
+	}
+	return nil
 }
 
 func (m *Manager) StartNetworkCapture(ctx context.Context, request sdk.BrowserNetworkStartRequest) (sdk.BrowserNetworkSession, error) {

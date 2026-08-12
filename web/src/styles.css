@@ -923,6 +923,22 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .map-editor-row .icon-button { width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; }
 .map-editor-empty { display: grid; min-height: 56px; place-items: center; border: 1px dashed color-mix(in srgb, var(--muted) 55%, var(--border)); border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; }
 .field-map { grid-column: 1 / -1; }
+.css-selector-field { position: relative; }
+.css-selector-popover { width: min(560px, calc(100vw - 24px)); min-width: min(var(--radix-popover-anchor-width), calc(100vw - 24px)); padding: 0; overflow: hidden; }
+.css-selector-popover-head { display: flex; min-height: 34px; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 5px 3px 10px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel-subtle); font-size: 9px; }
+.css-selector-popover-head .icon-button { width: 26px; min-width: 26px; height: 26px; min-height: 26px; }
+.css-selector-options { max-height: min(330px, 48vh); overflow: auto; background: var(--panel); }
+.css-selector-options > button { display: grid; width: 100%; min-width: 0; grid-template-columns: minmax(150px, .85fr) minmax(180px, 1.15fr); align-items: center; gap: 12px; padding: 8px 10px; color: var(--foreground); border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; }
+.css-selector-options > button:last-child { border-bottom: 0; }
+.css-selector-options > button:hover, .css-selector-options > button[data-active="true"] { background: color-mix(in srgb, #dbeafe 48%, var(--panel)); }
+.css-selector-options code { min-width: 0; overflow: hidden; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.css-selector-options button > span { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.css-selector-options strong { flex: none; color: var(--muted); font: 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+.css-selector-options small { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.css-selector-options em { flex: none; color: #b45309; font-size: 8px; font-style: normal; }
+.css-selector-state { display: flex; min-height: 72px; align-items: center; justify-content: center; gap: 7px; padding: 12px; color: var(--muted); font-size: 10px; }
+.css-selector-state.is-error { color: #b91c1c; }
+.dark .css-selector-options > button:hover, .dark .css-selector-options > button[data-active="true"] { background: color-mix(in srgb, #1d4ed8 24%, var(--panel)); }
 .dark .field-required, .dark .field-error { color: #fca5a5 !important; }
 
 .schedule-list { display: grid; gap: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: transparent; }
@@ -1993,6 +2009,7 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .browser-action-config .browser-debug-form > .browser-debug-field { width: min(180px, 100%); }
 .browser-action-target { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--border) 88%, var(--foreground)); border-radius: 6px; background: var(--panel); box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 8%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent); }
 .browser-action-target[data-custom="true"] { border-color: color-mix(in srgb, #d97706 60%, var(--border)); background: var(--panel); box-shadow: 0 2px 6px color-mix(in srgb, #d97706 11%, transparent), inset 3px 0 #d97706; }
+.browser-action-target[data-invalid="true"] { border-color: color-mix(in srgb, #d97706 72%, var(--border)); box-shadow: inset 3px 0 #d97706; }
 .browser-action-target-main { display: flex; min-width: 0; flex: 1 1 300px; align-items: center; gap: 10px; }
 .browser-action-target-copy { display: flex; min-width: 0; flex: 1 1 240px; align-items: center; gap: 8px; }
 .browser-action-target[data-custom="true"] .browser-action-target-copy { min-width: 112px; flex: 0 0 112px; }
@@ -2002,6 +2019,7 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .browser-action-target-copy > div > small { color: var(--muted); font-size: 8px; line-height: 1.35; }
 .browser-action-target-controls { display: flex; min-width: 0; flex: none; align-items: center; gap: 7px; margin-left: auto; }
 .browser-action-target-override.badge { min-height: 20px; padding: 0 6px; font-size: 8px; letter-spacing: 0; white-space: nowrap; }
+.browser-action-target-warning.badge { display: inline-flex; min-height: 20px; align-items: center; gap: 4px; padding: 0 6px; font-size: 8px; letter-spacing: 0; white-space: nowrap; }
 .browser-action-target-mode { display: flex; height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
 .browser-action-target-mode button { min-width: 62px; padding: 0 8px; border: 0; border-radius: 3px; color: var(--muted); background: transparent; font-size: 8px; font-weight: 600; }
 .browser-action-target-mode button:hover { color: var(--foreground); }

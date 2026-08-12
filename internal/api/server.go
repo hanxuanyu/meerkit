@@ -123,6 +123,7 @@ func (a *APIServer) Router() http.Handler {
 	api.GET("/browser/actions", a.getBrowserActions)
 	api.POST("/browser/pairing-token/rotate", a.rotateBrowserPairingToken)
 	api.POST("/browser/action", a.browserAction)
+	api.POST("/browser/selector-candidates", a.browserSelectorCandidates)
 	api.POST("/browser/network-captures", a.startBrowserCapture)
 	api.POST("/browser/network-captures/:id/stop", a.stopBrowserCapture)
 

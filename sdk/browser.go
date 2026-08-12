@@ -50,6 +50,27 @@ type BrowserTargets struct {
 	Windows []BrowserWindow `json:"windows,omitempty"`
 }
 
+type BrowserSelectorCandidatesRequest struct {
+	Target  BrowserTarget `json:"target"`
+	Queries []string      `json:"queries"`
+	Limit   int           `json:"limit,omitempty"`
+}
+
+type BrowserSelectorCandidate struct {
+	Selector   string            `json:"selector"`
+	TagName    string            `json:"tag_name"`
+	Text       string            `json:"text,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	Visible    bool              `json:"visible,omitempty"`
+	Unique     bool              `json:"unique,omitempty"`
+}
+
+type BrowserSelectorCandidates struct {
+	Items     []BrowserSelectorCandidate `json:"items"`
+	Total     int                        `json:"total"`
+	Truncated bool                       `json:"truncated,omitempty"`
+}
+
 type BrowserWindow struct {
 	ID      int          `json:"id"`
 	Focused bool         `json:"focused,omitempty"`

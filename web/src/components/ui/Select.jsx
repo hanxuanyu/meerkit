@@ -3,7 +3,12 @@ import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "../../lib/utils";
 
-export const Select = SelectPrimitive.Root;
+export function Select(props) {
+  const normalizedProps = Object.prototype.hasOwnProperty.call(props, "value")
+    ? { ...props, value: props.value ?? "" }
+    : props;
+  return <SelectPrimitive.Root {...normalizedProps} />;
+}
 export const SelectGroup = SelectPrimitive.Group;
 export const SelectValue = SelectPrimitive.Value;
 

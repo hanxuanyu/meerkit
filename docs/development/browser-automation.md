@@ -63,7 +63,7 @@ Meerkit 主进程
 
 | 方向 | 类型 | 命令/用途 |
 | --- | --- | --- |
-| 宿主到扩展 | `command` | `browser.targets`、`browser.action`、`browser.network.start`、`browser.network.stop` |
+| 宿主到扩展 | `command` | `browser.targets`、`browser.selector_candidates`、`browser.action`、`browser.network.start`、`browser.network.stop` |
 | 扩展到宿主 | `response` | 使用相同 `id` 返回较小的 payload 或 error |
 | 扩展到宿主 | `response_chunk` | 使用相同 `id`、`sequence`、`total` 和 `chunk` 顺序返回大结果 |
 | 扩展到宿主 | `event` | `browser.targets.changed`、`browser.network`、`browser.network.status` |
@@ -73,18 +73,20 @@ Meerkit 主进程
 
 完整页面截图等大结果不会作为一个超大 WebSocket frame 发送。扩展将超过 512 KiB 的序列化响应拆为有序 `response_chunk`，并在浏览器发送缓冲区超过 4 MiB 时等待背压释放；宿主按请求 ID 重组。单 frame 最大 8 MiB，重组结果最大 64 MiB、最多 128 块；扩展主动把结果限制为 60 MiB。超过上限时只终止当前请求，并提示改用 WebP/JPEG，不会断开整个 Agent。
 
+Agent 握手最多接受 128 个 capability。该值用于限制不受信任的握手元数据大小，不是 Action Catalog 的数量上限；新增 Action 不需要调整它，只有扩展实际声明的 capability 总数接近该边界时才需要重新评估。
+
 ## 目标与原子 Action
 
 Action Catalog 的注册表位于 `internal/browser/actions.go`，具体定义按 Action 文件维护，并通过 `GET /api/v1/browser/actions` 提供给前端。参数直接使用监控模块和通知渠道共用的 `sdk.ParameterDescriptor`，支持默认值、范围、选项、单位、全宽、显隐和启用条件；前端统一交给 `DynamicFields` 渲染。后端先校验 Action，再检查 Agent 声明的 capability，扩展仍需校验 Chrome 中的真实目标状态。
 
-Action Catalog 当前包含 46 个原子能力：
+Action Catalog 当前包含 56 个原子能力：
 
 | 分类 | Action | 目标 | 结果重点 |
 | --- | --- | --- | --- |
 | 窗口 | `window.open/focus/state/resize/close` | 无目标或必选窗口 | 窗口、尺寸、状态或关闭结果 |
-| 标签页 | 创建、激活、导航、刷新、历史、复制、移动、固定、静音、分组、缩放、关闭 | 可选窗口或必选标签页 | 更新后的标签页目标或状态 |
-| 页面 | `page.info/wait/scroll/screenshot` | 必选标签页 | 页面指标、等待/滚动状态或图片数据 |
-| DOM | 文档、单项/多项查询、聚焦、点击、填写、选中、下拉和滚动到元素 | 必选标签页 | HTML、元素信息或操作状态 |
+| 标签页 | 创建、激活、导航、刷新、历史、复制、移动、固定、静音、卸载策略、语言检测、分组、缩放、关闭 | 可选窗口或必选标签页 | 更新后的标签页目标或状态 |
+| 页面 | `page.info/wait/scroll/stop_loading/performance/screenshot` | 必选标签页 | 页面指标、等待/滚动状态、性能或图片数据 |
+| DOM | 文档、单项/多项查询、焦点、点击、填写、选中、下拉、提交、属性、事件和滚动到元素 | 必选标签页 | HTML、元素信息或操作状态 |
 | 输入 | `input.click/hover/type/key/wheel` | 必选标签页 | CDP 真实输入坐标和执行状态 |
 | 认证态 | `cookie.*`、`storage.*` | 必选标签页 | 当前 URL 的 Cookie 或 Web Storage 数据 |
 | 运行时 | `runtime.evaluate` | 必选标签页 | 可 JSON 序列化的表达式结果 |
@@ -93,7 +95,13 @@ Action Catalog 当前包含 46 个原子能力：
 
 Action 参数可以使用 `browser_window` 和 `browser_tab` 类型声明运行时目标 ID。浏览器调试页会使用当前 Agent 返回的目标列表渲染下拉框，并在请求中仍以数字 ID 写入原参数键；该 UI 类型不会改变扩展命令或 Action 参数结构。没有浏览器目标上下文的通用参数表单会退化为数字输入。
 
-Cookie 与 Storage Action 标记 `sensitive`，写入、删除和清空同时标记 `destructive`。管理前端只对 destructive Action 二次确认；监控插件通过 SDK 调用时不引入交互确认。敏感值不进入宿主日志或持久化，调试结果只保留在浏览器页面内存。
+CSS Selector 参数使用 `css_selector` 类型。未配置 `selector_candidates` 时，它与普通字符串输入行为一致；配置后，输入框聚焦会通过 `POST /browser/selector-candidates` 从当前目标标签页读取候选，仍允许手动输入。配置包含 `queries` 和可选 `limit`，宿主最多接受 16 条查询、返回上限 200；扩展默认返回 50 条，并只暴露生成的 selector、标签名、短文本、白名单属性、可见性和唯一性，不返回候选元素 HTML。目标切换会清空前端候选缓存。
+
+扩展生成 selector 时依次尝试唯一 ID、`data-testid/data-test/data-qa/name/aria-label`、类名组合和带 `:nth-of-type` 的结构路径。自动候选只扫描顶层文档，不穿透 iframe 或 shadow root；这些边界内的元素仍需由后续专门能力处理。
+
+Cookie 与 Storage Action 标记 `sensitive`，写入、删除和清空同时标记 `destructive`。`runtime.evaluate` 可以读取或修改页面运行时状态，因此同时标记 `sensitive` 和 `destructive`。管理前端只对 destructive Action 二次确认；监控插件通过 SDK 调用时不引入交互确认。敏感值不进入宿主日志或持久化，调试结果只保留在浏览器页面内存。
+
+宿主在校验并发送 Action 前统一补齐 Catalog 中声明的默认参数，确保管理前端、HTTP 和 SDK 调用省略参数时语义一致。例如 `tab.pin` 未提供 `pinned` 时默认为 `true`，显式传入 `false` 则取消固定。
 
 新增 Action 时需要：
 

@@ -11,8 +11,8 @@ import (
 
 func TestActionCatalogExcludesNetworkCapture(t *testing.T) {
 	catalog := BrowserActionCatalog()
-	if len(catalog.Actions) != 46 {
-		t.Fatalf("action catalog count = %d, want 46", len(catalog.Actions))
+	if len(catalog.Actions) != 56 {
+		t.Fatalf("action catalog count = %d, want 56", len(catalog.Actions))
 	}
 	seen := make(map[string]struct{}, len(catalog.Actions))
 	for _, action := range catalog.Actions {
@@ -89,15 +89,72 @@ func TestActionCatalogSensitiveAndDestructiveMetadata(t *testing.T) {
 	for _, action := range BrowserActionCatalog().Actions {
 		actions[action.Type] = action
 	}
-	for _, actionType := range []string{"cookie.list", "cookie.set", "cookie.delete", "cookie.clear", "storage.get", "storage.set", "storage.remove", "storage.clear"} {
+	for _, actionType := range []string{"cookie.list", "cookie.set", "cookie.delete", "cookie.clear", "storage.get", "storage.set", "storage.remove", "storage.clear", "runtime.evaluate"} {
 		if !actions[actionType].Sensitive {
 			t.Fatalf("action %s must be sensitive", actionType)
 		}
 	}
-	for _, actionType := range []string{"window.close", "tab.close", "cookie.set", "cookie.delete", "cookie.clear", "storage.set", "storage.remove", "storage.clear"} {
+	for _, actionType := range []string{"window.close", "tab.close", "cookie.set", "cookie.delete", "cookie.clear", "storage.set", "storage.remove", "storage.clear", "runtime.evaluate"} {
 		if !actions[actionType].Destructive {
 			t.Fatalf("action %s must be destructive", actionType)
 		}
+	}
+}
+
+func TestNormalizeBrowserActionRequestAppliesCatalogDefaults(t *testing.T) {
+	tests := []struct {
+		actionType string
+		key        string
+		want       any
+	}{
+		{actionType: "tab.pin", key: "pinned", want: true},
+		{actionType: "tab.mute", key: "muted", want: true},
+		{actionType: "dom.check", key: "checked", want: true},
+		{actionType: "tab.auto_discardable", key: "auto_discardable", want: true},
+		{actionType: "dom.dispatch_event", key: "event", want: "change"},
+	}
+	for _, test := range tests {
+		t.Run(test.actionType, func(t *testing.T) {
+			request := normalizeBrowserActionRequest(sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: test.actionType}})
+			if got := request.Action.Params[test.key]; got != test.want {
+				t.Fatalf("default %s = %#v, want %#v", test.key, got, test.want)
+			}
+		})
+	}
+
+	request := normalizeBrowserActionRequest(sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: "tab.pin", Params: map[string]any{"pinned": false}}})
+	if request.Action.Params["pinned"] != false {
+		t.Fatal("explicit false must not be replaced by the catalog default")
+	}
+
+	selectorWait := normalizeBrowserActionRequest(sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: "page.wait", Params: map[string]any{"selector": "main"}}})
+	if selectorWait.Action.Params["mode"] != "selector" {
+		t.Fatalf("selector-only wait mode = %#v, want selector", selectorWait.Action.Params["mode"])
+	}
+	durationWait := normalizeBrowserActionRequest(sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: "page.wait", Params: map[string]any{"duration_ms": 250}}})
+	if durationWait.Action.Params["mode"] != "duration" {
+		t.Fatalf("duration-only wait mode = %#v, want duration", durationWait.Action.Params["mode"])
+	}
+}
+
+func TestValidateExpandedBrowserActions(t *testing.T) {
+	valid := []sdk.BrowserActionRequest{
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "tab.discard"}},
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "page.performance"}},
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "page.wait", Params: map[string]any{"mode": "visible", "selector": "main"}}},
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "page.wait", Params: map[string]any{"mode": "title", "value": "Meerkit"}}},
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "dom.set_attribute", Params: map[string]any{"selector": "main", "name": "data-state", "value": "ready"}}},
+		{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "dom.dispatch_event", Params: map[string]any{"selector": "input", "event": "change"}}},
+	}
+	for _, request := range valid {
+		if err := ValidateBrowserActionRequest(request); err != nil {
+			t.Fatalf("ValidateBrowserActionRequest(%s): %v", request.Action.Type, err)
+		}
+	}
+
+	invalid := sdk.BrowserActionRequest{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "dom.dispatch_event", Params: map[string]any{"selector": "input", "event": "click"}}}
+	if err := ValidateBrowserActionRequest(invalid); err == nil || !strings.Contains(err.Error(), "event") {
+		t.Fatalf("invalid event error = %v", err)
 	}
 }
 
@@ -116,6 +173,60 @@ func TestActionCatalogBrowserTargetParameterTypes(t *testing.T) {
 		}
 	}
 	t.Fatal("tab.move destination_window_id parameter was not found")
+}
+
+func TestActionCatalogCSSSelectorParameters(t *testing.T) {
+	configured := map[string]bool{
+		"dom.click": true, "dom.input": true, "dom.check": true, "dom.select": true,
+		"dom.submit": true, "input.click": true, "input.hover": true, "input.type": true,
+	}
+	foundConfigured := make(map[string]bool, len(configured))
+	for _, action := range BrowserActionCatalog().Actions {
+		for _, parameter := range action.Parameters {
+			if parameter.Key != "selector" {
+				continue
+			}
+			if parameter.Type != sdk.ParameterCSSSelector {
+				t.Fatalf("action %s selector type = %q, want %q", action.Type, parameter.Type, sdk.ParameterCSSSelector)
+			}
+			if configured[action.Type] {
+				if parameter.SelectorCandidates == nil || len(parameter.SelectorCandidates.Queries) == 0 {
+					t.Fatalf("action %s must configure selector candidates", action.Type)
+				}
+				foundConfigured[action.Type] = true
+			} else if parameter.SelectorCandidates != nil {
+				t.Fatalf("action %s unexpectedly configures selector candidates", action.Type)
+			}
+		}
+	}
+	for actionType := range configured {
+		if !foundConfigured[actionType] {
+			t.Fatalf("action %s configured selector parameter was not found", actionType)
+		}
+	}
+}
+
+func TestValidateBrowserSelectorCandidatesRequest(t *testing.T) {
+	valid := sdk.BrowserSelectorCandidatesRequest{Target: sdk.BrowserTarget{TabID: 3}, Queries: []string{"button", "a[href]"}, Limit: 50}
+	if err := ValidateBrowserSelectorCandidatesRequest(valid); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		request sdk.BrowserSelectorCandidatesRequest
+	}{
+		{name: "missing tab", request: sdk.BrowserSelectorCandidatesRequest{Queries: []string{"button"}}},
+		{name: "missing queries", request: sdk.BrowserSelectorCandidatesRequest{Target: sdk.BrowserTarget{TabID: 3}}},
+		{name: "empty query", request: sdk.BrowserSelectorCandidatesRequest{Target: sdk.BrowserTarget{TabID: 3}, Queries: []string{" "}}},
+		{name: "limit too large", request: sdk.BrowserSelectorCandidatesRequest{Target: sdk.BrowserTarget{TabID: 3}, Queries: []string{"button"}, Limit: 201}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateBrowserSelectorCandidatesRequest(test.request); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
 }
 
 func TestBuildActionSpecMapRejectsDuplicateTypes(t *testing.T) {

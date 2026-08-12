@@ -172,6 +172,7 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 | GET | `/browser/targets?agent_id=...` | 查询 Agent 的窗口、标签页和分组 |
 | GET | `/browser/actions` | 获取后端 Action Catalog |
 | POST | `/browser/action` | 执行一个原子 Action |
+| POST | `/browser/selector-candidates` | 从目标标签页读取有界 CSS Selector 候选 |
 | POST | `/browser/network-captures` | 启动独立网络捕获会话 |
 | POST | `/browser/network-captures/:id/stop` | 停止捕获并返回缓存事件 |
 | GET WebSocket | `/browser/debug/ws` | 调试页目标变化、网络事件和捕获状态 |
@@ -227,6 +228,12 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 ```
 
 `timeout_ms` 默认 60 秒，最小 1 秒、最大 5 分钟。`tab.open` 只能携带可选 `window_id`；`window_required` Action 必须携带 `window_id`，`tab_required` Action 必须携带 `tab_id`。Catalog 同时返回 `sensitive` 和 `destructive` 元数据；成功响应包含 `id`、`type`、`success`、`target`、`duration_ms` 和 Action 特定的 `data`。
+
+服务端会在校验和发送前补齐 Catalog 参数的默认值。`tab.pin`、`tab.mute`、`dom.check` 等状态 Action 使用布尔参数表达正反向操作：省略时采用 Catalog 默认值，显式传入 `false` 可取消固定、取消静音或取消选中，不需要单独的反向 Action。
+
+Selector 候选请求包含 `target`、`queries` 和可选 `limit`。`target.tab_id` 必填；`queries` 为 1 到 16 条 CSS 查询，单条最长 4096 字符；`limit` 省略时为 50，最大 200。响应为 `{items,total,truncated}`，其中每个候选只包含 `selector`、`tag_name`、短文本、白名单属性、`visible` 和 `unique`。该端点用于参数编辑辅助，不执行 Action，也不会加入 Action Catalog。
+
+`page.wait` 支持页面加载、固定时长、元素出现/可见/隐藏，以及页面正文、URL 或标题包含指定文本。`dom.query` 除文本、HTML 和属性外，还返回适用控件的 `value`、`checked`、`disabled`，以及元素可见性和边界矩形。
 
 `page.screenshot` 支持 `png`、`jpeg` 和 `webp`，完整页面通过 `full_page: true` 开启。图片位于 `data.data_url`，并返回 `format`、`full_page` 和估算的 `size_bytes`。扩展 WebSocket 会自动分块传输大结果，HTTP API 对调用方仍返回一个完整 JSON 响应；结果超过 60 MiB 时当前请求失败。
 

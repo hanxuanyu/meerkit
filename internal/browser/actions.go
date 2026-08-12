@@ -80,6 +80,31 @@ func ValidateBrowserActionRequest(request sdk.BrowserActionRequest) error {
 	return nil
 }
 
+func normalizeBrowserActionRequest(request sdk.BrowserActionRequest) sdk.BrowserActionRequest {
+	spec, ok := actionSpecs[request.Action.Type]
+	if !ok {
+		return request
+	}
+	params := make(map[string]any, len(request.Action.Params)+len(spec.definition.Parameters))
+	for key, value := range request.Action.Params {
+		params[key] = value
+	}
+	if request.Action.Type == "page.wait" && stringParam(params, "mode") == "" {
+		if stringParam(params, "selector") != "" {
+			params["mode"] = "selector"
+		} else if _, exists := params["duration_ms"]; exists {
+			params["mode"] = "duration"
+		}
+	}
+	for _, parameter := range spec.definition.Parameters {
+		if _, exists := params[parameter.Key]; !exists && parameter.Default != nil {
+			params[parameter.Key] = parameter.Default
+		}
+	}
+	request.Action.Params = params
+	return request
+}
+
 func actionCapability(actionType string) string {
 	if spec, ok := actionSpecs[actionType]; ok {
 		return spec.definition.Capability
@@ -106,12 +131,17 @@ func buildActionSpecs() map[string]actionSpec {
 		tabMoveAction(),
 		tabPinAction(),
 		tabMuteAction(),
+		tabDiscardAction(),
+		tabAutoDiscardableAction(),
+		tabDetectLanguageAction(),
 		tabUngroupAction(),
 		tabZoomAction(),
 		pageWaitAction(),
 		pageScreenshotAction(),
 		pageInfoAction(),
 		pageScrollAction(),
+		pageStopLoadingAction(),
+		pagePerformanceAction(),
 		domDocumentAction(),
 		domQueryAction(),
 		domQueryAllAction(),
@@ -121,6 +151,11 @@ func buildActionSpecs() map[string]actionSpec {
 		domCheckAction(),
 		domSelectAction(),
 		domScrollIntoViewAction(),
+		domBlurAction(),
+		domSubmitAction(),
+		domSetAttributeAction(),
+		domRemoveAttributeAction(),
+		domDispatchEventAction(),
 		inputClickAction(),
 		inputHoverAction(),
 		inputTypeAction(),
@@ -195,15 +230,20 @@ func validatePageWait(params map[string]any) error {
 	switch mode {
 	case "load":
 		return nil
-	case "selector":
+	case "selector", "visible", "hidden":
 		if err := validateSelector(params); err != nil {
+			return err
+		}
+		return validateNumberRange(params, "timeout_ms", 100, 300000, true)
+	case "text", "url", "title":
+		if err := validateRequiredString(params, "value", 4096); err != nil {
 			return err
 		}
 		return validateNumberRange(params, "timeout_ms", 100, 300000, true)
 	case "duration":
 		return validateNumberRange(params, "duration_ms", 0, 300000, false)
 	default:
-		return errors.New("mode must be load, selector, or duration")
+		return errors.New("mode must be load, selector, visible, hidden, text, url, title, or duration")
 	}
 }
 
@@ -272,6 +312,29 @@ func validateDOMSelect(params map[string]any) error {
 		return err
 	}
 	return validateRequiredString(params, "value", 1048576)
+}
+
+func validateDOMAttribute(params map[string]any, requireValue bool) error {
+	if err := validateSelector(params); err != nil {
+		return err
+	}
+	if err := validateRequiredString(params, "name", 256); err != nil {
+		return err
+	}
+	if requireValue && len(stringParamRaw(params, "value")) > 1048576 {
+		return errors.New("value cannot exceed 1048576 characters")
+	}
+	return nil
+}
+
+func validateDOMDispatchEvent(params map[string]any) error {
+	if err := validateSelector(params); err != nil {
+		return err
+	}
+	if err := validateChoice(params, "event", true, "input", "change", "blur", "focus", "submit", "reset"); err != nil {
+		return err
+	}
+	return validateOptionalBooleans(params, "bubbles", "cancelable")
 }
 
 func validateDOMScrollIntoView(params map[string]any) error {
@@ -456,11 +519,31 @@ func numberParam(params map[string]any, key string) (float64, bool) {
 }
 
 func selectorParameters() []sdk.ParameterDescriptor {
-	return genericSelectorParameters("点击页面中第一个匹配元素。")
+	return interactiveSelectorParameters("点击页面中第一个匹配元素。")
+}
+
+func interactiveSelectorParameters(description string) []sdk.ParameterDescriptor {
+	return []sdk.ParameterDescriptor{selectorParameter(description, interactiveSelectorCandidates())}
 }
 
 func genericSelectorParameters(description string) []sdk.ParameterDescriptor {
-	return []sdk.ParameterDescriptor{{Key: "selector", Label: "CSS Selector", Description: description, Type: sdk.ParameterString, Required: true, Placeholder: "#app, button[type=submit]", FullWidth: true}}
+	return []sdk.ParameterDescriptor{selectorParameter(description, nil)}
+}
+
+func selectorParameter(description string, candidates *sdk.SelectorCandidateDescriptor) sdk.ParameterDescriptor {
+	return sdk.ParameterDescriptor{Key: "selector", Label: "CSS Selector", Description: description, Type: sdk.ParameterCSSSelector, Required: true, Placeholder: "#app, button[type=submit]", FullWidth: true, SelectorCandidates: candidates}
+}
+
+func selectorCandidates(limit int, queries ...string) *sdk.SelectorCandidateDescriptor {
+	return &sdk.SelectorCandidateDescriptor{Queries: queries, Limit: limit}
+}
+
+func interactiveSelectorCandidates() *sdk.SelectorCandidateDescriptor {
+	return selectorCandidates(60, "button", "a[href]", "input:not([type=hidden])", "select", "textarea", "[role=button]", "[role=link]", "[tabindex]:not([tabindex='-1'])")
+}
+
+func editableSelectorCandidates() *sdk.SelectorCandidateDescriptor {
+	return selectorCandidates(60, "input:not([type=hidden])", "textarea", "select", "[contenteditable='true']")
 }
 
 func options(values ...string) []sdk.ParameterOption {
@@ -574,9 +657,9 @@ func categoryOrder(category string) int {
 func actionOrder(actionType string) int {
 	for index, value := range []string{
 		"window.open", "window.focus", "window.state", "window.resize", "window.close",
-		"tab.open", "tab.activate", "tab.navigate", "tab.reload", "tab.back", "tab.forward", "tab.duplicate", "tab.move", "tab.pin", "tab.mute", "tab.group", "tab.ungroup", "tab.zoom", "tab.close",
-		"page.info", "page.wait", "page.scroll", "page.screenshot",
-		"dom.document", "dom.query", "dom.query_all", "dom.focus", "dom.click", "dom.input", "dom.check", "dom.select", "dom.scroll_into_view",
+		"tab.open", "tab.activate", "tab.navigate", "tab.reload", "tab.back", "tab.forward", "tab.duplicate", "tab.move", "tab.pin", "tab.mute", "tab.discard", "tab.auto_discardable", "tab.detect_language", "tab.group", "tab.ungroup", "tab.zoom", "tab.close",
+		"page.info", "page.wait", "page.scroll", "page.stop_loading", "page.performance", "page.screenshot",
+		"dom.document", "dom.query", "dom.query_all", "dom.focus", "dom.blur", "dom.click", "dom.input", "dom.check", "dom.select", "dom.submit", "dom.set_attribute", "dom.remove_attribute", "dom.dispatch_event", "dom.scroll_into_view",
 		"input.click", "input.hover", "input.type", "input.key", "input.wheel",
 		"cookie.list", "cookie.set", "cookie.delete", "cookie.clear",
 		"storage.get", "storage.set", "storage.remove", "storage.clear",

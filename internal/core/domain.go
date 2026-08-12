@@ -40,21 +40,27 @@ type ResultSetDescriptor struct {
 type ParameterType string
 
 const (
-	ParameterString   ParameterType = "string"
-	ParameterText     ParameterType = "text"
-	ParameterList     ParameterType = "list"
-	ParameterMap      ParameterType = "map"
-	ParameterBoolean  ParameterType = "boolean"
-	ParameterInteger  ParameterType = "integer"
-	ParameterNumber   ParameterType = "number"
-	ParameterURL      ParameterType = "url"
-	ParameterEmail    ParameterType = "email"
-	ParameterJSON     ParameterType = "json"
-	ParameterDate     ParameterType = "date"
-	ParameterTime     ParameterType = "time"
-	ParameterDateTime ParameterType = "datetime"
-	ParameterDuration ParameterType = "duration"
+	ParameterString      ParameterType = "string"
+	ParameterText        ParameterType = "text"
+	ParameterList        ParameterType = "list"
+	ParameterMap         ParameterType = "map"
+	ParameterBoolean     ParameterType = "boolean"
+	ParameterInteger     ParameterType = "integer"
+	ParameterNumber      ParameterType = "number"
+	ParameterURL         ParameterType = "url"
+	ParameterEmail       ParameterType = "email"
+	ParameterJSON        ParameterType = "json"
+	ParameterDate        ParameterType = "date"
+	ParameterTime        ParameterType = "time"
+	ParameterDateTime    ParameterType = "datetime"
+	ParameterDuration    ParameterType = "duration"
+	ParameterCSSSelector ParameterType = "css_selector"
 )
+
+type SelectorCandidateDescriptor struct {
+	Queries []string `json:"queries"`
+	Limit   int      `json:"limit,omitempty"`
+}
 
 type ParameterOption struct {
 	Value string `json:"value"`
@@ -73,26 +79,27 @@ type ParameterCondition struct {
 }
 
 type ParameterDescriptor struct {
-	Key         string               `json:"key"`
-	Label       string               `json:"label"`
-	Description string               `json:"description,omitempty"`
-	Type        ParameterType        `json:"type"`
-	Order       int                  `json:"order,omitempty"`
-	FullWidth   bool                 `json:"full_width,omitempty"`
-	Required    bool                 `json:"required,omitempty"`
-	Default     any                  `json:"default,omitempty"`
-	Placeholder string               `json:"placeholder,omitempty"`
-	Secret      bool                 `json:"secret,omitempty"`
-	Options     []ParameterOption    `json:"options,omitempty"`
-	OptionsWhen []ParameterOptionSet `json:"options_when,omitempty"`
-	VisibleWhen []ParameterCondition `json:"visible_when,omitempty"`
-	EnabledWhen []ParameterCondition `json:"enabled_when,omitempty"`
-	Minimum     *float64             `json:"minimum,omitempty"`
-	Maximum     *float64             `json:"maximum,omitempty"`
-	Step        *float64             `json:"step,omitempty"`
-	Rows        int                  `json:"rows,omitempty"`
-	Format      string               `json:"format,omitempty"`
-	Unit        string               `json:"unit,omitempty"`
+	Key                string                       `json:"key"`
+	Label              string                       `json:"label"`
+	Description        string                       `json:"description,omitempty"`
+	Type               ParameterType                `json:"type"`
+	Order              int                          `json:"order,omitempty"`
+	FullWidth          bool                         `json:"full_width,omitempty"`
+	Required           bool                         `json:"required,omitempty"`
+	Default            any                          `json:"default,omitempty"`
+	Placeholder        string                       `json:"placeholder,omitempty"`
+	Secret             bool                         `json:"secret,omitempty"`
+	Options            []ParameterOption            `json:"options,omitempty"`
+	OptionsWhen        []ParameterOptionSet         `json:"options_when,omitempty"`
+	VisibleWhen        []ParameterCondition         `json:"visible_when,omitempty"`
+	EnabledWhen        []ParameterCondition         `json:"enabled_when,omitempty"`
+	Minimum            *float64                     `json:"minimum,omitempty"`
+	Maximum            *float64                     `json:"maximum,omitempty"`
+	Step               *float64                     `json:"step,omitempty"`
+	Rows               int                          `json:"rows,omitempty"`
+	Format             string                       `json:"format,omitempty"`
+	Unit               string                       `json:"unit,omitempty"`
+	SelectorCandidates *SelectorCandidateDescriptor `json:"selector_candidates,omitempty"`
 }
 
 type ModuleListSummaryDescriptor struct {

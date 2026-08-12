@@ -60,29 +60,36 @@ const (
 	ParameterDuration      ParameterType = "duration"
 	ParameterBrowserWindow ParameterType = "browser_window"
 	ParameterBrowserTab    ParameterType = "browser_tab"
+	ParameterCSSSelector   ParameterType = "css_selector"
 )
 
+type SelectorCandidateDescriptor struct {
+	Queries []string `json:"queries"`
+	Limit   int      `json:"limit,omitempty"`
+}
+
 type ParameterDescriptor struct {
-	Key         string               `json:"key"`
-	Label       string               `json:"label"`
-	Description string               `json:"description,omitempty"`
-	Type        ParameterType        `json:"type"`
-	Order       int                  `json:"order,omitempty"`
-	FullWidth   bool                 `json:"full_width,omitempty"`
-	Required    bool                 `json:"required,omitempty"`
-	Default     any                  `json:"default,omitempty"`
-	Placeholder string               `json:"placeholder,omitempty"`
-	Secret      bool                 `json:"secret,omitempty"`
-	Options     []ParameterOption    `json:"options,omitempty"`
-	OptionsWhen []ParameterOptionSet `json:"options_when,omitempty"`
-	VisibleWhen []ParameterCondition `json:"visible_when,omitempty"`
-	EnabledWhen []ParameterCondition `json:"enabled_when,omitempty"`
-	Minimum     *float64             `json:"minimum,omitempty"`
-	Maximum     *float64             `json:"maximum,omitempty"`
-	Step        *float64             `json:"step,omitempty"`
-	Rows        int                  `json:"rows,omitempty"`
-	Format      string               `json:"format,omitempty"`
-	Unit        string               `json:"unit,omitempty"`
+	Key                string                       `json:"key"`
+	Label              string                       `json:"label"`
+	Description        string                       `json:"description,omitempty"`
+	Type               ParameterType                `json:"type"`
+	Order              int                          `json:"order,omitempty"`
+	FullWidth          bool                         `json:"full_width,omitempty"`
+	Required           bool                         `json:"required,omitempty"`
+	Default            any                          `json:"default,omitempty"`
+	Placeholder        string                       `json:"placeholder,omitempty"`
+	Secret             bool                         `json:"secret,omitempty"`
+	Options            []ParameterOption            `json:"options,omitempty"`
+	OptionsWhen        []ParameterOptionSet         `json:"options_when,omitempty"`
+	VisibleWhen        []ParameterCondition         `json:"visible_when,omitempty"`
+	EnabledWhen        []ParameterCondition         `json:"enabled_when,omitempty"`
+	Minimum            *float64                     `json:"minimum,omitempty"`
+	Maximum            *float64                     `json:"maximum,omitempty"`
+	Step               *float64                     `json:"step,omitempty"`
+	Rows               int                          `json:"rows,omitempty"`
+	Format             string                       `json:"format,omitempty"`
+	Unit               string                       `json:"unit,omitempty"`
+	SelectorCandidates *SelectorCandidateDescriptor `json:"selector_candidates,omitempty"`
 }
 
 type ModuleListSummaryDescriptor struct {

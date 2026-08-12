@@ -8,13 +8,13 @@ const DEFAULT_SETTINGS = {
 };
 const CAPABILITIES = [
   "window.open", "window.focus", "window.state", "window.resize", "window.close",
-  "tab.open", "tab.activate", "tab.navigate", "tab.reload", "tab.back", "tab.forward", "tab.duplicate", "tab.move", "tab.pin", "tab.mute", "tab.group", "tab.ungroup", "tab.zoom", "tab.close",
-  "page.info", "page.wait", "page.scroll", "page.screenshot",
-  "dom.document", "dom.query", "dom.query_all", "dom.focus", "dom.click", "dom.input", "dom.check", "dom.select", "dom.scroll_into_view",
+  "tab.open", "tab.activate", "tab.navigate", "tab.reload", "tab.back", "tab.forward", "tab.duplicate", "tab.move", "tab.pin", "tab.mute", "tab.discard", "tab.auto_discardable", "tab.detect_language", "tab.group", "tab.ungroup", "tab.zoom", "tab.close",
+  "page.info", "page.wait", "page.scroll", "page.stop_loading", "page.performance", "page.screenshot",
+  "dom.document", "dom.query", "dom.query_all", "dom.focus", "dom.blur", "dom.click", "dom.input", "dom.check", "dom.select", "dom.submit", "dom.set_attribute", "dom.remove_attribute", "dom.dispatch_event", "dom.scroll_into_view",
   "input.click", "input.hover", "input.type", "input.key", "input.wheel",
   "cookie.list", "cookie.set", "cookie.delete", "cookie.clear",
   "storage.get", "storage.set", "storage.remove", "storage.clear",
-  "runtime.evaluate", "network.start", "network.stop", "browser.targets"
+  "runtime.evaluate", "network.start", "network.stop", "browser.targets", "browser.selector_candidates"
 ];
 const RESPONSE_CHUNK_SIZE = 512 * 1024;
 const MAX_RESPONSE_SIZE = 60 * 1024 * 1024;
@@ -255,10 +255,22 @@ function isHighSurrogate(value) { return value >= 0xD800 && value <= 0xDBFF; }
 
 async function executeCommand(command, request) {
   if (command === "browser.targets") return listTargets();
+  if (command === "browser.selector_candidates") return selectorCandidates(request);
   if (command === "browser.action") return executeSingleAction(request);
   if (command === "browser.network.start") return startNetworkSession(request);
   if (command === "browser.network.stop") return stopNetworkSession(request);
   throw new Error(`Unsupported browser command: ${command}`);
+}
+
+async function selectorCandidates(request) {
+  const tabId = positiveInteger(request.target?.tab_id);
+  if (!tabId) throw new Error("Selector candidates require tab_id.");
+  const tab = await chrome.tabs.get(tabId);
+  if (request.target?.window_id && tab.windowId !== request.target.window_id) throw new Error("Selected tab does not belong to the selected window.");
+  const queries = Array.isArray(request.queries) ? request.queries.map((value) => String(value).trim()).filter(Boolean) : [];
+  if (!queries.length || queries.length > 16 || queries.some((query) => query.length > 4096)) throw new Error("Between 1 and 16 valid selector candidate queries are required.");
+  const limit = clamp(Number(request.limit) || 50, 1, 200);
+  return runInTab(tabId, collectSelectorCandidates, [queries, limit]);
 }
 
 async function executeSingleAction(request) {
@@ -397,22 +409,37 @@ async function executeAction(state, action, _captureRules, deadline) {
     }
     case "tab.pin":
       requireTab(state);
-      return tabInfo(await chrome.tabs.update(state.tabId, { pinned: Boolean(params.pinned) }));
+      return tabInfo(await chrome.tabs.update(state.tabId, { pinned: params.pinned !== false }));
     case "tab.mute":
       requireTab(state);
-      return tabInfo(await chrome.tabs.update(state.tabId, { muted: Boolean(params.muted) }));
+      return tabInfo(await chrome.tabs.update(state.tabId, { muted: params.muted !== false }));
+    case "tab.discard": {
+      requireTab(state);
+      const tab = await chrome.tabs.discard(state.tabId);
+      if (!tab) throw new Error("Chrome did not discard the tab.");
+      return tabInfo(tab);
+    }
+    case "tab.auto_discardable":
+      requireTab(state);
+      return tabInfo(await chrome.tabs.update(state.tabId, { autoDiscardable: params.auto_discardable !== false }));
+    case "tab.detect_language":
+      requireTab(state);
+      return { tab_id: state.tabId, language: await chrome.tabs.detectLanguage(state.tabId) };
     case "tab.group": {
       requireTab(state);
       const title = String(params.title || "Meerkit");
       const current = await chrome.tabs.get(state.tabId);
       if (current.groupId != null && current.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
         const currentGroup = await chrome.tabGroups.get(current.groupId).catch(() => null);
-        if (currentGroup?.title === title) return { group_id: currentGroup.id, reused: true };
+        if (currentGroup?.title === title) {
+          const group = await chrome.tabGroups.update(currentGroup.id, { title, color: validGroupColor(params.color), collapsed: Boolean(params.collapsed) });
+          return { ...groupInfo(group || currentGroup), reused: true };
+        }
       }
-      const existing = params.reuse_group ? await findTabGroup(current.windowId, title) : null;
+      const existing = params.reuse_group !== false ? await findTabGroup(current.windowId, title) : null;
       const groupId = await chrome.tabs.group({ tabIds: [state.tabId], ...(existing ? { groupId: existing.id } : {}) });
-      await chrome.tabGroups.update(groupId, { title: String(params.title || "Meerkit"), color: validGroupColor(params.color), collapsed: Boolean(params.collapsed) });
-      return { group_id: groupId, reused: Boolean(existing) };
+      const group = await chrome.tabGroups.update(groupId, { title, color: validGroupColor(params.color), collapsed: Boolean(params.collapsed) });
+      return { ...groupInfo(group || { id: groupId, title, color: validGroupColor(params.color), collapsed: Boolean(params.collapsed), windowId: current.windowId }), reused: Boolean(existing) };
     }
     case "tab.ungroup":
       requireTab(state);
@@ -435,7 +462,8 @@ async function executeAction(state, action, _captureRules, deadline) {
     case "page.wait": {
       requireTab(state);
       const mode = params.mode || (params.selector ? "selector" : params.duration_ms != null ? "duration" : "load");
-      if (mode === "selector") await waitForSelector(state.tabId, String(params.selector || ""), clamp(Number(params.timeout_ms) || remaining(deadline), 100, remaining(deadline)));
+      if (["selector", "visible", "hidden"].includes(mode)) await waitForPageCondition(state.tabId, mode, requiredSelector(params.selector), clamp(Number(params.timeout_ms) || remaining(deadline), 100, remaining(deadline)));
+      else if (["text", "url", "title"].includes(mode)) await waitForPageCondition(state.tabId, mode, String(params.value || ""), clamp(Number(params.timeout_ms) || remaining(deadline), 100, remaining(deadline)));
       else if (mode === "duration") await sleep(clamp(Number(params.duration_ms), 0, remaining(deadline)));
       else await waitForTab(state.tabId, deadline);
       return { ready: true, mode };
@@ -443,6 +471,12 @@ async function executeAction(state, action, _captureRules, deadline) {
     case "page.scroll":
       requireTab(state);
       return runInTab(state.tabId, scrollPage, [params.mode || "relative", Number(params.x) || 0, Number(params.y) || 0, params.behavior === "smooth" ? "smooth" : "auto"]);
+    case "page.stop_loading":
+      requireTab(state);
+      return withDebugger(state.tabId, async (target) => { await chrome.debugger.sendCommand(target, "Page.stopLoading"); return { tab_id: state.tabId, stopped: true }; });
+    case "page.performance":
+      requireTab(state);
+      return runInTab(state.tabId, performanceSnapshot, []);
     case "page.screenshot": {
       requireTab(state);
       const format = ["jpeg", "webp"].includes(params.format) ? params.format : "png";
@@ -467,18 +501,33 @@ async function executeAction(state, action, _captureRules, deadline) {
     case "dom.focus":
       requireTab(state);
       return runInTab(state.tabId, focusElement, [requiredSelector(params.selector)]);
+    case "dom.blur":
+      requireTab(state);
+      return runInTab(state.tabId, blurElement, [requiredSelector(params.selector)]);
     case "dom.click":
       requireTab(state);
       return runInTab(state.tabId, clickElement, [requiredSelector(params.selector)]);
     case "dom.input":
       requireTab(state);
-      return runInTab(state.tabId, inputElement, [requiredSelector(params.selector), String(params.value ?? "")]);
+      return runInMainTab(state.tabId, inputElement, [requiredSelector(params.selector), String(params.value ?? "")]);
     case "dom.check":
       requireTab(state);
-      return runInTab(state.tabId, checkElement, [requiredSelector(params.selector), Boolean(params.checked)]);
+      return runInMainTab(state.tabId, checkElement, [requiredSelector(params.selector), params.checked !== false]);
     case "dom.select":
       requireTab(state);
-      return runInTab(state.tabId, selectElement, [requiredSelector(params.selector), String(params.value ?? "")]);
+      return runInMainTab(state.tabId, selectElement, [requiredSelector(params.selector), String(params.value ?? "")]);
+    case "dom.submit":
+      requireTab(state);
+      return runInTab(state.tabId, submitForm, [requiredSelector(params.selector)]);
+    case "dom.set_attribute":
+      requireTab(state);
+      return runInTab(state.tabId, setElementAttribute, [requiredSelector(params.selector), String(params.name), String(params.value ?? "")]);
+    case "dom.remove_attribute":
+      requireTab(state);
+      return runInTab(state.tabId, removeElementAttribute, [requiredSelector(params.selector), String(params.name)]);
+    case "dom.dispatch_event":
+      requireTab(state);
+      return runInTab(state.tabId, dispatchElementEvent, [requiredSelector(params.selector), validDOMEvent(params.event), params.bubbles !== false, params.cancelable !== false]);
     case "dom.scroll_into_view":
       requireTab(state);
       return runInTab(state.tabId, scrollElementIntoView, [requiredSelector(params.selector), params.block || "center", params.inline || "nearest", params.behavior === "smooth" ? "smooth" : "auto"]);
@@ -544,7 +593,7 @@ async function executeAction(state, action, _captureRules, deadline) {
       requireTab(state);
       const expression = String(params.expression || "");
       if (!expression || expression.length > 100000) throw new Error("A JavaScript expression between 1 and 100000 characters is required.");
-      return runInMainWorld(state.tabId, evaluateExpression, [expression]);
+      return { value: await runInMainTab(state.tabId, evaluateExpression, [expression]) };
     }
     default:
       throw new Error(`Unsupported browser action: ${action.type}`);
@@ -561,9 +610,9 @@ async function runInTab(tabId, func, args) {
   return results[0]?.result ?? {};
 }
 
-async function runInMainWorld(tabId, func, args) {
+async function runInMainTab(tabId, func, args) {
   const results = await chrome.scripting.executeScript({ target: { tabId }, func, args, world: "MAIN" });
-  return { value: results[0]?.result ?? null };
+  return results[0]?.result ?? {};
 }
 
 function documentSnapshot(maxLength) {
@@ -577,7 +626,9 @@ function queryElement(selector, maxLength) {
   const attributes = Object.fromEntries(Array.from(element.attributes || []).map((item) => [item.name, item.value]));
   const text = (element.innerText || element.textContent || "").trim();
   const html = element.outerHTML || "";
-  return { url: location.href, title: document.title, selector, tag_name: element.tagName.toLowerCase(), text: text.slice(0, maxLength), html: html.slice(0, maxLength), attributes, truncated: text.length > maxLength || html.length > maxLength };
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  return { url: location.href, title: document.title, selector, tag_name: element.tagName.toLowerCase(), text: text.slice(0, maxLength), html: html.slice(0, maxLength), attributes, value: "value" in element ? String(element.value ?? "").slice(0, maxLength) : undefined, checked: "checked" in element ? Boolean(element.checked) : undefined, disabled: "disabled" in element ? Boolean(element.disabled) : undefined, visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none", bounding_rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left }, truncated: text.length > maxLength || html.length > maxLength || ("value" in element && String(element.value ?? "").length > maxLength) };
 }
 
 function queryElements(selector, limit, maxLength) {
@@ -589,10 +640,124 @@ function queryElements(selector, limit, maxLength) {
   }), truncated: matches.length > limit };
 }
 
+function collectSelectorCandidates(queries, limit) {
+  const escapeIdentifier = (value) => {
+    if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
+    const source = String(value);
+    return Array.from(source).map((character, index) => {
+      if (/\d/.test(character) && (index === 0 || (index === 1 && source[0] === "-"))) return `\\${character.codePointAt(0).toString(16)} `;
+      return /[a-zA-Z0-9_-]/.test(character) ? character : `\\${character.codePointAt(0).toString(16)} `;
+    }).join("");
+  };
+  const escapeString = (value) => String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\n\r\f]/g, " ");
+  const isUnique = (selector, element) => {
+    try {
+      const selectorMatches = document.querySelectorAll(selector);
+      return selectorMatches.length === 1 && selectorMatches[0] === element;
+    } catch {
+      return false;
+    }
+  };
+  const buildSelector = (element) => {
+    const tag = element.tagName.toLowerCase();
+    if (element.id) {
+      const selector = `#${escapeIdentifier(element.id)}`;
+      if (isUnique(selector, element)) return selector;
+    }
+    for (const name of ["data-testid", "data-test", "data-qa", "name", "aria-label"]) {
+      const value = element.getAttribute?.(name);
+      if (!value) continue;
+      const selector = `${tag}[${name}="${escapeString(value)}"]`;
+      if (isUnique(selector, element)) return selector;
+    }
+    const classNames = Array.from(element.classList || []).filter((value) => value && value.length <= 80).slice(0, 3);
+    if (classNames.length) {
+      const selector = `${tag}${classNames.map((value) => `.${escapeIdentifier(value)}`).join("")}`;
+      if (isUnique(selector, element)) return selector;
+    }
+    const path = [];
+    let current = element;
+    while (current && current.nodeType === 1 && path.length < 64) {
+      const currentTag = current.tagName.toLowerCase();
+      if (current.id) {
+        path.unshift(`#${escapeIdentifier(current.id)}`);
+      } else {
+        let segment = currentTag;
+        const siblings = current.parentElement ? Array.from(current.parentElement.children).filter((item) => item.tagName === current.tagName) : [];
+        if (siblings.length > 1) segment += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        path.unshift(segment);
+      }
+      const selector = path.join(" > ");
+      if (isUnique(selector, element)) return selector;
+      if (selector.length > 4000) break;
+      current = current.parentElement;
+    }
+    return path.join(" > ") || tag;
+  };
+  const scanLimit = Math.max(limit + 1, Math.min(1000, limit * 10));
+  const seen = new Set();
+  const matches = [];
+  let visited = 0;
+  let scanTruncated = false;
+
+  for (const query of queries) {
+    let elements;
+    try {
+      elements = document.querySelectorAll(query);
+    } catch {
+      throw new Error(`Invalid selector candidate query: ${query}`);
+    }
+    for (const element of elements) {
+      visited++;
+      if (visited > 1000) {
+        scanTruncated = true;
+        break;
+      }
+      if (seen.has(element)) continue;
+      seen.add(element);
+      if (matches.length < limit) matches.push(element);
+      if (seen.size >= scanLimit) {
+        scanTruncated = true;
+        break;
+      }
+    }
+    if (scanTruncated) break;
+  }
+
+  const items = matches.map((element) => {
+    const selector = buildSelector(element);
+    const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    const attributes = {};
+    for (const name of ["id", "name", "type", "role", "aria-label", "placeholder", "data-testid", "data-test", "data-qa"]) {
+      const value = element.getAttribute?.(name);
+      if (value) attributes[name] = String(value).slice(0, 160);
+    }
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      selector,
+      tag_name: element.tagName.toLowerCase(),
+      text,
+      attributes,
+      visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none",
+      unique: isUnique(selector, element)
+    };
+  });
+  return { items, total: seen.size, truncated: scanTruncated || seen.size > limit };
+}
+
 function pageInformation() {
   const root = document.documentElement;
   const body = document.body;
   return { url: location.href, title: document.title, ready_state: document.readyState, viewport: { width: innerWidth, height: innerHeight, device_pixel_ratio: devicePixelRatio }, document: { width: Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0), height: Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0) }, scroll: { x: scrollX, y: scrollY } };
+}
+
+function performanceSnapshot() {
+  const navigation = performance.getEntriesByType("navigation")[0];
+  const paints = Object.fromEntries(performance.getEntriesByType("paint").map((entry) => [entry.name.replaceAll("-", "_"), Math.round(entry.startTime * 100) / 100]));
+  const resources = performance.getEntriesByType("resource");
+  const timing = navigation ? { type: navigation.type, start_time: navigation.startTime, duration: navigation.duration, dom_interactive: navigation.domInteractive, dom_content_loaded: navigation.domContentLoadedEventEnd, load_event_end: navigation.loadEventEnd, response_start: navigation.responseStart, response_end: navigation.responseEnd, transfer_size: navigation.transferSize, encoded_body_size: navigation.encodedBodySize, decoded_body_size: navigation.decodedBodySize } : {};
+  return { url: location.href, time_origin: performance.timeOrigin, navigation: timing, paints, resources: { count: resources.length, transfer_size: resources.reduce((sum, entry) => sum + (entry.transferSize || 0), 0), encoded_body_size: resources.reduce((sum, entry) => sum + (entry.encodedBodySize || 0), 0), decoded_body_size: resources.reduce((sum, entry) => sum + (entry.decodedBodySize || 0), 0) } };
 }
 
 function scrollPage(mode, x, y, behavior) {
@@ -611,6 +776,13 @@ function focusElement(selector) {
   return { selector, focused: document.activeElement === element };
 }
 
+function blurElement(selector) {
+  const element = document.querySelector(selector);
+  if (!(element instanceof HTMLElement)) throw new Error(`Selector is not a focusable element: ${selector}`);
+  element.blur();
+  return { selector, focused: document.activeElement === element };
+}
+
 function checkElement(selector, checked) {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLInputElement) || !["checkbox", "radio"].includes(element.type)) throw new Error(`Selector is not a checkbox or radio: ${selector}`);
@@ -625,10 +797,42 @@ function selectElement(selector, value) {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLSelectElement)) throw new Error(`Selector is not a select: ${selector}`);
   if (!Array.from(element.options).some((option) => option.value === value)) throw new Error(`Select option was not found: ${value}`);
-  setNativeControlValue(element, value, HTMLSelectElement.prototype);
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+  if (!setter) throw new Error("The select control does not expose a native value setter.");
+  setter.call(element, value);
   element.dispatchEvent(new Event("input", { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   return { selector, value: element.value };
+}
+
+function submitForm(selector) {
+  const element = document.querySelector(selector);
+  const form = element instanceof HTMLFormElement ? element : element?.form;
+  if (!(form instanceof HTMLFormElement)) throw new Error(`Selector is not a form or form control: ${selector}`);
+  form.requestSubmit();
+  return { selector, submitted: true };
+}
+
+function setElementAttribute(selector, name, value) {
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`Selector not found: ${selector}`);
+  element.setAttribute(name, value);
+  return { selector, name, value: element.getAttribute(name) };
+}
+
+function removeElementAttribute(selector, name) {
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`Selector not found: ${selector}`);
+  const existed = element.hasAttribute(name);
+  element.removeAttribute(name);
+  return { selector, name, removed: existed };
+}
+
+function dispatchElementEvent(selector, eventName, bubbles, cancelable) {
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`Selector not found: ${selector}`);
+  const accepted = element.dispatchEvent(new Event(eventName, { bubbles, cancelable }));
+  return { selector, event: eventName, bubbles, cancelable, default_prevented: !accepted };
 }
 
 function scrollElementIntoView(selector, block, inline, behavior) {
@@ -703,20 +907,21 @@ function inputElement(selector, value) {
   const element = document.querySelector(selector);
   if (!element) throw new Error(`Selector not found: ${selector}`);
   element.focus();
-  if (element instanceof HTMLInputElement) setNativeControlValue(element, value, HTMLInputElement.prototype);
-  else if (element instanceof HTMLTextAreaElement) setNativeControlValue(element, value, HTMLTextAreaElement.prototype);
-  else if (element instanceof HTMLSelectElement) setNativeControlValue(element, value, HTMLSelectElement.prototype);
+  const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype
+    : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+      : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype
+        : null;
+  if (prototype) {
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (!setter) throw new Error("The input control does not expose a native value setter.");
+    setter.call(element, value);
+  }
   else if (element instanceof HTMLElement && element.isContentEditable) element.textContent = value;
   else throw new Error(`Selector is not an input control: ${selector}`);
   element.dispatchEvent(new Event("input", { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
-  return { selector, updated: true };
-}
-
-function setNativeControlValue(element, value, prototype) {
-  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  if (!setter) throw new Error("The input control does not expose a native value setter.");
-  setter.call(element, value);
+  const actualValue = element instanceof HTMLElement && element.isContentEditable ? element.textContent || "" : String(element.value ?? "");
+  return { selector, value: actualValue, focused: document.activeElement === element, updated: actualValue === value };
 }
 
 function evaluateExpression(expression) {
@@ -740,15 +945,28 @@ async function waitForTab(tabId, deadline) {
   });
 }
 
-async function waitForSelector(tabId, selector, timeoutMS) {
+async function waitForPageCondition(tabId, mode, expected, timeoutMS) {
   const interval = 150;
   const started = Date.now();
   while (Date.now() - started < timeoutMS) {
-    const result = await runInTab(tabId, (value) => Boolean(document.querySelector(value)), [selector]);
+    const result = await runInTab(tabId, pageConditionMatches, [mode, expected]);
     if (result) return;
     await sleep(interval);
   }
-  throw new Error(`Selector wait timed out: ${selector}`);
+  throw new Error(`Page condition wait timed out: ${mode}`);
+}
+
+function pageConditionMatches(mode, expected) {
+  if (mode === "text") return String(document.body?.innerText || "").includes(expected);
+  if (mode === "url") return location.href.includes(expected);
+  if (mode === "title") return document.title.includes(expected);
+  const element = document.querySelector(expected);
+  if (mode === "selector") return Boolean(element);
+  if (!element) return mode === "hidden";
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  const visible = rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  return mode === "visible" ? visible : !visible;
 }
 
 async function acquireDebugger(tabId) {
@@ -981,9 +1199,10 @@ function normalizeTiming(timing) {
 }
 
 function tabInfo(tab) {
-  return { tab_id: tab.id, window_id: tab.windowId, index: tab.index ?? 0, url: tab.url || "", title: tab.title || "", status: tab.status || "", active: Boolean(tab.active), pinned: Boolean(tab.pinned), muted: Boolean(tab.mutedInfo?.muted) };
+  return { tab_id: tab.id, window_id: tab.windowId, index: tab.index ?? 0, url: tab.url || "", title: tab.title || "", status: tab.status || "", active: Boolean(tab.active), pinned: Boolean(tab.pinned), muted: Boolean(tab.mutedInfo?.muted), audible: Boolean(tab.audible), discarded: Boolean(tab.discarded), auto_discardable: tab.autoDiscardable !== false };
 }
 function windowInfo(window) { return { window_id: window.id, focused: Boolean(window.focused), type: window.type || "normal", state: window.state || "normal", left: window.left, top: window.top, width: window.width, height: window.height, tabs: (window.tabs || []).map(tabInfo) }; }
+function groupInfo(group) { return { group_id: group.id, window_id: group.windowId, title: group.title || "", color: group.color || "grey", collapsed: Boolean(group.collapsed) }; }
 function requireTab(state) { if (!state.tabId) throw new Error("This browser action requires tab_id."); }
 function requireWindow(state) { if (!state.windowId) throw new Error("This browser action requires window_id."); }
 function requiredSelector(value) { const selector = String(value || ""); if (!selector || selector.length > 4096) throw new Error("A selector between 1 and 4096 characters is required."); return selector; }
@@ -992,6 +1211,7 @@ function validGroupColor(value) { return ["grey", "blue", "red", "yellow", "gree
 function validWindowState(value) { return ["normal", "minimized", "maximized", "fullscreen"].includes(value) ? value : "normal"; }
 function validSameSite(value) { return ["no_restriction", "lax", "strict"].includes(value) ? value : ""; }
 function validStorageArea(value) { return value === "session" ? "session" : "local"; }
+function validDOMEvent(value) { const event = String(value || ""); if (!["input", "change", "blur", "focus", "submit", "reset"].includes(event)) throw new Error("Unsupported DOM event."); return event; }
 function parseModifiers(value) { const flags = { alt: 1, control: 2, ctrl: 2, meta: 4, command: 4, shift: 8 }; return String(value || "").split(",").reduce((result, item) => result | (flags[item.trim().toLowerCase()] || 0), 0); }
 function cookieInfo(cookie) { return { name: cookie.name, value: cookie.value, domain: cookie.domain, path: cookie.path, secure: Boolean(cookie.secure), http_only: Boolean(cookie.httpOnly), same_site: cookie.sameSite || "unspecified", session: Boolean(cookie.session), expiration_date: cookie.expirationDate, store_id: cookie.storeId }; }
 function cookieURL(cookie) { return `${cookie.secure ? "https" : "http"}://${String(cookie.domain || "").replace(/^\./, "")}${cookie.path || "/"}`; }

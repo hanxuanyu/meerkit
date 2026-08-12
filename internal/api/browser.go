@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	minimumBrowserActionTimeout = time.Second
-	maximumBrowserActionTimeout = 5 * time.Minute
+	minimumBrowserActionTimeout      = time.Second
+	maximumBrowserActionTimeout      = 5 * time.Minute
+	browserSelectorCandidatesTimeout = 10 * time.Second
 )
 
 func (a *APIServer) handleBrowserExtension(c *gin.Context) {
@@ -108,6 +109,34 @@ func (a *APIServer) browserTargets(c *gin.Context) {
 		writeError(c.Writer, http.StatusServiceUnavailable, "browser_targets_failed", err.Error())
 		return
 	}
+	writeJSON(c.Writer, http.StatusOK, result)
+}
+
+func (a *APIServer) browserSelectorCandidates(c *gin.Context) {
+	if a.browser == nil {
+		writeError(c.Writer, http.StatusServiceUnavailable, "browser_unavailable", "browser manager is unavailable")
+		return
+	}
+	var request sdk.BrowserSelectorCandidatesRequest
+	if err := decodeBody(c.Writer, c.Request, &request); err != nil {
+		writeError(c.Writer, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), browserSelectorCandidatesTimeout)
+	defer cancel()
+	result, err := a.browser.SelectorCandidates(ctx, request)
+	if err != nil {
+		status := http.StatusBadRequest
+		code := "browser_selector_candidates_failed"
+		if errors.Is(err, context.DeadlineExceeded) {
+			status, code = http.StatusGatewayTimeout, "browser_selector_candidates_timeout"
+		} else if strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "does not support") {
+			status, code = http.StatusServiceUnavailable, "browser_agent_unavailable"
+		}
+		writeError(c.Writer, status, code, err.Error())
+		return
+	}
+	c.Header("Cache-Control", "no-store")
 	writeJSON(c.Writer, http.StatusOK, result)
 }
 

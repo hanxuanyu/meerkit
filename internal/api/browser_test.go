@@ -20,6 +20,16 @@ func TestBrowserActionRequiresManager(t *testing.T) {
 	}
 }
 
+func TestBrowserSelectorCandidatesRequiresManager(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/browser/selector-candidates", nil)
+	new(APIServer).browserSelectorCandidates(context)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
 func TestGetBrowserActionsReturnsAtomicCatalog(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
@@ -31,7 +41,7 @@ func TestGetBrowserActionsReturnsAtomicCatalog(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Actions) != 46 {
+	if len(payload.Actions) != 56 {
 		t.Fatalf("unexpected action count: %d", len(payload.Actions))
 	}
 }

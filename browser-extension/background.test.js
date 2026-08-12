@@ -15,6 +15,46 @@ test("exposes atomic browser commands and target enumeration", async () => {
   assert.equal(result.target.tab_id, 21);
 });
 
+test("returns bounded selector candidates for a target tab", async () => {
+  const harness = createHarness();
+  const result = await harness.context.executeCommand("browser.selector_candidates", { target: { tab_id: 21, window_id: 4 }, queries: ["button", "a[href]"], limit: 20 });
+  assert.equal(result.items[0].selector, "#save");
+  assert.equal(result.items[0].tag_name, "button");
+  assert.equal(result.total, 1);
+});
+
+test("selector candidate injection is self-contained", () => {
+  const harness = createHarness();
+  const source = harness.context.collectSelectorCandidates.toString();
+  for (const externalName of ["selectorForElement", "selectorIsUnique", "escapeCSSIdentifier", "escapeCSSString"]) {
+    assert.equal(source.includes(externalName), false, `${externalName} must be defined inside the injected function`);
+  }
+});
+
+test("DOM value injections are self-contained", () => {
+  const harness = createHarness();
+  for (const name of ["inputElement", "selectElement"]) {
+    const sandbox = createDOMControlSandbox();
+    const injected = vm.runInNewContext(`(${harness.context[name].toString()})`, sandbox);
+    const result = injected("#control", "updated");
+    assert.equal(sandbox.control.value, "updated", `${name} must set the native control value`);
+    assert.equal(result.selector, "#control");
+    if (name === "inputElement") {
+      assert.equal(result.focused, true);
+      assert.equal(result.updated, true);
+    }
+    assert.deepEqual(sandbox.control.events, ["input", "change"]);
+  }
+});
+
+test("runs DOM control mutations in the page main world", async () => {
+  const harness = createHarness();
+  await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "dom.input", params: { selector: "input", value: "updated" } } });
+  await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "dom.check", params: { selector: "input", checked: true } } });
+  await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "dom.select", params: { selector: "select", value: "updated" } } });
+  assert.deepEqual(harness.stats.scriptWorlds, ["MAIN", "MAIN", "MAIN"]);
+});
+
 test("rejects a tab selected from another window", async () => {
   const harness = createHarness();
   await assert.rejects(() => harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 9 }, action: { type: "page.wait", params: { mode: "load" } } }), /selected window/);
@@ -56,6 +96,38 @@ test("executes window and tab state actions", async () => {
   assert.equal(windowResult.data.state, "maximized");
   const tabResult = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.pin", params: { pinned: true } } });
   assert.equal(tabResult.data.pinned, true);
+  const defaultPin = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.pin", params: {} } });
+  assert.equal(defaultPin.data.pinned, true);
+  const unpinned = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.pin", params: { pinned: false } } });
+  assert.equal(unpinned.data.pinned, false);
+});
+
+test("executes tab resource management actions", async () => {
+  const harness = createHarness();
+  const discard = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.discard", params: {} } });
+  assert.equal(discard.data.discarded, true);
+  const automatic = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.auto_discardable", params: { auto_discardable: false } } });
+  assert.equal(automatic.data.auto_discardable, false);
+  const language = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "tab.detect_language", params: {} } });
+  assert.equal(language.data.language, "en");
+});
+
+test("stops loading and returns page performance", async () => {
+  const harness = createHarness();
+  const stopped = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "page.stop_loading", params: {} } });
+  assert.equal(stopped.data.stopped, true);
+  assert.equal(harness.stats.lastCommand.method, "Page.stopLoading");
+  const performanceResult = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "page.performance", params: {} } });
+  assert.equal(performanceResult.data.resources.count, 4);
+});
+
+test("executes bounded DOM mutation actions", async () => {
+  const harness = createHarness();
+  const attribute = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "dom.set_attribute", params: { selector: "main", name: "data-state", value: "ready" } } });
+  assert.equal(attribute.data.value, "ready");
+  const event = await harness.context.executeCommand("browser.action", { target: { tab_id: 21, window_id: 4 }, action: { type: "dom.dispatch_event", params: { selector: "input", event: "change" } } });
+  assert.equal(event.data.event, "change");
+  assert.equal(event.data.bubbles, true);
 });
 
 test("executes cookie and web storage actions", async () => {
@@ -115,9 +187,41 @@ test("dispatches real input through CDP", async () => {
   assert.equal(harness.stats.detached, 1);
 });
 
+function createDOMControlSandbox() {
+  const sandboxDocument = { activeElement: null, querySelector: () => control };
+  class HTMLElement {
+    constructor() { this.events = []; this.isContentEditable = false; }
+    focus() { this.focused = true; sandboxDocument.activeElement = this; }
+    dispatchEvent(event) { this.events.push(event.type); }
+  }
+  class HTMLInputElement extends HTMLElement {}
+  class HTMLTextAreaElement extends HTMLElement {}
+  class HTMLSelectElement extends HTMLElement {
+    constructor() { super(); this.options = [{ value: "updated" }]; }
+  }
+  for (const prototype of [HTMLInputElement.prototype, HTMLTextAreaElement.prototype, HTMLSelectElement.prototype]) {
+    Object.defineProperty(prototype, "value", {
+      configurable: true,
+      get() { return this.nativeValue || ""; },
+      set(value) { this.nativeValue = value; }
+    });
+  }
+  class Event { constructor(type) { this.type = type; } }
+  const control = new HTMLSelectElement();
+  return {
+    control,
+    document: sandboxDocument,
+    Event,
+    HTMLElement,
+    HTMLInputElement,
+    HTMLTextAreaElement,
+    HTMLSelectElement
+  };
+}
+
 function createHarness() {
   const tabs = new Map([[21, { id: 21, windowId: 4, index: 0, active: true, title: "Meerkit", url: "https://example.com", status: "complete", groupId: -1 }]]);
-  const stats = { attached: 0, detached: 0, lastCommand: null, commands: [], cookieSetDetails: null };
+  const stats = { attached: 0, detached: 0, lastCommand: null, commands: [], cookieSetDetails: null, scriptWorlds: [] };
   const createEvent = () => { const listeners = new Set(); return { addListener(listener) { listeners.add(listener); }, removeListener(listener) { listeners.delete(listener); }, async emit(...args) { await Promise.all([...listeners].map((listener) => listener(...args))); } }; };
   const event = createEvent();
   const debuggerDetach = createEvent();
@@ -127,11 +231,11 @@ function createHarness() {
     storage: { local: { async get() { return {}; }, async set() {} }, session: { async get() { return {}; }, async set() {} }, onChanged: event },
     action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
     windows: { onCreated: event, onRemoved: event, onFocusChanged: event, onBoundsChanged: event, async getAll() { return [{ id: 4, focused: true, type: "normal", state: "normal", tabs: [...tabs.values()] }]; }, async create(options) { return { id: 5, focused: true, ...options, tabs: [] }; }, async update(id, values) { return { id, focused: Boolean(values.focused), type: "normal", state: values.state || "normal", ...values }; }, async remove() {} },
-    tabs: { onCreated: event, onUpdated: event, onMoved: event, onActivated: event, onAttached: event, onDetached: event, onRemoved: event, async get(id) { const value = tabs.get(id); if (!value) throw new Error("No tab"); return { ...value }; }, async query() { return [...tabs.values()]; }, async create(options) { const value = { id: 22, windowId: options.windowId || 4, index: 1, url: options.url, title: "", status: "complete" }; tabs.set(value.id, value); return { ...value }; }, async update(id, values) { Object.assign(tabs.get(id), values, { status: "complete" }); return { ...tabs.get(id) }; }, async reload() {}, async goBack() {}, async goForward() {}, async duplicate(id) { const value = { ...tabs.get(id), id: 23, index: 1 }; tabs.set(23, value); return { ...value }; }, async move(id, options) { Object.assign(tabs.get(id), { index: options.index, ...(options.windowId ? { windowId: options.windowId } : {}) }); return { ...tabs.get(id) }; }, async remove(id) { tabs.delete(id); }, async group() { return 1; }, async ungroup() {}, async setZoom() {}, async getZoom() { return 1; } },
+    tabs: { onCreated: event, onUpdated: event, onMoved: event, onActivated: event, onAttached: event, onDetached: event, onRemoved: event, async get(id) { const value = tabs.get(id); if (!value) throw new Error("No tab"); return { ...value }; }, async query() { return [...tabs.values()]; }, async create(options) { const value = { id: 22, windowId: options.windowId || 4, index: 1, url: options.url, title: "", status: "complete" }; tabs.set(value.id, value); return { ...value }; }, async update(id, values) { Object.assign(tabs.get(id), values, { status: "complete" }); return { ...tabs.get(id) }; }, async reload() {}, async goBack() {}, async goForward() {}, async duplicate(id) { const value = { ...tabs.get(id), id: 23, index: 1 }; tabs.set(23, value); return { ...value }; }, async move(id, options) { Object.assign(tabs.get(id), { index: options.index, ...(options.windowId ? { windowId: options.windowId } : {}) }); return { ...tabs.get(id) }; }, async discard(id) { Object.assign(tabs.get(id), { discarded: true }); return { ...tabs.get(id) }; }, async detectLanguage() { return "en"; }, async remove(id) { tabs.delete(id); }, async group() { return 1; }, async ungroup() {}, async setZoom() {}, async getZoom() { return 1; } },
     tabGroups: { TAB_GROUP_ID_NONE: -1, onCreated: event, onUpdated: event, onRemoved: event, async query() { return []; }, async get() { return null; }, async update() {} },
     debugger: { onEvent: event, onDetach: debuggerDetach, async attach() { stats.attached++; }, async detach() { stats.detached++; }, async sendCommand(_target, method, params) { stats.lastCommand = { method, params }; stats.commands.push({ method, params }); return method === "Page.captureScreenshot" ? { data: "AAAA" } : {}; } },
     cookies: { async getAll() { return [{ name: "session", value: "secret", domain: "example.com", path: "/", secure: true, httpOnly: true, sameSite: "lax", storeId: "0" }]; }, async set(details) { stats.cookieSetDetails = details; return { ...details, storeId: "0" }; }, async remove(details) { return details; } },
-    scripting: { async executeScript(options) { if (options.func?.name === "elementCenter") return [{ result: { x: 100, y: 80 } }]; if (options.func?.name === "queryElements") return [{ result: { total: 3, elements: [{ text: "one" }, { text: "two" }], truncated: true } }]; if (options.func?.name === "getWebStorage") return [{ result: { area: options.args[0], count: 1, values: { token: "value" }, truncated: false } }]; if (options.func?.name === "setWebStorage") return [{ result: { area: options.args[0], key: options.args[1], written: true, size: options.args[2].length } }]; return [{ result: { text: "ok" } }]; } }
+    scripting: { async executeScript(options) { stats.scriptWorlds.push(options.world); if (options.func?.name === "elementCenter") return [{ result: { x: 100, y: 80 } }]; if (options.func?.name === "collectSelectorCandidates") return [{ result: { items: [{ selector: "#save", tag_name: "button", text: "Save", visible: true, unique: true }], total: 1, truncated: false } }]; if (options.func?.name === "queryElements") return [{ result: { total: 3, elements: [{ text: "one" }, { text: "two" }], truncated: true } }]; if (options.func?.name === "performanceSnapshot") return [{ result: { resources: { count: 4 } } }]; if (options.func?.name === "setElementAttribute") return [{ result: { selector: options.args[0], name: options.args[1], value: options.args[2] } }]; if (options.func?.name === "dispatchElementEvent") return [{ result: { selector: options.args[0], event: options.args[1], bubbles: options.args[2], cancelable: options.args[3], default_prevented: false } }]; if (options.func?.name === "getWebStorage") return [{ result: { area: options.args[0], count: 1, values: { token: "value" }, truncated: false } }]; if (options.func?.name === "setWebStorage") return [{ result: { area: options.args[0], key: options.args[1], written: true, size: options.args[2].length } }]; return [{ result: { text: "ok" } }]; } }
   };
   const context = vm.createContext({ chrome, console, crypto: { randomUUID: () => "test-agent" }, performance, setInterval, clearInterval, setTimeout, clearTimeout, TextEncoder, URL, WebSocket: class { static OPEN = 1; } });
   vm.runInContext(source, context, { filename: "background.js" });
