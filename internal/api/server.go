@@ -118,6 +118,7 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/system/config/transfer/import/preview", a.previewConfigurationImport)
 	api.POST("/system/config/transfer/import", a.importConfiguration)
 	api.GET("/browser", a.getBrowserStatus)
+	api.GET("/browser/actions", a.getBrowserActions)
 	api.POST("/browser/pairing-token/rotate", a.rotateBrowserPairingToken)
 	api.POST("/browser/run", a.runBrowser)
 

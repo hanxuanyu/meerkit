@@ -51,11 +51,11 @@ export function NotificationsPage({ channels = [], onCreate, onRefresh, onEdit, 
   const hasMatches = filteredChannels.length > 0;
 
   return <div className="page-stack">
-    <PageHeader className="page-heading-with-action" eyebrow="DELIVERY CHANNELS" title="通知渠道" description="在条件边沿触发时发送告警和恢复通知。" actions={<Button onClick={onCreate}><Plus size={16} />添加渠道</Button>} />
+    <PageHeader eyebrow="DELIVERY CHANNELS" title="通知渠道" description="在条件边沿触发时发送告警和恢复通知。" />
     <Card className="section-card">
       <div className="section-header">
         <div><h2>已配置渠道</h2><p>内置站内通知及外部渠道可被多个监控项复用。</p></div>
-        <IconButton variant="outline" size="default" title="刷新" aria-label="刷新" onClick={onRefresh}><RefreshCw size={15} /></IconButton>
+        <div className="section-header-actions"><IconButton variant="outline" size="default" title="刷新" aria-label="刷新" onClick={onRefresh}><RefreshCw size={15} /></IconButton><Button size="sm" onClick={onCreate}><Plus size={15} />添加渠道</Button></div>
       </div>
       {hasChannels && <div className="channel-toolbar">
         <div className="channel-search"><Search size={15} /><Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜索渠道名称或类型" aria-label="搜索通知渠道" /></div>

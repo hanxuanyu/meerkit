@@ -97,3 +97,19 @@ func TestRunBrowserRequiresManager(t *testing.T) {
 		t.Fatalf("run browser status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
 }
+
+func TestGetBrowserActionsReturnsCatalog(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	new(APIServer).getBrowserActions(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browser actions status = %d", recorder.Code)
+	}
+	var payload browser.ActionCatalog
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Actions) != 12 || len(payload.StarterFlow) == 0 {
+		t.Fatalf("unexpected browser action catalog: %#v", payload)
+	}
+}

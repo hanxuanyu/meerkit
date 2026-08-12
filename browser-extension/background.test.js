@@ -152,6 +152,29 @@ test("captures request, connection, cache and timing details", async () => {
   assert.equal(captured.body, "{\"items\":[1,2]}");
 });
 
+test("starts network capture as an ordered action before navigation", async () => {
+  const harness = createHarness({ networkResponse: { url: "https://example.com/api/flow", method: "GET", responseHeaders: {}, body: "ok", mimeType: "text/plain", encodedDataLength: 2, durationMS: 10 } });
+  const result = await harness.context.executeRun({
+    keep_tab: false,
+    actions: [
+      { id: "capture", type: "network.capture", params: { capture_id: "flow", url_contains: "/api/" } },
+      { id: "open", type: "tab.open", params: { url: "https://example.com/page", active: false } }
+    ]
+  });
+  assert.equal(result.actions[0].data.pending, true);
+  assert.equal(result.network.length, 1);
+  assert.equal(result.network[0].capture_id, "flow");
+});
+
+test("uses an existing tab as the shared workflow context", async () => {
+  const harness = createHarness({ tabs: [{ id: 21, windowId: 4, url: "https://example.com/current", status: "complete" }] });
+  const result = await harness.context.executeRun({ tab_id: 21, window_id: 99, keep_tab: true, actions: [{ id: "wait", type: "page.wait", params: { mode: "load" } }] });
+  assert.equal(result.tab_id, 21);
+  assert.equal(result.window_id, 4);
+  assert.equal(result.actions[0].data.mode, "load");
+  assert.equal(harness.created.length, 0);
+});
+
 function reusableRequest() {
   return {
     keep_tab: true,

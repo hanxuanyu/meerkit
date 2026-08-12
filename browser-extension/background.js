@@ -173,9 +173,14 @@ async function executeRun(request) {
   const started = performance.now();
   const timeoutMS = clamp(Number(request.timeout_ms) || 60000, 1000, 300000);
   const deadline = Date.now() + timeoutMS;
-  const state = { tabId: null, createdTab: false, reuseKey: "", debuggerAttached: false, capture: null };
+  const state = { tabId: positiveInteger(request.tab_id), windowId: positiveInteger(request.window_id), createdTab: false, reuseKey: "", debuggerAttached: false, capture: null, pendingCaptureRules: [], networkResults: [] };
   const actionResults = [];
   try {
+    if (state.tabId) {
+      const initialTab = await chrome.tabs.get(state.tabId);
+      state.windowId = initialTab.windowId;
+      leasedTabIds.add(state.tabId);
+    }
     for (const action of request.actions || []) {
       const actionStarted = performance.now();
       try {
@@ -186,13 +191,14 @@ async function executeRun(request) {
         if (!action.continue_on_error) throw error;
       }
     }
-    if (state.capture) await state.capture.flush(deadline);
+    await finishNetworkCapture(state, deadline);
     return {
       agent_id: await ensureIdentity(),
       tab_id: state.tabId || undefined,
+      window_id: state.windowId || undefined,
       duration_ms: Math.round(performance.now() - started),
       actions: actionResults,
-      network: state.capture?.results || []
+      network: state.networkResults
     };
   } finally {
     if (state.capture) await state.capture.stop();
@@ -216,15 +222,19 @@ async function executeAction(state, action, captureRules, deadline) {
       let tab = params.reuse ? await findReusableTab(reuseKey, params.url) : null;
       state.createdTab = !tab;
       if (!tab) {
-        const group = params.group_title ? await findTabGroup(undefined, String(params.group_title)) : null;
-        tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false, ...(group ? { windowId: group.windowId } : {}) });
+        const group = params.group_title ? await findTabGroup(state.windowId || undefined, String(params.group_title)) : null;
+        const windowId = state.windowId || group?.windowId;
+        tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false, ...(windowId ? { windowId } : {}) });
       }
       state.tabId = tab.id;
+      state.windowId = tab.windowId;
       leasedTabIds.add(tab.id);
       state.capture = null;
       state.debuggerAttached = false;
-      if (captureRules.length) {
-        state.capture = await createNetworkCapture(tab.id, captureRules);
+      const initialCaptureRules = [...captureRules, ...state.pendingCaptureRules];
+      state.pendingCaptureRules = [];
+      if (initialCaptureRules.length) {
+        state.capture = await createNetworkCapture(tab.id, initialCaptureRules);
         state.debuggerAttached = true;
       }
       if (!state.createdTab) {
@@ -243,7 +253,9 @@ async function executeAction(state, action, captureRules, deadline) {
       validateURL(params.url);
       await chrome.tabs.update(state.tabId, { url: params.url });
       if (params.wait !== false) await waitForTab(state.tabId, deadline);
-      return tabInfo(await chrome.tabs.get(state.tabId));
+      const tab = await chrome.tabs.get(state.tabId);
+      state.windowId = tab.windowId;
+      return tabInfo(tab);
     }
     case "tab.group": {
       requireTab(state);
@@ -261,7 +273,7 @@ async function executeAction(state, action, captureRules, deadline) {
     case "tab.close": {
       requireTab(state);
       const tabId = state.tabId;
-      if (state.capture) await state.capture.stop();
+      await finishNetworkCapture(state, deadline);
       await chrome.tabs.remove(tabId);
       state.tabId = null;
       leasedTabIds.delete(tabId);
@@ -274,10 +286,11 @@ async function executeAction(state, action, captureRules, deadline) {
     }
     case "page.wait": {
       requireTab(state);
-      if (params.selector) await waitForSelector(state.tabId, String(params.selector), clamp(Number(params.timeout_ms) || remaining(deadline), 100, remaining(deadline)));
-      else if (params.duration_ms) await sleep(clamp(Number(params.duration_ms), 0, remaining(deadline)));
+      const mode = params.mode || (params.selector ? "selector" : params.duration_ms != null ? "duration" : "load");
+      if (mode === "selector") await waitForSelector(state.tabId, String(params.selector || ""), clamp(Number(params.timeout_ms) || remaining(deadline), 100, remaining(deadline)));
+      else if (mode === "duration") await sleep(clamp(Number(params.duration_ms), 0, remaining(deadline)));
       else await waitForTab(state.tabId, deadline);
-      return { ready: true };
+      return { ready: true, mode };
     }
     case "page.screenshot": {
       requireTab(state);
@@ -317,9 +330,35 @@ async function executeAction(state, action, captureRules, deadline) {
       if (!expression || expression.length > 100000) throw new Error("A JavaScript expression between 1 and 100000 characters is required.");
       return runInMainWorld(state.tabId, evaluateExpression, [expression]);
     }
+    case "network.capture": {
+      if (state.capture) throw new Error("Network capture is already active for this run.");
+      const rule = {
+        id: String(params.capture_id || action.id || "network"),
+        url_contains: String(params.url_contains || ""),
+        resource_type: String(params.resource_type || ""),
+        max_body_bytes: clamp(Number(params.max_body_bytes) || 262144, 1024, 1048576)
+      };
+      if (state.tabId) {
+        state.capture = await createNetworkCapture(state.tabId, [rule]);
+        state.debuggerAttached = true;
+      } else {
+        state.pendingCaptureRules.push(rule);
+      }
+      return { capture_id: rule.id, active: Boolean(state.tabId), pending: !state.tabId, url_contains: rule.url_contains, resource_type: rule.resource_type };
+    }
     default:
       throw new Error(`Unsupported browser action: ${action.type}`);
   }
+}
+
+async function finishNetworkCapture(state, deadline) {
+  if (!state.capture) return;
+  const capture = state.capture;
+  await capture.flush(deadline);
+  await capture.stop();
+  state.networkResults.push(...capture.results);
+  state.capture = null;
+  state.debuggerAttached = false;
 }
 
 async function acquireReuseKey(reuseKey, deadline) {
@@ -590,6 +629,7 @@ function requiredSelector(value) { const selector = String(value || ""); if (!se
 function validateURL(value, allowAbout = false) { const url = new URL(value); if (!(url.protocol === "http:" || url.protocol === "https:" || (allowAbout && url.href === "about:blank"))) throw new Error("Only HTTP and HTTPS URLs are supported."); }
 function validGroupColor(value) { return ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"].includes(value) ? value : "blue"; }
 function clamp(value, minimum, maximum) { return Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : minimum)); }
+function positiveInteger(value) { const number = Math.trunc(Number(value) || 0); return number > 0 ? number : null; }
 function remaining(deadline) { return Math.max(1, deadline - Date.now()); }
 function sleep(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 async function withTimeout(promise, milliseconds, message) {

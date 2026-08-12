@@ -217,11 +217,8 @@ func (m *Manager) Agents() []AgentInfo {
 }
 
 func (m *Manager) Execute(ctx context.Context, request sdk.BrowserRunRequest) (sdk.BrowserRunResult, error) {
-	if len(request.Actions) == 0 || len(request.Actions) > maxActions {
-		return sdk.BrowserRunResult{}, fmt.Errorf("browser action count must be between 1 and %d", maxActions)
-	}
-	if len(request.NetworkCaptures) > maxNetworkCaptures {
-		return sdk.BrowserRunResult{}, fmt.Errorf("browser network capture count cannot exceed %d", maxNetworkCaptures)
+	if err := ValidateBrowserRunRequest(request); err != nil {
+		return sdk.BrowserRunResult{}, err
 	}
 	agent := m.selectAgent(request.AgentID)
 	if agent == nil {
@@ -302,7 +299,7 @@ func (agent *agentConnection) supports(request sdk.BrowserRunRequest) error {
 		if action.Type == "" {
 			return errors.New("browser action type cannot be empty")
 		}
-		required[action.Type] = struct{}{}
+		required[actionCapability(action.Type)] = struct{}{}
 	}
 	if len(request.NetworkCaptures) > 0 {
 		required["network.capture"] = struct{}{}

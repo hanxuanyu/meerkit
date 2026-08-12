@@ -80,7 +80,7 @@ func TestManagerRejectsUnsupportedAgentCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	connectTestAgent(t, manager, "pairing-secret", "limited-agent", []string{"tab.open"})
-	_, err = manager.Execute(context.Background(), sdk.BrowserRunRequest{Actions: []sdk.BrowserAction{{Type: "dom.query"}}})
+	_, err = manager.Execute(context.Background(), sdk.BrowserRunRequest{Actions: []sdk.BrowserAction{{Type: "dom.query", Params: map[string]any{"selector": "main"}}}})
 	if err == nil || !strings.Contains(err.Error(), "does not support capability") {
 		t.Fatalf("unsupported capability error = %v", err)
 	}

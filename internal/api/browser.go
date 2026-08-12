@@ -39,6 +39,11 @@ func (a *APIServer) getBrowserStatus(c *gin.Context) {
 	})
 }
 
+func (a *APIServer) getBrowserActions(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	writeJSON(c.Writer, http.StatusOK, browser.BrowserActionCatalog())
+}
+
 func (a *APIServer) rotateBrowserPairingToken(c *gin.Context) {
 	if a.browser == nil {
 		writeError(c.Writer, http.StatusServiceUnavailable, "browser_unavailable", "browser manager is unavailable")

@@ -37,6 +37,8 @@ type BrowserNetworkCapture struct {
 
 type BrowserRunRequest struct {
 	AgentID         string                  `json:"agent_id,omitempty"`
+	TabID           int                     `json:"tab_id,omitempty"`
+	WindowID        int                     `json:"window_id,omitempty"`
 	TimeoutMS       int                     `json:"timeout_ms,omitempty"`
 	KeepTab         bool                    `json:"keep_tab,omitempty"`
 	Actions         []BrowserAction         `json:"actions"`
@@ -82,6 +84,7 @@ type BrowserNetworkResult struct {
 type BrowserRunResult struct {
 	AgentID  string                 `json:"agent_id"`
 	TabID    int                    `json:"tab_id,omitempty"`
+	WindowID int                    `json:"window_id,omitempty"`
 	Duration int64                  `json:"duration_ms"`
 	Actions  []BrowserActionResult  `json:"actions"`
 	Network  []BrowserNetworkResult `json:"network,omitempty"`

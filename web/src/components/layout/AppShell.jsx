@@ -1,7 +1,8 @@
 import React from "react";
+import { PageChromeProvider } from "./PageChrome";
 
 export function AppShell({ sidebar, topbar, tabs, sidebarCollapsed = false, children, overlays }) {
-  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+  return <PageChromeProvider><div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
     {sidebar}
     <main className="main-content">
       {topbar}
@@ -9,5 +10,5 @@ export function AppShell({ sidebar, topbar, tabs, sidebarCollapsed = false, chil
       <div className="page-content">{children}</div>
     </main>
     {overlays}
-  </div>;
+  </div></PageChromeProvider>;
 }

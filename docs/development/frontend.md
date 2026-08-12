@@ -34,7 +34,7 @@ npm --prefix web run build
 | `/notifications/:id?` | 站内通知中心 |
 | `/notification-channels` | 通知渠道 |
 | `/plugins` | 插件管理 |
-| `/browser-debug` | 内置浏览器操作调试台 |
+| `/browser-debug` | 后端 Schema 驱动的浏览器 action 流程编排与调试台 |
 | `/logs` | 系统与插件日志 |
 | `/settings` | 启动与运行时配置、管理员密钥 |
 
@@ -62,6 +62,8 @@ npm --prefix web run build
 - `components/forms/`
 - `components/results/`
 - 状态看板字段类型推断
+
+浏览器调试页从 `GET /api/v1/browser/actions` 获取 action 分类、参数、默认值、显隐规则和结果类型。新增浏览器 action 时，应先在 `internal/browser/actions.go` 注册并校验，再在扩展执行端实现；前端只为新的参数控件或特殊结果类型增加适配，不维护 action 清单。
 
 ## 样式与交互
 

@@ -1,9 +1,14 @@
 import React from "react";
-import { cn } from "../../lib/utils";
+import { createPortal } from "react-dom";
+import { usePageChrome } from "./PageChrome";
 
-export function PageHeader({ eyebrow, title, description, actions, className }) {
-  return <div className={cn("page-heading", className)}>
-    <div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>
-    {actions}
-  </div>;
+export function PageHeader({ eyebrow, title, description }) {
+  const { titleHost } = usePageChrome();
+
+  return <>
+    {titleHost && createPortal(<div className="topbar-page-copy">
+      <div className="topbar-page-title-line"><h1>{title}</h1>{eyebrow && <span>{eyebrow}</span>}</div>
+      {description && <p title={description}>{description}</p>}
+    </div>, titleHost)}
+  </>;
 }
