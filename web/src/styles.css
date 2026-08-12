@@ -62,11 +62,18 @@
 /* Keep the navigation and workspace on separate scroll surfaces. This is
    important on macOS browsers where a flex page otherwise scrolls as one unit. */
 html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; }
+.floating-scrollbars { position: fixed; z-index: 2147483647; inset: 0; pointer-events: none; }
+.floating-scrollbar { position: fixed; display: block; border-radius: 999px; opacity: 0; background: color-mix(in srgb, var(--foreground) 38%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--background) 24%, transparent); transition: opacity 160ms ease; }
+.floating-scrollbar.is-vertical { width: 4px; }
+.floating-scrollbar.is-horizontal { height: 4px; }
+.floating-scrollbar[data-visible="true"] { opacity: .72; }
 .app-shell { display: block; width: 100%; height: 100dvh; min-height: 100svh; overflow: hidden; }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 236px; height: 100dvh; min-height: 100svh; overflow: hidden; }
 .main-content { position: relative; display: flex; flex-direction: column; width: auto; height: 100dvh; min-height: 100svh; margin-left: 236px; overflow: hidden; }
 .topbar { flex: 0 0 65px; }
-.page-content { width: 100%; max-width: none; min-height: 0; flex: 1; margin: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.page-content { width: 100%; max-width: none; min-height: 0; flex: 1; margin: 0; overflow-y: auto; overscroll-behavior: contain; }
 .page-content > .page-stack { width: 100%; max-width: 1260px; margin: 0 auto; }
 
 @media (max-width: 900px) {
@@ -449,7 +456,7 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .browser-debug-runbar { display: flex; min-height: 57px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 88%, var(--panel-subtle)); }
 .browser-debug-runbar > div { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .browser-debug-runbar > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browser-debug-runbar .button { flex: none; }
+.browser-debug-runbar .button { flex: none; margin-left: auto; }
 .browser-debug-output { min-height: 690px; }
 .browser-debug-empty { display: grid; min-height: 635px; place-content: center; justify-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
 .browser-debug-result-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
@@ -695,7 +702,7 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 }
 .modal-header h2 { margin-top: 8px; font-size: 18px; letter-spacing: -.025em; }
 .modal-header p { max-width: 520px; margin-top: 8px; font-size: 12px; }
-.modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; gap: 24px; padding: 24px; }
+.modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; gap: 24px; padding: 24px; }
 .modal-footer { padding: 16px 24px 22px; background: color-mix(in srgb, var(--panel) 94%, var(--panel-subtle)); }
 .dialog-footer-split { flex-direction: row !important; justify-content: space-between !important; gap: 12px; }
 .dialog-footer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -742,7 +749,7 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .workspace-tabs-status { flex: none; padding: 0 7px 12px 12px; color: #a1a1aa; font-size: 10px; }
 
 @media (max-width: 640px) {
-  .sidebar-nav { display: grid; gap: 24px; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+  .sidebar-nav { display: grid; gap: 24px; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
   .sidebar-group { display: grid; gap: 8px; }
   .sidebar-group-label { display: block; }
   .sidebar-group nav { display: grid; gap: 3px; }
@@ -754,6 +761,22 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .sidebar .nav-item { transition: color .18s ease, background .18s ease, gap .2s ease, padding .2s ease; }
 .sidebar .nav-item > svg { flex: 0 0 17px; }
 .nav-item-label { max-width: 150px; min-width: 0; overflow: hidden; opacity: 1; text-overflow: ellipsis; white-space: nowrap; transform: translateX(0); transition: max-width .2s ease, opacity .14s ease, transform .2s ease; }
+.sidebar-nav-menu { display: grid; min-width: 0; gap: 2px; }
+.sidebar .nav-parent-chevron { margin-left: auto; color: var(--muted); transition: transform .18s ease; }
+.sidebar-nav-menu[data-state="open"] .nav-parent-chevron { transform: rotate(180deg); }
+.sidebar-submenu { position: relative; display: grid; gap: 2px; overflow: hidden; padding: 2px 0 2px 20px; }
+.sidebar-submenu[data-state="open"] { animation: sidebar-submenu-down 180ms ease-out; }
+.sidebar-submenu[data-state="closed"] { animation: sidebar-submenu-up 160ms ease-in; }
+.sidebar-submenu::before { position: absolute; top: 3px; bottom: 3px; left: 19px; width: 1px; background: var(--border); content: ""; }
+.sidebar .nav-child { min-height: 34px; padding-left: 18px; font-size: 11px; }
+.sidebar .nav-child > svg { width: 15px; height: 15px; }
+.sidebar .nav-parent.active { color: var(--foreground); background: color-mix(in srgb, var(--panel-subtle) 68%, transparent); }
+.sidebar .nav-child.active { background: var(--panel-subtle); }
+.sidebar-submenu-flyout { width: 184px; padding: 5px; }
+.sidebar-submenu-flyout-heading { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 8px; color: var(--muted); font-size: 10px; }
+.sidebar-submenu-flyout-heading strong { color: var(--foreground); font-size: 11px; font-weight: 650; }
+.sidebar-submenu-flyout [role="menuitem"] { min-height: 34px; color: var(--muted); font-size: 11px; }
+.sidebar-submenu-flyout [role="menuitem"][data-active="true"] { color: var(--foreground); background: var(--panel-subtle); }
 .brand { transition: gap .2s ease, padding .2s ease; }
 .brand-copy { max-width: 150px; min-width: 0; overflow: hidden; opacity: 1; white-space: nowrap; transform: translateX(0); transition: max-width .2s ease, opacity .14s ease, transform .2s ease; }
 .sidebar-toggle { width: 30px; min-width: 30px; height: 30px; margin-right: 2px; }
@@ -771,11 +794,15 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
   .app-shell.sidebar-collapsed .sidebar-nav { gap: 18px; }
   .app-shell.sidebar-collapsed .sidebar .nav-item { justify-content: center; gap: 0; padding-right: 0; padding-left: 0; }
   .app-shell.sidebar-collapsed .sidebar .nav-item-label { max-width: 0; opacity: 0; transform: translateX(-5px); }
+  .app-shell.sidebar-collapsed .sidebar .nav-parent-chevron { display: none; }
   .app-shell.sidebar-collapsed .sidebar .nav-badge { position: absolute; top: 1px; right: 1px; display: inline-flex; min-width: 14px; height: 14px; margin: 0; padding: 0 3px; border: 2px solid var(--panel); font-size: 8px; }
   .app-shell.sidebar-collapsed .sidebar-footer { justify-content: center; padding-right: 0; padding-left: 0; }
   .app-shell.sidebar-collapsed .sidebar-footer .version { display: none; }
   .app-shell.sidebar-collapsed .status-indicator { width: 8px; height: 8px; justify-content: center; overflow: hidden; font-size: 0; }
 }
+
+@keyframes sidebar-submenu-down { from { height: 0; opacity: 0; } to { height: var(--radix-collapsible-content-height); opacity: 1; } }
+@keyframes sidebar-submenu-up { from { height: var(--radix-collapsible-content-height); opacity: 1; } to { height: 0; opacity: 0; } }
 
 /* Reference-style three-way appearance control. It stays compact until
    focused or hovered, then reveals all three choices. */
@@ -1872,7 +1899,7 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 }
 
 /* Atomic browser debugger */
-.browser-debug-page { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.browser-debug-page { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr); gap: 0; }
 .browser-debug-page > .page-heading { display: none; }
 .browser-debug-toolbar { display: flex; min-width: 0; min-height: 48px; align-items: center; gap: 16px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .browser-debug-toolbar > .tabs-list { height: 36px; flex: none; align-self: end; overflow: visible; border-bottom: 0; }
@@ -1883,8 +1910,8 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .browser-target-toolbar .browser-debug-field > .select-root, .browser-target-toolbar .browser-debug-field > button { min-width: 0; flex: 1; }
 .browser-target-toolbar .field-control, .browser-target-toolbar .select-trigger { height: 31px; min-height: 31px; font-size: 10px; }
 .browser-target-toolbar > .icon-button { width: 31px; height: 31px; }
-.browser-debug-page > .browser-debug-mode-tabs { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
-.browser-debug-page > .browser-debug-mode-tabs > .tabs-content { min-width: 0; min-height: 0; overflow: hidden; }
+.browser-debug-page > .browser-debug-mode-tabs { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 0; }
+.browser-debug-page > .browser-debug-mode-tabs > .tabs-content { min-width: 0; min-height: 0; margin: 0; overflow: hidden; }
 .browser-debug-page .browser-debug-workbench { display: grid; height: 100%; min-height: 0; grid-template-columns: 190px minmax(340px, 1.08fr) minmax(320px, .92fr); gap: 0; background: var(--panel); }
 .browser-mobile-action-select { display: none; }
 .browser-debug-page .browser-debug-output, .browser-network-card { height: 100%; min-height: 0; border-radius: 0; box-shadow: none; }
@@ -1927,11 +1954,16 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .browser-result-null { color: var(--muted); font-style: italic; }
 .dark .browser-result-error { color: #fca5a5; border-color: #7f1d1d; background: #3f1d24; }
 .dark .browser-result-object dd > code, .dark .browser-result-object dd > a { color: #7dd3fc; }
-.browser-action-navigation { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); border-right: 1px solid var(--border); background: var(--panel-subtle); }
+.browser-action-navigation { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); border-right: 1px solid var(--border); background: var(--panel-subtle); }
 .browser-action-navigation > div { display: flex; height: 48px; align-items: center; gap: 7px; padding: 5px 10px; border-bottom: 1px solid var(--border); }
 .browser-action-navigation > div strong { font-size: 10px; }
 .browser-action-navigation > div span { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.browser-action-navigation nav { min-height: 0; align-content: start; grid-auto-rows: max-content; gap: 0; padding: 4px 6px 6px; overflow: auto; scrollbar-gutter: stable; }
+.browser-action-search { position: relative; display: flex; height: 40px; align-items: center; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.browser-action-search > svg { position: absolute; z-index: 1; left: 14px; color: var(--muted); pointer-events: none; }
+.browser-action-search .field-control { height: 29px; min-height: 29px; padding-right: 7px; padding-left: 27px; font-size: 9px; }
+.browser-action-search-empty { display: block; padding: 18px 8px; color: var(--muted); font-size: 9px; text-align: center; }
+.browser-action-navigation nav { min-height: 0; align-content: start; grid-auto-rows: max-content; gap: 0; padding: 4px 6px 6px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.browser-action-navigation nav::-webkit-scrollbar { display: none; }
 .browser-action-navigation section + section { margin-top: 4px; }
 .browser-action-navigation h3 { margin: 0; padding: 3px 6px 2px; color: var(--muted); font-size: 8px; font-weight: 700; line-height: 1.25; text-transform: uppercase; }
 .browser-action-navigation button { display: grid; width: 100%; min-width: 0; min-height: 38px; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 5px; padding: 4px 6px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; text-align: left; }

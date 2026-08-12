@@ -159,7 +159,7 @@ export function BrowserDebugPage() {
   const filteredNetwork = network.filter((item) => !networkFilter || String(item.url || "").toLowerCase().includes(networkFilter.toLowerCase()));
 
   return <div className="page-stack browser-debug-page">
-    <PageHeader eyebrow="BROWSER TOOLS" title="浏览器操作调试" description="" />
+    <PageHeader eyebrow="LAB / BROWSER" title="浏览器" description="" />
     <Tabs defaultValue="actions" className="browser-debug-mode-tabs">
       <div className="browser-debug-toolbar">
         <TabsList><TabsTrigger value="actions"><Settings2 size={13} />浏览器操作</TabsTrigger><TabsTrigger value="network"><Network size={13} />网络捕获 {capture ? <Badge tone="success">{network.length}</Badge> : null}</TabsTrigger></TabsList>
@@ -191,7 +191,7 @@ export function BrowserDebugPage() {
               onTab={(value) => { setOverrideTabID(value); const tab = allTabs.find((item) => String(item.id) === String(value)); if (tab) setOverrideWindowID(String(tab.window_id)); }}
               defaultTab={selectedTab}
               defaultWindow={selectedWindow}
-              statusText={actionNeedsTab && !effectiveTabID ? "请选择目标标签页" : definition?.target_mode === "window_required" && !effectiveWindowID ? "请选择目标窗口" : actionNeedsWindow && !effectiveWindowID ? "未指定时使用当前浏览器窗口" : "准备执行当前 Action"}
+              statusText={actionNeedsTab && !effectiveTabID ? "请选择目标标签页" : definition?.target_mode === "window_required" && !effectiveWindowID ? "请选择目标窗口" : ""}
               canRun={canRun}
               running={running}
               onExecute={execute}
@@ -208,7 +208,14 @@ export function BrowserDebugPage() {
 
 function Field({ label, children }) { return <label className="browser-debug-field"><span>{label}</span>{children}</label>; }
 function ActionNavigation({ categories, selectedType, onSelect }) {
-  return <aside className="browser-action-navigation"><div><strong>原子 Action</strong></div><nav>{categories.map((category) => <section key={category.key}><h3>{category.label}</h3>{category.actions.map((item) => { const Icon = icons[item.icon] || Settings2; return <button type="button" key={item.type} data-selected={item.type === selectedType} onClick={() => onSelect(item)}><Icon size={14} /><span><strong>{item.label}</strong><small>{item.type}</small></span></button>; })}</section>)}</nav></aside>;
+  const [query, setQuery] = useState("");
+  const navigationRef = useRef(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredCategories = normalizedQuery
+    ? categories.map((category) => ({ ...category, actions: category.actions.filter((item) => [category.label, item.label, item.type].some((value) => String(value || "").toLowerCase().includes(normalizedQuery))) })).filter((category) => category.actions.length)
+    : categories;
+  useEffect(() => { navigationRef.current?.scrollTo({ top: 0 }); }, [query]);
+  return <aside className="browser-action-navigation"><div><strong>原子 Action</strong></div><label className="browser-action-search"><Search size={13} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Action" aria-label="搜索 Action" /></label><nav ref={navigationRef}>{filteredCategories.length ? filteredCategories.map((category) => <section key={category.key}><h3>{category.label}</h3>{category.actions.map((item) => { const Icon = icons[item.icon] || Settings2; return <button type="button" key={item.type} data-selected={item.type === selectedType} onClick={() => onSelect(item)}><Icon size={14} /><span><strong>{item.label}</strong><small>{item.type}</small></span></button>; })}</section>) : <span className="browser-action-search-empty">未找到匹配的 Action</span>}</nav></aside>;
 }
 function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onTimeoutChange, customTarget, onCustomTarget, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow, statusText, canRun, running, onExecute }) {
   if (!definition) return <div className="browser-debug-empty"><Settings2 size={22} /><span>暂无可用 Action</span></div>;
@@ -220,7 +227,7 @@ function ActionConfiguration({ definition, params, onParamChange, timeoutMS, onT
       <DynamicFields parameters={parameters} values={params} onChange={onParamChange} browserTargets={{ windows, tabs }} />
       <Field label="超时 (ms)"><Input type="number" min="1000" value={timeoutMS} onChange={(event) => onTimeoutChange(event.target.value)} /></Field>
     </div>
-    <div className="browser-debug-runbar"><span>{statusText}</span><Button disabled={!canRun} onClick={() => void onExecute()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{running ? "执行中" : "执行 Action"}</Button></div>
+    <div className="browser-debug-runbar">{statusText ? <span>{statusText}</span> : null}<Button disabled={!canRun} onClick={() => void onExecute()}>{running ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{running ? "执行中" : "执行 Action"}</Button></div>
   </div>;
 }
 function TargetEditor({ definition, custom, onCustom, windows, tabs, windowID, tabID, onWindow, onTab, defaultTab, defaultWindow }) {
