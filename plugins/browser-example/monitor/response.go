@@ -21,7 +21,7 @@ type ResponseConfig struct {
 type ResponseModule struct{ moduleBase }
 
 func NewResponse(browser sdk.BrowserClient) *ResponseModule {
-	return &ResponseModule{moduleBase{browser: browser, reuseNamespace: responseModuleType}}
+	return &ResponseModule{moduleBase{browser: browser}}
 }
 
 func (m *ResponseModule) Descriptor() sdk.ModuleDescriptor {
@@ -45,7 +45,6 @@ func (m *ResponseModule) Descriptor() sdk.ModuleDescriptor {
 		{Name: "body_base64", Label: "正文为 Base64", Type: "boolean", Operators: boolOperators()},
 		{Name: "truncated", Label: "正文已截断", Type: "boolean", Operators: boolOperators()},
 		{Name: "error", Label: "捕获错误", Type: "string", Operators: stringOperators()},
-		{Name: "reused_tab", Label: "复用了标签页", Type: "boolean", Operators: boolOperators()},
 		{Name: "duration_ms", Label: "执行耗时", Type: "number", Unit: "ms", Operators: numberOperators()},
 	}
 	return sdk.ModuleDescriptor{
@@ -83,10 +82,8 @@ func (m *ResponseModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.
 	if config.MaxBodyBytes == 0 {
 		config.MaxBodyBytes = 262144
 	}
-	result, err := m.run(ctx, config.pageConfig,
-		[]sdk.BrowserAction{{ID: "settle", Type: "page.wait", Params: map[string]any{"duration_ms": 1000}}},
-		sdk.BrowserNetworkCapture{ID: "response", URLContains: config.URLContains, MaxBodyBytes: config.MaxBodyBytes},
-	)
+	rule := sdk.BrowserNetworkCaptureRule{ID: "response", URLContains: config.URLContains, MaxBodyBytes: config.MaxBodyBytes}
+	result, err := m.run(ctx, config.pageConfig, []sdk.BrowserAction{{ID: "settle", Type: "page.wait", Params: map[string]any{"mode": "duration", "duration_ms": 1000}}}, &rule)
 	if err != nil {
 		return failedObservation("response", err.Error(), emptyResponseResult()), err
 	}
@@ -100,11 +97,10 @@ func (m *ResponseModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.
 		err = fmt.Errorf("no response URL contained %q", config.URLContains)
 		return failedObservation("response", err.Error(), emptyResponseResult()), err
 	}
-	open := actionData(result.Actions, "open")
-	value := map[string]any{"url": latest.URL, "method": latest.Method, "status": latest.Status, "status_text": latest.StatusText, "resource_type": latest.ResourceType, "mime_type": latest.MimeType, "headers": latest.Headers, "body": latest.Body, "body_base64": latest.BodyBase64, "truncated": latest.Truncated, "error": latest.Error, "reused_tab": boolValue(open, "reused"), "duration_ms": result.Duration}
+	value := map[string]any{"url": latest.URL, "method": latest.Method, "status": latest.Status, "status_text": latest.StatusText, "resource_type": latest.ResourceType, "mime_type": latest.MimeType, "headers": latest.Headers, "body": latest.Body, "body_base64": latest.BodyBase64, "truncated": latest.Truncated, "error": latest.Error, "duration_ms": result.Duration}
 	return sdk.Observation{Success: true, SchemaVersion: resultSchemaVersion, Result: value, ResultSets: map[string]map[string]any{"response": value}, Summary: fmt.Sprintf("最近匹配响应：HTTP %d %s", latest.Status, latest.URL)}, nil
 }
 
 func emptyResponseResult() map[string]any {
-	return map[string]any{"url": "", "method": "", "status": 0, "status_text": "", "resource_type": "", "mime_type": "", "headers": map[string]string{}, "body": "", "body_base64": false, "truncated": false, "error": "", "reused_tab": false, "duration_ms": int64(0)}
+	return map[string]any{"url": "", "method": "", "status": 0, "status_text": "", "resource_type": "", "mime_type": "", "headers": map[string]string{}, "body": "", "body_base64": false, "truncated": false, "error": "", "duration_ms": int64(0)}
 }

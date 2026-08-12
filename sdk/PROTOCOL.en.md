@@ -32,6 +32,27 @@ Return application errors as a successful gRPC response containing a non-empty J
 
 `ListModules` must match the manifest module count, types, and module versions exactly. An execution's `observation.schema_version` should match the module's manifest `result_schema_version`.
 
+### BrowserBridge bidirectional stream
+
+The plugin also registers `meerkit.sdk.BrowserBridge` on the same go-plugin gRPC server. After health checks, the host opens one long-lived `Session(stream BytesValue) returns (stream BytesValue)` over that existing gRPC/HTTP2 connection. There is no second capability listener, endpoint environment variable, or capability token.
+
+Each `BytesValue.value` is a JSON envelope:
+
+```json
+{
+  "type": "ready|request|response|event|cancel",
+  "id": "message-id",
+  "reply_to": "request-id",
+  "operation": "browser.action",
+  "payload": {},
+  "error": ""
+}
+```
+
+The plugin sends `ready` first, then uses requests for `browser.targets`, `browser.action`, `browser.network.start`, and `browser.network.stop`. Responses correlate through `reply_to`; context cancellation sends a `cancel` envelope. Host events include `browser.network`, `browser.network.status`, and `browser.targets.changed`.
+
+Page actions require an explicit `tab_id`; `tab.open` accepts only an optional `window_id`. Network capture is a separate session fixed to its initial tab, not a workflow action. Implementations must use one gRPC writer per Session, bounded queues, and plugin/capture ownership isolation. A slow capture consumer terminates only that capture and must not block Monitor RPCs or other plugins.
+
 ## Artifact runtime
 
 The manifest must declare a top-level `runtime` as the startup default for source builds and all artifacts. An `artifacts` entry may override it for a specific platform. Direct mode executes the artifact itself, does not allow `command`, and requires `args`; use an empty array when no arguments are needed:

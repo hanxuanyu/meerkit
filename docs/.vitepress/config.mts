@@ -28,6 +28,7 @@ export default defineConfig({
             { text: "监控与条件", link: "/guide/monitoring" },
             { text: "通知", link: "/guide/notifications" },
             { text: "状态看板", link: "/guide/status-board" },
+            { text: "浏览器执行节点", link: "/guide/browser-agent" },
             { text: "插件管理", link: "/guide/plugins" },
           ],
         },
@@ -50,6 +51,7 @@ export default defineConfig({
             { text: "架构与仓库", link: "/development/overview" },
             { text: "后端开发", link: "/development/backend" },
             { text: "前端开发", link: "/development/frontend" },
+            { text: "浏览器自动化", link: "/development/browser-automation" },
           ],
         },
         {

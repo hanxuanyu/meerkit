@@ -84,4 +84,5 @@ go run . --data-dir ./data admin reset-key \
 - 理解条件状态和通知策略：[监控与条件](/guide/monitoring)
 - 配置 Webhook 或 SMTP：[通知](/guide/notifications)
 - 把关键结果组织成视图：[状态看板](/guide/status-board)
+- 连接 Chrome 执行真实页面操作：[浏览器执行节点](/guide/browser-agent)
 - 准备长期运行：[部署与升级](/operations/deployment)

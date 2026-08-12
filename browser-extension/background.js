@@ -10,7 +10,7 @@ const CAPABILITIES = [
   "tab.open", "tab.navigate", "tab.close", "tab.group",
   "page.wait", "page.screenshot",
   "dom.document", "dom.query", "dom.click", "dom.input",
-  "runtime.evaluate", "network.capture"
+  "runtime.evaluate", "network.start", "network.stop", "browser.targets"
 ];
 
 let socket = null;
@@ -20,8 +20,8 @@ let reconnectAttempt = 0;
 let connectionState = "disconnected";
 let lastError = "";
 let activeRuns = 0;
-const leasedTabIds = new Set();
-const leasedReuseKeys = new Set();
+const networkSessions = new Map();
+let targetsChangedTimer = null;
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureIdentity();
@@ -47,6 +47,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+for (const event of [chrome.tabs.onCreated, chrome.tabs.onUpdated, chrome.tabs.onMoved, chrome.tabs.onAttached, chrome.tabs.onDetached, chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated, chrome.tabGroups.onRemoved, chrome.windows.onCreated, chrome.windows.onRemoved, chrome.windows.onFocusChanged]) {
+  event?.addListener(() => scheduleTargetsChanged());
+}
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void stopSessionsForTab(tabId);
+  scheduleTargetsChanged();
+});
+
+function scheduleTargetsChanged() {
+  clearTimeout(targetsChangedTimer);
+  targetsChangedTimer = setTimeout(() => send({ protocol: PROTOCOL_VERSION, type: "event", command: "browser.targets.changed", payload: {} }), 150);
+}
+
+async function stopSessionsForTab(tabId) {
+  for (const [sessionId, entry] of networkSessions) {
+    if (entry.session.target.tab_id !== tabId) continue;
+    await entry.capture.stop();
+    networkSessions.delete(sessionId);
+    send({ protocol: PROTOCOL_VERSION, type: "event", command: "browser.network.status", payload: { ...entry.session, status: "stopped", error: "Target tab was closed." } });
+  }
+}
+
+async function stopAllNetworkSessions(reason) {
+  const entries = [...networkSessions.entries()];
+  networkSessions.clear();
+  await Promise.allSettled(entries.map(async ([sessionId, entry]) => {
+    await entry.capture.stop();
+    send({ protocol: PROTOCOL_VERSION, type: "event", command: "browser.network.status", payload: { ...entry.session, id: sessionId, status: "stopped", error: reason } });
+  }));
+}
 
 async function settings() {
   return { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(DEFAULT_SETTINGS)) };
@@ -100,6 +131,7 @@ async function connect() {
   socket.addEventListener("message", (event) => void handleMessage(event.data));
   socket.addEventListener("close", () => {
     stopHeartbeat();
+    void stopAllNetworkSessions("Meerkit connection closed.");
     socket = null;
     if (connectionState !== "unconfigured") setState("disconnected", lastError || "Connection closed.");
     scheduleReconnect();
@@ -152,7 +184,7 @@ async function handleMessage(raw) {
     return;
   }
   if (message.type === "pong") return;
-  if (message.type !== "command" || message.command !== "browser.run" || !message.id) return;
+  if (message.type !== "command" || !message.id) return;
   const config = await settings();
   if (activeRuns >= Math.max(1, Number(config.maxConcurrent) || 1)) {
     send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, error: "browser agent concurrency limit reached" });
@@ -160,7 +192,7 @@ async function handleMessage(raw) {
   }
   activeRuns++;
   try {
-    const result = await executeRun(message.payload || {});
+    const result = await executeCommand(message.command, message.payload || {});
     send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, payload: result });
   } catch (error) {
     send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, error: safeError(error) });
@@ -169,84 +201,71 @@ async function handleMessage(raw) {
   }
 }
 
-async function executeRun(request) {
-  const started = performance.now();
-  const timeoutMS = clamp(Number(request.timeout_ms) || 60000, 1000, 300000);
-  const deadline = Date.now() + timeoutMS;
-  const state = { tabId: positiveInteger(request.tab_id), windowId: positiveInteger(request.window_id), createdTab: false, reuseKey: "", debuggerAttached: false, capture: null, pendingCaptureRules: [], networkResults: [] };
-  const actionResults = [];
-  try {
-    if (state.tabId) {
-      const initialTab = await chrome.tabs.get(state.tabId);
-      state.windowId = initialTab.windowId;
-      leasedTabIds.add(state.tabId);
-    }
-    for (const action of request.actions || []) {
-      const actionStarted = performance.now();
-      try {
-        const data = await withTimeout(executeAction(state, action, request.network_captures || [], deadline), remaining(deadline), `Action ${action.id || action.type} timed out.`);
-        actionResults.push({ id: action.id, type: action.type, success: true, duration_ms: Math.round(performance.now() - actionStarted), data: data || {} });
-      } catch (error) {
-        actionResults.push({ id: action.id, type: action.type, success: false, duration_ms: Math.round(performance.now() - actionStarted), error: safeError(error) });
-        if (!action.continue_on_error) throw error;
-      }
-    }
-    await finishNetworkCapture(state, deadline);
-    return {
-      agent_id: await ensureIdentity(),
-      tab_id: state.tabId || undefined,
-      window_id: state.windowId || undefined,
-      duration_ms: Math.round(performance.now() - started),
-      actions: actionResults,
-      network: state.networkResults
-    };
-  } finally {
-    if (state.capture) await state.capture.stop();
-    if (state.tabId) leasedTabIds.delete(state.tabId);
-    if (state.reuseKey) leasedReuseKeys.delete(state.reuseKey);
-    if (state.tabId && state.createdTab && !request.keep_tab) await chrome.tabs.remove(state.tabId).catch(() => {});
-  }
+async function executeCommand(command, request) {
+  if (command === "browser.targets") return listTargets();
+  if (command === "browser.action") return executeSingleAction(request);
+  if (command === "browser.network.start") return startNetworkSession(request);
+  if (command === "browser.network.stop") return stopNetworkSession(request);
+  throw new Error(`Unsupported browser command: ${command}`);
 }
 
-async function executeAction(state, action, captureRules, deadline) {
+async function executeSingleAction(request) {
+  const timeoutMS = clamp(Number(request.timeout_ms) || 60000, 1000, 300000);
+  const deadline = Date.now() + timeoutMS;
+  const action = request.action || {};
+  const state = { tabId: positiveInteger(request.target?.tab_id), windowId: positiveInteger(request.target?.window_id), createdTab: false, debuggerAttached: false, capture: null, pendingCaptureRules: [], networkResults: [] };
+  if (state.tabId) { const tab = await chrome.tabs.get(state.tabId); if (state.windowId && tab.windowId !== state.windowId) throw new Error("Selected tab does not belong to the selected window."); state.windowId = tab.windowId; }
+  const actionStarted = performance.now();
+  const data = await withTimeout(executeAction(state, action, [], deadline), remaining(deadline), `Action ${action.id || action.type} timed out.`);
+  const target = state.tabId ? { agent_id: await ensureIdentity(), window_id: state.windowId, tab_id: state.tabId } : {};
+  return { id: action.id, type: action.type, success: true, duration_ms: Math.round(performance.now() - actionStarted), target, data: data || {} };
+}
+
+async function listTargets() {
+  const windows = await chrome.windows.getAll({ populate: true });
+  const groups = await chrome.tabGroups.query({}).catch(() => []);
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  return { agent_id: await ensureIdentity(), windows: windows.map((window) => ({ id: window.id, focused: Boolean(window.focused), type: window.type || "normal", tabs: (window.tabs || []).map((tab) => ({ id: tab.id, window_id: tab.windowId, index: tab.index, active: Boolean(tab.active), status: tab.status || "", title: tab.title || "", url: tab.url || "", group_id: tab.groupId, group_title: groupsById.get(tab.groupId)?.title || "" })) })) };
+}
+
+async function startNetworkSession(request) {
+  const sessionId = String(request.session_id || crypto.randomUUID());
+  const tabId = positiveInteger(request.target?.tab_id);
+  if (!tabId) throw new Error("Network capture requires tab_id.");
+  const tab = await chrome.tabs.get(tabId);
+  if (request.target?.window_id && tab.windowId !== request.target.window_id) throw new Error("Selected tab does not belong to the selected window.");
+  if (networkSessions.has(sessionId)) throw new Error("Network capture session already exists.");
+  const capture = await createNetworkCapture(tabId, request.rules || [], sessionId);
+  const session = { id: sessionId, target: { agent_id: await ensureIdentity(), window_id: tab.windowId, tab_id: tabId }, status: "running", started_at: new Date().toISOString(), count: 0 };
+  networkSessions.set(sessionId, { session, capture });
+  return session;
+}
+
+async function stopNetworkSession(request) {
+  const sessionId = String(request.session_id || request.id || "");
+  const entry = networkSessions.get(sessionId);
+  if (!entry) throw new Error("Network capture session was not found.");
+  await entry.capture.flush(Date.now() + 10000);
+  await entry.capture.stop();
+  networkSessions.delete(sessionId);
+  return { ...entry.session, status: "stopped", count: entry.capture.results.length, events: entry.capture.results };
+}
+
+async function executeAction(state, action, _captureRules, deadline) {
   const params = action.params || {};
   switch (action.type) {
     case "tab.open": {
-      if (state.tabId) throw new Error("A browser tab is already active for this run; close it before opening another tab.");
+	  if (state.tabId) throw new Error("tab.open does not accept an existing tab target.");
       validateURL(params.url || "about:blank", true);
-      const reuseKey = String(params.reuse_key || params.url || "");
-      if (params.reuse && reuseKey) {
-        await acquireReuseKey(reuseKey, deadline);
-        state.reuseKey = reuseKey;
-      }
-      let tab = params.reuse ? await findReusableTab(reuseKey, params.url) : null;
-      state.createdTab = !tab;
-      if (!tab) {
-        const group = params.group_title ? await findTabGroup(state.windowId || undefined, String(params.group_title)) : null;
-        const windowId = state.windowId || group?.windowId;
-        tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false, ...(windowId ? { windowId } : {}) });
-      }
+	  let tab = await chrome.tabs.create({ url: "about:blank", active: params.active !== false, ...(state.windowId ? { windowId: state.windowId } : {}) });
       state.tabId = tab.id;
       state.windowId = tab.windowId;
-      leasedTabIds.add(tab.id);
-      state.capture = null;
-      state.debuggerAttached = false;
-      const initialCaptureRules = [...captureRules, ...state.pendingCaptureRules];
-      state.pendingCaptureRules = [];
-      if (initialCaptureRules.length) {
-        state.capture = await createNetworkCapture(tab.id, initialCaptureRules);
-        state.debuggerAttached = true;
-      }
-      if (!state.createdTab) {
-        await chrome.tabs.reload(tab.id);
-        if (params.wait !== false) await waitForTab(tab.id, deadline);
-      } else if (params.url && params.url !== "about:blank") {
+	  if (params.url && params.url !== "about:blank") {
         await chrome.tabs.update(tab.id, { url: params.url });
         if (params.wait !== false) await waitForTab(tab.id, deadline);
       }
       const finalTab = await chrome.tabs.get(tab.id);
-      if (params.reuse && reuseKey) await rememberReusableTab(reuseKey, finalTab, String(params.group_title || ""));
-      return { ...tabInfo(finalTab), reused: !state.createdTab };
+	  return tabInfo(finalTab);
     }
     case "tab.navigate": {
       requireTab(state);
@@ -273,13 +292,9 @@ async function executeAction(state, action, captureRules, deadline) {
     case "tab.close": {
       requireTab(state);
       const tabId = state.tabId;
-      await finishNetworkCapture(state, deadline);
       await chrome.tabs.remove(tabId);
       state.tabId = null;
-      leasedTabIds.delete(tabId);
-      if (state.reuseKey) leasedReuseKeys.delete(state.reuseKey);
-      state.createdTab = false;
-      state.reuseKey = "";
+	  state.createdTab = false;
       state.capture = null;
       state.debuggerAttached = false;
       return { tab_id: tabId };
@@ -330,112 +345,14 @@ async function executeAction(state, action, captureRules, deadline) {
       if (!expression || expression.length > 100000) throw new Error("A JavaScript expression between 1 and 100000 characters is required.");
       return runInMainWorld(state.tabId, evaluateExpression, [expression]);
     }
-    case "network.capture": {
-      if (state.capture) throw new Error("Network capture is already active for this run.");
-      const rule = {
-        id: String(params.capture_id || action.id || "network"),
-        url_contains: String(params.url_contains || ""),
-        resource_type: String(params.resource_type || ""),
-        max_body_bytes: clamp(Number(params.max_body_bytes) || 262144, 1024, 1048576)
-      };
-      if (state.tabId) {
-        state.capture = await createNetworkCapture(state.tabId, [rule]);
-        state.debuggerAttached = true;
-      } else {
-        state.pendingCaptureRules.push(rule);
-      }
-      return { capture_id: rule.id, active: Boolean(state.tabId), pending: !state.tabId, url_contains: rule.url_contains, resource_type: rule.resource_type };
-    }
     default:
       throw new Error(`Unsupported browser action: ${action.type}`);
   }
 }
 
-async function finishNetworkCapture(state, deadline) {
-  if (!state.capture) return;
-  const capture = state.capture;
-  await capture.flush(deadline);
-  await capture.stop();
-  state.networkResults.push(...capture.results);
-  state.capture = null;
-  state.debuggerAttached = false;
-}
-
-async function acquireReuseKey(reuseKey, deadline) {
-  while (leasedReuseKeys.has(reuseKey)) {
-    if (remaining(deadline) <= 1) throw new Error(`Timed out waiting for reusable tab ${reuseKey}.`);
-    await sleep(Math.min(100, remaining(deadline)));
-  }
-  leasedReuseKeys.add(reuseKey);
-}
-
-async function findReusableTab(reuseKey, targetURL) {
-  const storageKey = reusableTabStorageKey(reuseKey);
-  const [sessionState, localState] = await Promise.all([
-    chrome.storage.session.get([storageKey, "reusableTabs"]),
-    chrome.storage.local.get(null)
-  ]);
-  const sessionTabId = sessionState[storageKey]?.tab_id || sessionState.reusableTabs?.[reuseKey];
-  if (sessionTabId && !leasedTabIds.has(sessionTabId)) {
-    const tab = await chrome.tabs.get(sessionTabId).catch(() => null);
-    if (tab && !leasedTabIds.has(tab.id)) {
-      leasedTabIds.add(tab.id);
-      return tab;
-    }
-  }
-
-  const record = localState[storageKey] || {};
-  const legacyFinalURL = localState.reusableTabURLs?.[reuseKey] || localState.reusableTabURLs?.[targetURL];
-  const candidates = new Set([record.final_url, legacyFinalURL, targetURL].map(comparableURL).filter(Boolean));
-  if (record.tab_id && !leasedTabIds.has(record.tab_id)) {
-    const tab = await chrome.tabs.get(record.tab_id).catch(() => null);
-    if (tab && !leasedTabIds.has(tab.id) && (candidates.has(comparableURL(tab.url)) || await tabBelongsToGroup(tab, record.group_title))) {
-      leasedTabIds.add(tab.id);
-      return tab;
-    }
-  }
-  if (!candidates.size) return null;
-  const ownedByOtherKeys = new Set(Object.entries(localState)
-    .filter(([key, value]) => key.startsWith("reusableTab:") && key !== storageKey && value?.tab_id)
-    .map(([, value]) => value.tab_id));
-  const tabs = await chrome.tabs.query({});
-  const tab = tabs.find((value) => !leasedTabIds.has(value.id) && !ownedByOtherKeys.has(value.id) && candidates.has(comparableURL(value.url))) || null;
-  if (tab) leasedTabIds.add(tab.id);
-  return tab;
-}
-
-async function rememberReusableTab(reuseKey, tab, groupTitle) {
-  const storageKey = reusableTabStorageKey(reuseKey);
-  const record = { tab_id: tab.id, final_url: comparableURL(tab.url), group_title: groupTitle };
-  await Promise.all([
-    chrome.storage.session.set({ [storageKey]: { tab_id: tab.id } }),
-    chrome.storage.local.set({ [storageKey]: record })
-  ]);
-}
-
 async function findTabGroup(windowId, title) {
   const groups = await chrome.tabGroups.query(windowId == null ? {} : { windowId });
   return groups.find((group) => group.title === title) || null;
-}
-
-async function tabBelongsToGroup(tab, title) {
-  if (!title || tab.groupId == null || tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) return false;
-  const group = await chrome.tabGroups.get(tab.groupId).catch(() => null);
-  return group?.title === title;
-}
-
-function reusableTabStorageKey(reuseKey) {
-  return `reusableTab:${reuseKey}`;
-}
-
-function comparableURL(value) {
-  try {
-    const parsed = new URL(value);
-    parsed.hash = "";
-    return parsed.href;
-  } catch {
-    return "";
-  }
 }
 
 async function runInTab(tabId, func, args) {
@@ -522,7 +439,7 @@ async function waitForSelector(tabId, selector, timeoutMS) {
   throw new Error(`Selector wait timed out: ${selector}`);
 }
 
-async function createNetworkCapture(tabId, rules) {
+async function createNetworkCapture(tabId, rules, sessionId) {
   const target = { tabId };
   const results = [];
   const requests = new Map();
@@ -549,13 +466,20 @@ async function createNetworkCapture(tabId, rules) {
       }
     }
     if (method === "Network.loadingFinished" && responses.has(params.requestId)) {
-      const task = collectResponse(target, params.requestId, responses.get(params.requestId), requests.get(params.requestId), params, results).finally(() => pending.delete(task));
+      const task = collectResponse(target, params.requestId, responses.get(params.requestId), requests.get(params.requestId), params, results).then((result) => {
+        if (result) {
+          result.session_id = sessionId;
+          send({ protocol: PROTOCOL_VERSION, type: "event", command: "browser.network", payload: result });
+        }
+      }).finally(() => pending.delete(task));
       pending.add(task);
     }
     if (method === "Network.loadingFailed" && responses.has(params.requestId)) {
       const matched = responses.get(params.requestId);
       const request = requests.get(params.requestId);
-      results.push({ capture_id: matched.rule.id, url: matched.response.url, method: request?.method || "", status: matched.response.status || 0, resource_type: matched.resourceType, request_headers: request?.headers || {}, request_body: request?.postData || "", initiator_type: request?.initiatorType || "", duration_ms: request?.timestamp && params.timestamp ? Math.max(0, Math.round((params.timestamp - request.timestamp) * 1000)) : 0, error: params.errorText || "Network request failed.", _sequence: matched.sequence });
+      const result = { session_id: sessionId, capture_id: matched.rule.id, url: matched.response.url, method: request?.method || "", status: matched.response.status || 0, resource_type: matched.resourceType, request_headers: request?.headers || {}, request_body: request?.postData || "", initiator_type: request?.initiatorType || "", duration_ms: request?.timestamp && params.timestamp ? Math.max(0, Math.round((params.timestamp - request.timestamp) * 1000)) : 0, error: params.errorText || "Network request failed.", _sequence: matched.sequence };
+      results.push(result);
+      send({ protocol: PROTOCOL_VERSION, type: "event", command: "browser.network", payload: result });
     }
   };
   chrome.debugger.onEvent.addListener(listener);
@@ -611,6 +535,7 @@ async function collectResponse(target, requestId, matched, request, loading, res
     output.error = safeError(error);
   }
   results.push(output);
+  return output;
 }
 
 function normalizeHeaders(headers) {
@@ -624,7 +549,7 @@ function normalizeTiming(timing) {
 function tabInfo(tab) {
   return { tab_id: tab.id, window_id: tab.windowId, url: tab.url || "", title: tab.title || "", status: tab.status || "" };
 }
-function requireTab(state) { if (!state.tabId) throw new Error("No browser tab is active for this run."); }
+function requireTab(state) { if (!state.tabId) throw new Error("This browser action requires tab_id."); }
 function requiredSelector(value) { const selector = String(value || ""); if (!selector || selector.length > 4096) throw new Error("A selector between 1 and 4096 characters is required."); return selector; }
 function validateURL(value, allowAbout = false) { const url = new URL(value); if (!(url.protocol === "http:" || url.protocol === "https:" || (allowAbout && url.href === "about:blank"))) throw new Error("Only HTTP and HTTPS URLs are supported."); }
 function validGroupColor(value) { return ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"].includes(value) ? value : "blue"; }

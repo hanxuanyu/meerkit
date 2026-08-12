@@ -5,4 +5,7 @@ import (
 	"github.com/hanxuanyu/meerkit/sdk"
 )
 
-func main() { sdk.Serve(sdk.NewProvider(httpmonitor.New())) }
+func main() {
+	runtime := sdk.NewPluginRuntime()
+	runtime.Serve(sdk.NewProvider(httpmonitor.New()))
+}

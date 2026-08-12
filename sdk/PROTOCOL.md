@@ -16,7 +16,7 @@
 
 ## gRPC 服务
 
-规范源文件为 [`proto/monitor.proto`](proto/monitor.proto)。服务全名固定为 `meerkit.sdk.Monitor`，包含以下一元 RPC：
+规范源文件为 [`proto/monitor.proto`](proto/monitor.proto)。`meerkit.sdk.Monitor` 包含以下一元 RPC：
 
 | 方法 | 请求 JSON | 成功响应 JSON |
 | --- | --- | --- |
@@ -32,12 +32,33 @@
 
 `ListModules` 返回的模块集合必须与 `meerkit-plugin.yaml` 的 `modules` 在类型、数量和模块版本上完全一致。`Execute` 返回的 `observation.schema_version` 应与对应模块清单中的 `result_schema_version` 一致。
 
+### BrowserBridge 双向流
+
+插件必须在同一个 go-plugin gRPC Server 注册 `meerkit.sdk.BrowserBridge`。宿主完成健康检查后，在同一条 gRPC/HTTP2 连接上建立长期 `Session(stream BytesValue) returns (stream BytesValue)`；不会创建第二个 Capability 端口，也不会注入 Capability endpoint 或 token。
+
+每个 `BytesValue.value` 是下列 JSON 信封：
+
+```json
+{
+  "type": "ready|request|response|event|cancel",
+  "id": "message-id",
+  "reply_to": "request-id",
+  "operation": "browser.action",
+  "payload": {},
+  "error": ""
+}
+```
+
+插件建立 Session 后先发送 `ready`。插件以 `request` 调用 `browser.targets`、`browser.action`、`browser.network.start` 和 `browser.network.stop`；宿主以 `response.reply_to` 关联结果。调用 Context 取消时插件发送 `cancel.reply_to`。宿主可发送 `browser.network`、`browser.network.status` 和 `browser.targets.changed` 事件。
+
+页面类 Action 必须显式指定 `tab_id`，`tab.open` 只接受可选 `window_id`。网络捕获是独立、固定绑定标签页的会话，不属于 Action 工作流。实现必须保证单个 Session 只有一个 gRPC 发送协程，使用有界队列，并按插件和捕获会话隔离事件；慢捕获消费者只能终止自己的捕获，不能阻塞 Monitor RPC 或其他插件。
+
 ## 版本
 
 - go-plugin 核心协议版本固定为 `1`。
 - 当前 Meerkit 应用协议版本为 `1`。
 - 清单的 `protocol.min` 和 `protocol.max` 声明插件接受的 Meerkit 协议范围。
-- 新增可选 JSON 字段可以保持协议版本不变；删除字段、修改字段语义、服务名或方法签名必须提升协议版本。
+- 当前开发阶段直接以新的 Monitor + BrowserBridge 契约替换协议 `1`，不提供旧插件兼容分支。契约稳定发布后，新增可选 JSON 字段可以保持协议版本不变；删除字段、修改字段语义、服务名或方法签名必须提升协议版本。
 
 ## 制品运行方式
 

@@ -89,3 +89,30 @@ Webhook 只有 2xx 成功。SMTP 端口 465 使用隐式 TLS；其他端口使�
 ## 日志流断开
 
 系统与插件日志流使用 HTTP 流式响应，站内通知和状态看板使用 WebSocket。通过反向代理时要允许 Upgrade、关闭不合适的响应缓冲，并设置足够长的空闲超时。页面会在流断开后重连或重新拉取快照，但代理配置仍决定实时体验。
+
+## 浏览器执行节点
+
+节点未出现在“系统设置 > 浏览器”时：
+
+1. 在扩展弹窗或设置页确认状态，不要只看 Chrome 是否加载扩展。
+2. 确认 WebSocket 地址可从运行 Chrome 的主机访问；HTTPS 页面对应使用 `wss://`。
+3. 从 Meerkit 重新复制当前配对令牌。令牌轮换后旧扩展不会自动取得新值。
+4. 通过反向代理时确认 `/api/v1/browser/extension/ws` 支持 Upgrade 且空闲超时大于心跳周期。
+5. 检查 Chrome 的扩展 Service Worker 控制台，以及宿主业务日志中的配对或断线信息。
+
+Action 报错时：
+
+- `browser agent ... is not connected`：Agent 已断开或选择了旧节点。
+- `requires tab_id`：该 Action 必须绑定标签页。
+- `Selected tab does not belong to the selected window`：目标列表已变化，刷新后重新选择。
+- `browser agent concurrency limit reached`：扩展设置的最大并发已满。
+- Selector 找不到或等待超时：先用 `dom.document`/`dom.query` 验证页面、frame 和选择器；当前原子能力只操作目标标签页主文档。
+
+网络捕获报错时：
+
+- Chrome 同一标签页可能已被 DevTools 或另一 CDP 客户端占用，关闭冲突连接后重试。
+- 标签页关闭、扩展断线或插件退出会自动停止捕获，这是预期清理行为。
+- `event queue is full` 表示插件未持续消费 `BrowserCapture.Events()`；插件应启动读取协程并在结束后检查 `BrowserCapture.Err()`。
+- 响应正文为空可能是 CDP 无法读取、资源类型/URL 规则不匹配，或正文超过配置上限；查看事件的 `error` 与截断字段。
+
+开发排查和生命周期细节见[浏览器自动化架构](/development/browser-automation)。

@@ -76,15 +76,6 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	if err != nil {
 		return err
 	}
-	capabilityToken, err := browser.GenerateToken()
-	if err != nil {
-		return err
-	}
-	browserCapability, err := browser.StartCapabilityServer(browserManager, capabilityToken)
-	if err != nil {
-		return err
-	}
-	defer browserCapability.Close()
 	trustedKeys := make(map[string]ed25519.PublicKey, len(config.Plugins.TrustedKeys))
 	for id, encoded := range config.Plugins.TrustedKeys {
 		value, decodeErr := base64.StdEncoding.DecodeString(encoded)
@@ -93,7 +84,7 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 		}
 		trustedKeys[id] = ed25519.PublicKey(value)
 	}
-	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: runtimeSnapshot.Plugins.LogLevel, LogFormat: runtimeSnapshot.Plugins.LogFormat, BrowserCapabilityEndpoint: browserCapability.Endpoint, BrowserCapabilityToken: browserCapability.Token})
+	pluginManager, err := pluginruntime.NewManager(database, modules, pluginruntime.ManagerOptions{DataDir: config.Storage.DataDir, TrustedKeys: trustedKeys, Logger: logger, LogLevel: runtimeSnapshot.Plugins.LogLevel, LogFormat: runtimeSnapshot.Plugins.LogFormat, BrowserManager: browserManager})
 	if err != nil {
 		return err
 	}

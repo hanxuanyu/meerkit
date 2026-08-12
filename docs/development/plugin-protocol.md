@@ -29,7 +29,7 @@ MEERKIT_PLUGIN_LOG_FORMAT=<text|simple|json>
 
 ## gRPC 服务
 
-服务全名固定为 `meerkit.sdk.Monitor`，五个一元 RPC 都使用 `google.protobuf.BytesValue`：
+`meerkit.sdk.Monitor` 的五个一元 RPC 都使用 `google.protobuf.BytesValue`：
 
 | 方法 | 请求 JSON | 成功响应 JSON |
 | --- | --- | --- |
@@ -48,10 +48,23 @@ process start
   -> handshake
   -> grpc.health.v1.Health/Check("plugin")
   -> Monitor/Health
+  -> BrowserBridge/Session (long-lived stream, plugin sends ready)
   -> Monitor/ListModules
   -> [Monitor/MigrateConfig]
   -> Monitor/ValidateConfig / Monitor/Execute ...
 ```
+
+## 浏览器能力流
+
+插件在同一个 go-plugin gRPC Server 上注册 `meerkit.sdk.BrowserBridge`。宿主不会另外监听 Capability 端口；Monitor 一元 RPC 和 BrowserBridge 双向流复用同一条 HTTP/2 连接。Go 插件使用统一运行时：
+
+```go
+runtime := sdk.NewPluginRuntime()
+browser := runtime.Browser()
+runtime.Serve(sdk.NewProvider(...))
+```
+
+`BrowserClient` 提供目标查询、单个原子 Action 和独立网络捕获会话。浏览器操作通过带请求 ID 的 JSON 信封关联响应、取消和持续事件。Session 不可用时调用立即返回能力不可用错误；事件队列有界，并以插件及捕获 ID 隔离。具体信封和 operation 见 SDK 协议文档，宿主、扩展和网络捕获的完整生命周期见[浏览器自动化架构](/development/browser-automation)。
 
 ## 错误语义
 

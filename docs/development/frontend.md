@@ -34,7 +34,7 @@ npm --prefix web run build
 | `/notifications/:id?` | 站内通知中心 |
 | `/notification-channels` | 通知渠道 |
 | `/plugins` | 插件管理 |
-| `/browser-debug` | 后端 Schema 驱动的浏览器 action 流程编排与调试台 |
+| `/browser-debug` | 后端 Catalog 驱动的原子浏览器操作与网络捕获调试台 |
 | `/logs` | 系统与插件日志 |
 | `/settings` | 启动与运行时配置、管理员密钥 |
 
@@ -46,7 +46,7 @@ npm --prefix web run build
 
 实时数据分两类：
 
-- WebSocket：站内通知、状态看板。
+- WebSocket：站内通知、状态看板、浏览器目标与网络捕获事件。
 - HTTP 流：系统日志、插件日志。
 
 新增实时页面时应同时实现初始快照、增量事件和断线重建，不能只依赖内存事件。
@@ -63,7 +63,9 @@ npm --prefix web run build
 - `components/results/`
 - 状态看板字段类型推断
 
-浏览器调试页从 `GET /api/v1/browser/actions` 获取 action 分类、参数、默认值、显隐规则和结果类型。新增浏览器 action 时，应先在 `internal/browser/actions.go` 注册并校验，再在扩展执行端实现；前端只为新的参数控件或特殊结果类型增加适配，不维护 action 清单。
+浏览器调试页从 `GET /api/v1/browser/actions` 获取 action 分类、目标要求、参数、默认值、显隐规则和结果类型。页面通过 HTTP 执行单个 Action，通过 WebSocket 接收目标变化与网络事件；网络捕获拥有独立的启停 API，不属于 Action Catalog。新增浏览器 action 时，应先在 `internal/browser/actions.go` 注册并校验，再在扩展执行端实现；前端只为新的参数控件或特殊结果类型增加适配，不维护 action 清单。
+
+调试 WebSocket 断开后页面自动重连，并在目标变化时重新获取 Agent 与目标快照。网络事件必须按当前 `session_id` 过滤；捕获启动后保留返回的目标，不能因顶部选择变化而迁移。完整通信和清理规则见[浏览器自动化架构](/development/browser-automation)。
 
 ## 样式与交互
 

@@ -14,7 +14,8 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 
 ## 能力
 
-- 创建、导航、关闭和分组标签页；支持按稳定关联键复用并刷新已有标签页
+- 枚举 Chrome 窗口、标签页和标签分组
+- 创建、导航、关闭和分组标签页
 - 等待页面、时间或 CSS Selector
 - 获取完整 DOM 或选择器对应元素
 - 点击元素和填写表单控件
@@ -22,10 +23,8 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 - 截取当前页面可见区域
 - 通过 `chrome.debugger` 和 CDP 捕获匹配的网络请求、响应正文、标头、连接、缓存与时序信息
 
-业务 URL、选择器、页面流程和监控结果语义由独立的 Meerkit 监控插件维护。
+业务 URL、选择器、操作顺序和监控结果语义由独立的 Meerkit 监控插件维护。扩展不保存站点流程或标签页复用关系。
 
-`tab.open` 可通过 `reuse` 与 `reuse_key` 复用标签页。扩展会同时在 session storage 和持久化 local storage 中保存关联键、标签页 ID、目标分组和最终重定向地址；后台 Service Worker 重启或页面跳转后仍可找回原标签页。相同复用标识的并发任务会串行等待，避免因标签页暂时占用而创建副本。
+页面类 Action 必须显式传入 `tab_id`；同时传入 `window_id` 时扩展会校验标签页归属。`tab.open` 只接受可选的 `window_id`，成功后返回新标签页目标。网络捕获不是 Action，而是固定绑定启动时标签页的独立会话，通过 `browser.network.start` 和 `browser.network.stop` 管理；切换管理页当前选择不会迁移捕获目标。
 
-`tab.open` 的 `group_title` 可让新标签页优先创建到已有同名分组所在窗口。`tab.group` 的 `reuse_group` 参数会保留标签页当前的同名分组，或复用窗口中已有的分组，不再为每次执行重复创建分组。
-
-执行请求可通过顶层 `tab_id` 或 `window_id` 指定已有浏览器上下文。`network.capture` 是可排序的原子操作：放在 `tab.open` 前会先注册规则并捕获首次导航，放在已有标签页操作之后则立即开始捕获，流程结束时自动停止。
+扩展与 Meerkit 使用协议版本 `1` 的 WebSocket 长连接。连接或目标标签页断开时，扩展会停止相关 CDP 会话并释放 debugger attachment。

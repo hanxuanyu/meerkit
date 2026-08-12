@@ -91,6 +91,8 @@ WantedBy=multi-user.target
 4. 限制源站端口只对代理开放。
 5. 为登录端点增加边缘限速和访问日志保护。
 
+浏览器执行节点跨主机连接时，还要确保 `/api/v1/browser/extension/ws` 可通过 `wss://` Upgrade，并允许 Chrome 扩展连接保持长时间空闲。该端点使用首帧配对令牌，不依赖管理页面 Cookie；不要绕过代理直接暴露 Meerkit 源站端口。管理界面的 `/api/v1/browser/debug/ws` 同样需要 WebSocket 转发。
+
 ## 单实例约束
 
 当前调度器没有分布式任务租约。同一个数据库同时运行多个 Meerkit 实例会让各实例分别调度同一监控，可能产生重复执行和通知。因此当前部署应保持单个活动宿主；数据库高可用不等于应用可以水平扩容。
@@ -102,6 +104,7 @@ WantedBy=multi-user.target
 - SQLite：停机后的整个 `storage.data_dir`。
 - MySQL：数据库的一致性备份。
 - 已导入插件包和信任状态：它们分别位于数据目录和数据库，两者应保持同一恢复点。
+- 浏览器配对令牌：位于 `${storage.data_dir}/browser/pairing-token`；恢复到新环境后应评估是否立即轮换。
 - 外部配置文件。
 - 官方插件签名私钥仅在发布系统单独备份，绝不能放入应用备份或发布包。
 

@@ -15,11 +15,11 @@ Gin API + embedded React UI
   +-- Scheduler/Runner ---- cron, execution, condition state
   +-- Notification -------- in-app, Webhook, SMTP
   +-- Status board -------- sample mapping, trend state
-  +-- Browser manager ----- extension pairing, agent routing, capabilities -- WebSocket --> Chrome Extension
-  +-- Plugin manager ------ package trust, process lifecycle --------------- local gRPC --> plugin child process
+  +-- Browser manager ----- extension pairing, targets, actions, captures --- WebSocket --> Chrome Extension
+  +-- Plugin manager ------ package trust, process lifecycle --------------- local go-plugin gRPC --> plugin child process
   +-- Bun store ----------- SQLite or MySQL
 
-plugin child process -- local capability gRPC --> Browser manager
+plugin child process -- BrowserBridge bidirectional stream on the same go-plugin connection --> Browser manager
 ```
 
 HTTP API 负责校验输入和组织资源；应用服务在启动时装配所有依赖；核心包定义不依赖传输的领域契约；Store 用 Bun 共享领域模型并针对 SQLite/MySQL 处理连接与迁移。
@@ -31,7 +31,7 @@ HTTP API 负责校验输入和组织资源；应用服务在启动时装配所�
 | 宿主 | 调度、持久化、条件、通知、认证、插件信任与进程 | 具体 HTTP/TCP 探测语义 |
 | 监控插件 | 参数描述、结果描述、校验、执行、配置迁移 | Cron、数据库、通知投递 |
 | Chrome Extension | 通用标签页、DOM、脚本、截图和 CDP 网络操作 | 站点地址、采集流程与结果语义 |
-| Browser Manager | 扩展配对、节点会话、指令路由和插件能力授权 | 站点专有业务流程 |
+| Browser Manager | 扩展配对、节点会话、原子指令路由、捕获会话和插件隔离 | 站点专有业务流程 |
 | Web 前端 | 管理操作、动态表单、结果展示、实时流 | 独立业务状态或直接数据库访问 |
 | 文档站点 | 使用、运维、开发和参考文档 | 运行时管理界面 |
 
@@ -93,3 +93,5 @@ go test ./...
 - 配置版本与结果 Schema 版本：分别控制迁移和持久化结果解释。
 
 插件协议还有独立整数版本，当前为 `1`。不要用插件包版本替代协议或数据 Schema 版本。
+
+浏览器通信的目标、Action、捕获会话与两条长连接生命周期见[浏览器自动化架构](/development/browser-automation)。

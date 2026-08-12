@@ -26,13 +26,13 @@ features:
     link: /guide/notifications
     linkText: 管理通知
   - title: 可扩展插件
-    details: 官方插件使用 Go SDK；第三方语言可以直接实现公开的 gRPC、Proto 与 JSON Schema 协议。
+    details: 官方插件使用 Go SDK；第三方语言可以实现公开协议，浏览器插件还能复用平台管理的 Chrome 执行能力。
     link: /development/plugin-protocol
     linkText: 阅读协议
 ---
 
 ## 文档范围
 
-本网站描述仓库当前已经实现的功能，不作为未来路线图。使用者可以从[快速开始](/guide/getting-started)进入；部署维护者应重点阅读[配置](/operations/configuration)、[部署与升级](/operations/deployment)和[安全边界](/operations/security)；插件作者可以选择 [Go SDK](/development/plugin-go) 或[跨语言协议](/development/plugin-protocol)。
+本网站描述仓库当前已经实现的功能，不作为未来路线图。使用者可以从[快速开始](/guide/getting-started)进入；需要真实浏览器采集时阅读[浏览器执行节点](/guide/browser-agent)；部署维护者应重点阅读[配置](/operations/configuration)、[部署与升级](/operations/deployment)和[安全边界](/operations/security)；插件作者可以选择 [Go SDK](/development/plugin-go) 或[跨语言协议](/development/plugin-protocol)。
 
 Meerkit 主项目、官方插件、SDK 和本文档均以 [Apache License 2.0](https://github.com/hanxuanyu/meerkit/blob/main/LICENSE) 开源。

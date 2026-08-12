@@ -18,7 +18,7 @@ type HTMLConfig struct {
 type HTMLModule struct{ moduleBase }
 
 func NewHTML(browser sdk.BrowserClient) *HTMLModule {
-	return &HTMLModule{moduleBase{browser: browser, reuseNamespace: htmlModuleType}}
+	return &HTMLModule{moduleBase{browser: browser}}
 }
 
 func (m *HTMLModule) Descriptor() sdk.ModuleDescriptor {
@@ -31,7 +31,6 @@ func (m *HTMLModule) Descriptor() sdk.ModuleDescriptor {
 		{Name: "title", Label: "页面标题", Type: "string", Operators: stringOperators()},
 		{Name: "page_url", Label: "最终页面地址", Type: "string", Operators: stringOperators()},
 		{Name: "truncated", Label: "内容已截断", Type: "boolean", Operators: boolOperators()},
-		{Name: "reused_tab", Label: "复用了标签页", Type: "boolean", Operators: boolOperators()},
 		{Name: "duration_ms", Label: "执行耗时", Type: "number", Unit: "ms", Operators: numberOperators()},
 	}
 	return sdk.ModuleDescriptor{
@@ -66,15 +65,15 @@ func (m *HTMLModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.Obse
 	if config.MaxLength == 0 {
 		config.MaxLength = 262144
 	}
-	result, err := m.run(ctx, config.pageConfig, []sdk.BrowserAction{{ID: "document", Type: "dom.document", Params: map[string]any{"max_length": config.MaxLength}}})
+	result, err := m.run(ctx, config.pageConfig, []sdk.BrowserAction{{ID: "document", Type: "dom.document", Params: map[string]any{"max_length": config.MaxLength}}}, nil)
 	if err != nil {
 		return failedObservation("page", err.Error(), emptyHTMLResult()), err
 	}
-	document, open := actionData(result.Actions, "document"), actionData(result.Actions, "open")
-	value := map[string]any{"html": stringValue(document, "html"), "title": stringValue(document, "title"), "page_url": stringValue(document, "url"), "truncated": boolValue(document, "truncated"), "reused_tab": boolValue(open, "reused"), "duration_ms": result.Duration}
+	document := actionData(result.Actions, "document")
+	value := map[string]any{"html": stringValue(document, "html"), "title": stringValue(document, "title"), "page_url": stringValue(document, "url"), "truncated": boolValue(document, "truncated"), "duration_ms": result.Duration}
 	return sdk.Observation{Success: true, SchemaVersion: resultSchemaVersion, Result: value, ResultSets: map[string]map[string]any{"page": value}, Summary: fmt.Sprintf("已获取页面 HTML：%s", value["page_url"])}, nil
 }
 
 func emptyHTMLResult() map[string]any {
-	return map[string]any{"html": "", "title": "", "page_url": "", "truncated": false, "reused_tab": false, "duration_ms": int64(0)}
+	return map[string]any{"html": "", "title": "", "page_url": "", "truncated": false, "duration_ms": int64(0)}
 }

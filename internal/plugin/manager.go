@@ -26,6 +26,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"meerkit/internal/browser"
 	"meerkit/internal/core"
 	"meerkit/internal/monitor"
 	"meerkit/internal/store"
@@ -55,35 +56,34 @@ type signatureInfo struct {
 }
 
 type ManagerOptions struct {
-	DataDir                   string
-	TrustedKeys               map[string]ed25519.PublicKey
-	Logger                    *slog.Logger
-	LogLevel                  string
-	LogFormat                 string
-	BrowserCapabilityEndpoint string
-	BrowserCapabilityToken    string
+	DataDir        string
+	TrustedKeys    map[string]ed25519.PublicKey
+	Logger         *slog.Logger
+	LogLevel       string
+	LogFormat      string
+	BrowserManager *browser.Manager
 }
 
 type process struct {
-	client  *hplugin.Client
-	gate    *monitor.ExecutionGate
-	version string
-	logFile *os.File
+	client       *hplugin.Client
+	gate         *monitor.ExecutionGate
+	version      string
+	logFile      *os.File
+	bridgeCancel context.CancelFunc
 }
 type Manager struct {
-	store                     store.PluginRepository
-	registry                  *monitor.Registry
-	root                      string
-	logger                    *slog.Logger
-	pluginLogLevel            string
-	pluginLogFormat           string
-	browserCapabilityEndpoint string
-	browserCapabilityToken    string
-	mu                        sync.Mutex
-	processes                 map[string]*process
-	watcher                   *fsnotify.Watcher
-	watchCancel               context.CancelFunc
-	developmentBuilder        func(context.Context, string, string) error
+	store              store.PluginRepository
+	registry           *monitor.Registry
+	root               string
+	logger             *slog.Logger
+	pluginLogLevel     string
+	pluginLogFormat    string
+	browserManager     *browser.Manager
+	mu                 sync.Mutex
+	processes          map[string]*process
+	watcher            *fsnotify.Watcher
+	watchCancel        context.CancelFunc
+	developmentBuilder func(context.Context, string, string) error
 }
 
 func NewManager(database store.PluginRepository, registry *monitor.Registry, options ManagerOptions) (*Manager, error) {
@@ -99,7 +99,7 @@ func NewManager(database store.PluginRepository, registry *monitor.Registry, opt
 	if pluginLogFormat == "" {
 		pluginLogFormat = "simple"
 	}
-	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, pluginLogLevel: pluginLogLevel, pluginLogFormat: pluginLogFormat, browserCapabilityEndpoint: options.BrowserCapabilityEndpoint, browserCapabilityToken: options.BrowserCapabilityToken, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
+	manager := &Manager{store: database, registry: registry, root: filepath.Join(dataDir, "plugins"), logger: options.Logger, pluginLogLevel: pluginLogLevel, pluginLogFormat: pluginLogFormat, browserManager: options.BrowserManager, processes: make(map[string]*process), developmentBuilder: buildDevelopmentPlugin}
 	for _, directory := range []string{"inbox", "staging", "packages", "installed", "development", "rejected", "logs"} {
 		if err := os.MkdirAll(filepath.Join(manager.root, directory), 0o750); err != nil {
 			return nil, err
@@ -330,11 +330,15 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		"MEERKIT_PLUGIN_LOG_LEVEL="+m.pluginLogLevel,
 		"MEERKIT_PLUGIN_LOG_FORMAT="+m.pluginLogFormat,
 	)
-	if m.browserCapabilityEndpoint != "" && m.browserCapabilityToken != "" {
-		command.Env = append(command.Env, sdk.BrowserCapabilityEndpointEnv+"="+m.browserCapabilityEndpoint, sdk.BrowserCapabilityTokenEnv+"="+m.browserCapabilityToken)
-	}
 	client := hplugin.NewClient(&hplugin.ClientConfig{HandshakeConfig: sdk.Handshake, Plugins: map[string]hplugin.Plugin{"monitor": &sdk.MonitorPlugin{}}, Cmd: command, AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC}, Managed: true, Stderr: logFile, SyncStdout: logFile, SyncStderr: logFile, Logger: hclog.NewNullLogger()})
-	cleanupCandidate := func() { client.Kill(); _ = logFile.Close() }
+	var bridgeCancel context.CancelFunc
+	cleanupCandidate := func() {
+		if bridgeCancel != nil {
+			bridgeCancel()
+		}
+		client.Kill()
+		_ = logFile.Close()
+	}
 	rpcClient, err := client.Client()
 	if err != nil {
 		cleanupCandidate()
@@ -377,6 +381,26 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 	}
 	if m.logger != nil {
 		m.logger.Info("plugin health check passed", "plugin_id", id, "version", installation.Version)
+	}
+	if m.browserManager != nil {
+		var bridgeCtx context.Context
+		bridgeCtx, bridgeCancel = context.WithCancel(context.Background())
+		bridgeReady := make(chan error, 1)
+		go func() {
+			if err := m.browserManager.ServePluginBridge(bridgeCtx, id, grpcClient.Conn, bridgeReady); err != nil && !errors.Is(err, context.Canceled) && m.logger != nil {
+				m.logger.Warn("plugin browser bridge stopped", "plugin_id", id, "error", err)
+			}
+		}()
+		select {
+		case bridgeErr := <-bridgeReady:
+			if bridgeErr != nil {
+				cleanupCandidate()
+				return m.markFailure(ctx, installation, fmt.Errorf("initialize plugin browser bridge: %w", bridgeErr))
+			}
+		case <-time.After(5 * time.Second):
+			cleanupCandidate()
+			return m.markFailure(ctx, installation, errors.New("initialize plugin browser bridge: timed out"))
+		}
 	}
 	descriptors, err := provider.ListModules()
 	if err != nil {
@@ -449,7 +473,7 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		return m.markFailure(ctx, installation, err)
 	}
 	m.mu.Lock()
-	m.processes[id] = &process{client: client, gate: gate, version: installation.Version, logFile: logFile}
+	m.processes[id] = &process{client: client, gate: gate, version: installation.Version, logFile: logFile, bridgeCancel: bridgeCancel}
 	m.mu.Unlock()
 	if previous != nil {
 		previous.gate.Stop()
@@ -527,6 +551,9 @@ func (m *Manager) stopActive(id string) error {
 		}
 		active.gate.Stop()
 		active.gate.Wait()
+		if active.bridgeCancel != nil {
+			active.bridgeCancel()
+		}
 		active.client.Kill()
 		if active.logFile != nil {
 			_ = active.logFile.Close()

@@ -30,13 +30,30 @@ type Module interface {
 
 SDK 的默认 Provider 在配置版本相同的时候原样返回配置；如果要支持跨版本升级，可以实现完整 `Provider`，或在自己的聚合层分派迁移。
 
-入口保持简单：
+所有插件都使用统一的 `PluginRuntime`。HTTP、TCP 等不需要浏览器能力的插件也使用同一个入口，但不调用 `runtime.Browser()`：
 
 ```go
 func main() {
-    sdk.Serve(sdk.NewProvider(monitor.New()))
+    runtime := sdk.NewPluginRuntime()
+    runtime.Serve(sdk.NewProvider(monitor.New()))
 }
 ```
+
+需要浏览器能力时，在构造模块前取得 `BrowserClient`：
+
+```go
+func main() {
+    runtime := sdk.NewPluginRuntime()
+    browser := runtime.Browser()
+
+    runtime.Serve(sdk.NewProvider(
+        monitor.NewHTML(browser),
+        monitor.NewResponse(browser),
+    ))
+}
+```
+
+`BrowserClient` 提供目标查询、单 Action 和网络捕获。Session 未建立或已断开时会返回明确错误；调用方必须传播 Context、显式停止捕获并关闭自己创建的标签页。详见[浏览器自动化架构](/development/browser-automation#插件-browserbridge)。
 
 ## 模块描述器
 
@@ -92,7 +109,7 @@ func main() {
 
 ## 日志
 
-`sdk.Serve` 设置默认 `log/slog` Logger，并把插件 ID 与版本加入属性。宿主通过环境变量控制日志级别和格式。
+`PluginRuntime.Serve` 设置默认 `log/slog` Logger，并把插件 ID 与版本加入属性。宿主通过环境变量控制日志级别和格式。
 
 ```go
 slog.InfoContext(ctx, "dns query completed",

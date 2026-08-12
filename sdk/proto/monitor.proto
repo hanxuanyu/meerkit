@@ -15,3 +15,7 @@ service Monitor {
   rpc MigrateConfig(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
   rpc Health(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
 }
+
+service BrowserBridge {
+  rpc Session(stream google.protobuf.BytesValue) returns (stream google.protobuf.BytesValue);
+}

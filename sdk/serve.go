@@ -12,6 +12,10 @@ import (
 )
 
 func Serve(provider Provider) {
+	NewPluginRuntime().Serve(provider)
+}
+
+func serveWithRuntime(provider Provider, runtime *PluginRuntime) {
 	format := strings.ToLower(strings.TrimSpace(os.Getenv("MEERKIT_PLUGIN_LOG_FORMAT")))
 	if format == "" {
 		format = "simple"
@@ -38,7 +42,7 @@ func Serve(provider Provider) {
 	logger.Info("plugin process starting", "pid", os.Getpid(), "protocol_version", ProtocolVersion, "log_format", format, "log_level", level.String())
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: Handshake,
-		Plugins:         map[string]plugin.Plugin{"monitor": &MonitorPlugin{Impl: newLoggingProvider(provider, logger)}},
+		Plugins:         map[string]plugin.Plugin{"monitor": &MonitorPlugin{Impl: newLoggingProvider(provider, logger), Runtime: runtime}},
 		GRPCServer: func(options []grpc.ServerOption) *grpc.Server {
 			logger.Info("plugin RPC server initialized")
 			return plugin.DefaultGRPCServer(options)

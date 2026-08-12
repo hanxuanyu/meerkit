@@ -15,4 +15,7 @@ func (module) ValidateConfig(json.RawMessage) error { return nil }
 func (module) Execute(context.Context, json.RawMessage) (sdk.Observation, error) {
 	return sdk.Observation{Success: true, SchemaVersion: "1", Result: map[string]any{"message": "ok"}, Summary: "Example check completed"}, nil
 }
-func main() { sdk.Serve(sdk.NewProvider(module{})) }
+func main() {
+	runtime := sdk.NewPluginRuntime()
+	runtime.Serve(sdk.NewProvider(module{}))
+}

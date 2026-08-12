@@ -42,7 +42,11 @@ func TestRegisteredGRPCServiceMatchesPublishedProto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	matches := regexp.MustCompile(`(?m)^\s*rpc\s+([A-Za-z0-9_]+)\(`).FindAllSubmatch(data, -1)
+	monitorBlock := regexp.MustCompile(`(?s)service Monitor\s*\{(.*?)\}`).FindSubmatch(data)
+	if len(monitorBlock) != 2 {
+		t.Fatal("Monitor service is missing from proto")
+	}
+	matches := regexp.MustCompile(`(?m)^\s*rpc\s+([A-Za-z0-9_]+)\(`).FindAllSubmatch(monitorBlock[1], -1)
 	protoMethods := make([]string, 0, len(matches))
 	for _, match := range matches {
 		protoMethods = append(protoMethods, string(match[1]))
@@ -65,5 +69,23 @@ func TestRegisteredGRPCServiceMatchesPublishedProto(t *testing.T) {
 		if protoMethods[index] != registeredMethods[index] {
 			t.Fatalf("proto methods %v do not match registered methods %v", protoMethods, registeredMethods)
 		}
+	}
+}
+
+func TestRegisteredBrowserBridgeMatchesPublishedProto(t *testing.T) {
+	data, err := os.ReadFile("proto/monitor.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := regexp.MustCompile(`(?s)service BrowserBridge\s*\{(.*?)\}`).FindSubmatch(data)
+	if len(block) != 2 || !regexp.MustCompile(`rpc\s+Session\s*\(\s*stream\s+google\.protobuf\.BytesValue\s*\)\s*returns\s*\(\s*stream\s+google\.protobuf\.BytesValue\s*\)`).Match(block[1]) {
+		t.Fatal("BrowserBridge.Session bidirectional stream is missing from proto")
+	}
+	if browserBridgeDesc.ServiceName != "meerkit.sdk.BrowserBridge" || len(browserBridgeDesc.Streams) != 1 {
+		t.Fatalf("unexpected browser bridge description: %#v", browserBridgeDesc)
+	}
+	stream := browserBridgeDesc.Streams[0]
+	if stream.StreamName != "Session" || !stream.ClientStreams || !stream.ServerStreams {
+		t.Fatalf("unexpected browser bridge stream: %#v", stream)
 	}
 }

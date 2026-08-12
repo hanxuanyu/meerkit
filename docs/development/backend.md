@@ -27,6 +27,7 @@ Air 配置位于仓库根目录的 `.air.toml`。编译失败时会继续运行�
 - `internal/runtime` 组织具有状态变化的监控流程，不能把通知或条件状态只留在 HTTP Handler。
 - `internal/api` 负责请求解码、状态码和错误信封，不直接持有 SQL。
 - `internal/plugin` 负责不可信包输入与进程生命周期，所有文件路径和外部制品都要在使用前验证。
+- `internal/browser` 负责 Chrome Agent、原子 Action、捕获所有权和事件 Hub；它是主进程模块，不应拆出第二个本地 RPC Server。
 
 ## 数据库变化
 
@@ -61,6 +62,7 @@ Air 配置位于仓库根目录的 `.air.toml`。编译失败时会继续运行�
 - 同一监控通过进程内锁避免重叠执行。
 - 调度器的并发上限是全局计数，不是工作队列。
 - 插件替换前通过 `ExecutionGate` 阻止新调用并等待当前调用完成。
+- 插件 BrowserBridge、Agent WebSocket 和调试 WebSocket 必须使用单写协程或写锁；捕获事件使用有界队列并按 owner 隔离。
 - 关闭流程由信号 Context 驱动，HTTP 优雅关闭上限 10 秒。
 
 新增后台循环必须支持 Context 取消，并在运行时配置变化时正确重置计时器。

@@ -19,7 +19,7 @@ type CSSTextConfig struct {
 type CSSTextModule struct{ moduleBase }
 
 func NewCSSText(browser sdk.BrowserClient) *CSSTextModule {
-	return &CSSTextModule{moduleBase{browser: browser, reuseNamespace: cssTextModuleType}}
+	return &CSSTextModule{moduleBase{browser: browser}}
 }
 
 func (m *CSSTextModule) Descriptor() sdk.ModuleDescriptor {
@@ -33,7 +33,6 @@ func (m *CSSTextModule) Descriptor() sdk.ModuleDescriptor {
 		{Name: "tag_name", Label: "元素标签", Type: "string", Operators: stringOperators()},
 		{Name: "title", Label: "页面标题", Type: "string", Operators: stringOperators()},
 		{Name: "page_url", Label: "最终页面地址", Type: "string", Operators: stringOperators()},
-		{Name: "reused_tab", Label: "复用了标签页", Type: "boolean", Operators: boolOperators()},
 		{Name: "duration_ms", Label: "执行耗时", Type: "number", Unit: "ms", Operators: numberOperators()},
 	}
 	return sdk.ModuleDescriptor{
@@ -68,16 +67,16 @@ func (m *CSSTextModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.O
 	result, err := m.run(ctx, config.pageConfig, []sdk.BrowserAction{
 		{ID: "wait", Type: "page.wait", Params: map[string]any{"selector": config.Selector, "timeout_ms": int(defaultTimeout.Milliseconds())}},
 		{ID: "element", Type: "dom.query", Params: map[string]any{"selector": config.Selector, "max_length": 65536}},
-	})
+	}, nil)
 	if err != nil {
 		return failedObservation("element", err.Error(), emptyCSSTextResult()), err
 	}
-	element, open := actionData(result.Actions, "element"), actionData(result.Actions, "open")
+	element := actionData(result.Actions, "element")
 	text := stringValue(element, "text")
-	value := map[string]any{"text": text, "selector": config.Selector, "tag_name": stringValue(element, "tag_name"), "title": stringValue(element, "title"), "page_url": stringValue(element, "url"), "reused_tab": boolValue(open, "reused"), "duration_ms": result.Duration}
+	value := map[string]any{"text": text, "selector": config.Selector, "tag_name": stringValue(element, "tag_name"), "title": stringValue(element, "title"), "page_url": stringValue(element, "url"), "duration_ms": result.Duration}
 	return sdk.Observation{Success: true, SchemaVersion: resultSchemaVersion, Result: value, ResultSets: map[string]map[string]any{"element": value}, Summary: "已获取 CSS 文本：" + summarize(text)}, nil
 }
 
 func emptyCSSTextResult() map[string]any {
-	return map[string]any{"text": "", "selector": "", "tag_name": "", "title": "", "page_url": "", "reused_tab": false, "duration_ms": int64(0)}
+	return map[string]any{"text": "", "selector": "", "tag_name": "", "title": "", "page_url": "", "duration_ms": int64(0)}
 }

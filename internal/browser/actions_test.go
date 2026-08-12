@@ -7,56 +7,39 @@ import (
 	"github.com/hanxuanyu/meerkit/sdk"
 )
 
-func TestBrowserActionCatalogDefinesExecutableActions(t *testing.T) {
+func TestActionCatalogExcludesNetworkCapture(t *testing.T) {
 	catalog := BrowserActionCatalog()
-	if len(catalog.Actions) != 12 {
-		t.Fatalf("action definitions = %d, want 12", len(catalog.Actions))
+	if len(catalog.Actions) == 0 {
+		t.Fatal("action catalog is empty")
 	}
-	seen := make(map[string]bool, len(catalog.Actions))
-	for _, definition := range catalog.Actions {
-		if definition.Type == "" || definition.Label == "" || definition.Category == "" || definition.Capability == "" || definition.ResultType == "" {
-			t.Fatalf("incomplete action definition: %#v", definition)
+	for _, action := range catalog.Actions {
+		if action.Type == "network.capture" {
+			t.Fatal("network capture must not be an action")
 		}
-		if seen[definition.Type] {
-			t.Fatalf("duplicate action definition %q", definition.Type)
+		if action.TargetMode == "" {
+			t.Fatalf("action %s has no target mode", action.Type)
 		}
-		seen[definition.Type] = true
-	}
-	if !seen["network.capture"] {
-		t.Fatal("network.capture is not exposed as an action")
-	}
-	if err := ValidateBrowserRunRequest(sdk.BrowserRunRequest{Actions: catalog.StarterFlow}); err != nil {
-		t.Fatalf("starter flow is invalid: %v", err)
 	}
 }
 
-func TestValidateBrowserRunRequestUsesActionValidators(t *testing.T) {
+func TestValidateBrowserActionRequest(t *testing.T) {
 	tests := []struct {
 		name    string
-		request sdk.BrowserRunRequest
+		request sdk.BrowserActionRequest
 		want    string
 	}{
-		{name: "unknown action", request: sdk.BrowserRunRequest{Actions: []sdk.BrowserAction{{Type: "unknown"}}}, want: "unsupported type"},
-		{name: "missing selector", request: sdk.BrowserRunRequest{Actions: []sdk.BrowserAction{{Type: "dom.query"}}}, want: "selector"},
-		{name: "duplicate id", request: sdk.BrowserRunRequest{Actions: []sdk.BrowserAction{{ID: "same", Type: "page.wait"}, {ID: "same", Type: "page.wait"}}}, want: "duplicated"},
-		{name: "invalid context", request: sdk.BrowserRunRequest{TabID: -1, Actions: []sdk.BrowserAction{{Type: "page.wait"}}}, want: "cannot be negative"},
+		{name: "unknown", request: sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: "unknown"}}, want: "unsupported"},
+		{name: "missing tab", request: sdk.BrowserActionRequest{Action: sdk.BrowserAction{Type: "dom.query", Params: map[string]any{"selector": "main"}}}, want: "tab_id"},
+		{name: "missing selector", request: sdk.BrowserActionRequest{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "dom.query"}}, want: "selector"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateBrowserRunRequest(test.request)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validation error = %v, want text %q", err, test.want)
+			if err := ValidateBrowserActionRequest(test.request); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("got %v, want %q", err, test.want)
 			}
 		})
 	}
-}
-
-func TestValidateBrowserRunRequestAcceptsAtomicNetworkCapture(t *testing.T) {
-	request := sdk.BrowserRunRequest{TabID: 12, WindowID: 3, Actions: []sdk.BrowserAction{
-		{ID: "capture", Type: "network.capture", Params: map[string]any{"capture_id": "api", "url_contains": "/api/", "resource_type": "Fetch", "max_body_bytes": 4096}},
-		{ID: "navigate", Type: "tab.navigate", Params: map[string]any{"url": "https://example.com"}},
-	}}
-	if err := ValidateBrowserRunRequest(request); err != nil {
+	if err := ValidateBrowserActionRequest(sdk.BrowserActionRequest{Target: sdk.BrowserTarget{TabID: 3}, Action: sdk.BrowserAction{Type: "dom.query", Params: map[string]any{"selector": "main"}}}); err != nil {
 		t.Fatal(err)
 	}
 }

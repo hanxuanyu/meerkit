@@ -34,11 +34,15 @@ type response struct {
 
 type MonitorPlugin struct {
 	plugin.Plugin
-	Impl Provider
+	Impl    Provider
+	Runtime *PluginRuntime
 }
 
 func (p *MonitorPlugin) GRPCServer(_ *plugin.GRPCBroker, server *grpc.Server) error {
 	RegisterMonitorServer(server, &monitorServer{provider: p.Impl})
+	if p.Runtime != nil {
+		RegisterBrowserBridgeServer(server, p.Runtime.browserServer())
+	}
 	return nil
 }
 

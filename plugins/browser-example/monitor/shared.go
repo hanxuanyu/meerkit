@@ -20,14 +20,13 @@ const (
 )
 
 type pageConfig struct {
-	URL          string `json:"url"`
-	AlwaysNewTab bool   `json:"always_new_tab"`
-	TabReuseKey  string `json:"tab_reuse_key,omitempty"`
+	URL string `json:"url"`
 }
-
-type moduleBase struct {
-	browser        sdk.BrowserClient
-	reuseNamespace string
+type moduleBase struct{ browser sdk.BrowserClient }
+type browserExecution struct {
+	Duration int64
+	Actions  []sdk.BrowserActionResult
+	Network  []sdk.BrowserNetworkResult
 }
 
 func validatePageConfig(config pageConfig, browser sdk.BrowserClient) error {
@@ -38,73 +37,98 @@ func validatePageConfig(config pageConfig, browser sdk.BrowserClient) error {
 	if browser == nil {
 		return errors.New("browser capability is unavailable")
 	}
-	if len(strings.TrimSpace(config.TabReuseKey)) > 256 {
-		return errors.New("tab_reuse_key cannot exceed 256 characters")
-	}
 	return nil
 }
 
-func (m moduleBase) run(ctx context.Context, config pageConfig, actions []sdk.BrowserAction, captures ...sdk.BrowserNetworkCapture) (sdk.BrowserRunResult, error) {
-	targetURL := strings.TrimSpace(config.URL)
-	params := map[string]any{
-		"url":         targetURL,
-		"active":      false,
-		"reuse":       !config.AlwaysNewTab,
-		"reuse_key":   m.reusablePageKey(config),
-		"group_title": "Meerkit",
-	}
-	actions = append([]sdk.BrowserAction{
-		{ID: "open", Type: "tab.open", Params: params},
-		{ID: "group", Type: "tab.group", Params: map[string]any{"title": "Meerkit", "color": "blue", "collapsed": false, "reuse_group": true}},
-	}, actions...)
-	request := sdk.BrowserRunRequest{
-		TimeoutMS:       int(defaultTimeout.Milliseconds()),
-		KeepTab:         !config.AlwaysNewTab,
-		Actions:         actions,
-		NetworkCaptures: captures,
-	}
+func (m moduleBase) run(ctx context.Context, config pageConfig, actions []sdk.BrowserAction, captureRule *sdk.BrowserNetworkCaptureRule) (browserExecution, error) {
+	started := time.Now()
 	executionContext, cancel := context.WithTimeout(ctx, defaultTimeout+5*time.Second)
 	defer cancel()
-	return m.browser.Run(executionContext, request)
-}
-
-func (m moduleBase) reusablePageKey(config pageConfig) string {
-	value := strings.TrimSpace(config.TabReuseKey)
-	if value != "" {
-		return m.reuseNamespace + ":" + value
+	openURL := strings.TrimSpace(config.URL)
+	if captureRule != nil {
+		openURL = "about:blank"
 	}
-	value = strings.TrimSpace(config.URL)
-	parsed, err := url.Parse(value)
+	open, err := m.browser.ExecuteAction(executionContext, sdk.BrowserActionRequest{TimeoutMS: int(defaultTimeout.Milliseconds()), Action: sdk.BrowserAction{ID: "open", Type: "tab.open", Params: map[string]any{"url": openURL, "active": false, "wait": true}}})
 	if err != nil {
-		return m.reuseNamespace + ":" + value
+		return browserExecution{}, err
 	}
-	parsed.Fragment = ""
-	return m.reuseNamespace + ":" + parsed.String()
+	target := open.Target
+	if target.TabID == 0 {
+		target.TabID = intValue(open.Data, "tab_id")
+		target.WindowID = intValue(open.Data, "window_id")
+	}
+	if target.TabID == 0 {
+		return browserExecution{}, errors.New("browser did not return the opened tab target")
+	}
+	defer func() {
+		closeContext, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_, _ = m.browser.ExecuteAction(closeContext, sdk.BrowserActionRequest{Target: target, TimeoutMS: 5000, Action: sdk.BrowserAction{ID: "close", Type: "tab.close"}})
+	}()
+
+	results := []sdk.BrowserActionResult{open}
+	group, groupErr := m.browser.ExecuteAction(executionContext, sdk.BrowserActionRequest{Target: target, TimeoutMS: int(defaultTimeout.Milliseconds()), Action: sdk.BrowserAction{ID: "group", Type: "tab.group", Params: map[string]any{"title": "Meerkit", "color": "blue", "collapsed": false, "reuse_group": true}}})
+	if groupErr != nil {
+		return browserExecution{}, groupErr
+	}
+	results = append(results, group)
+
+	var capture sdk.BrowserCapture
+	var captureDrained chan struct{}
+	if captureRule != nil {
+		capture, err = m.browser.StartNetworkCapture(executionContext, sdk.BrowserNetworkStartRequest{Target: target, Rules: []sdk.BrowserNetworkCaptureRule{*captureRule}})
+		if err != nil {
+			return browserExecution{}, err
+		}
+		captureDrained = make(chan struct{})
+		go func() {
+			defer close(captureDrained)
+			for range capture.Events() {
+			}
+		}()
+		if _, err = m.browser.ExecuteAction(executionContext, sdk.BrowserActionRequest{Target: target, TimeoutMS: int(defaultTimeout.Milliseconds()), Action: sdk.BrowserAction{ID: "navigate", Type: "tab.navigate", Params: map[string]any{"url": strings.TrimSpace(config.URL), "wait": true}}}); err != nil {
+			_, _ = capture.Stop(executionContext)
+			return browserExecution{}, err
+		}
+	}
+
+	for _, action := range actions {
+		result, actionErr := m.browser.ExecuteAction(executionContext, sdk.BrowserActionRequest{Target: target, TimeoutMS: int(defaultTimeout.Milliseconds()), Action: action})
+		results = append(results, result)
+		if actionErr != nil {
+			if capture != nil {
+				_, _ = capture.Stop(executionContext)
+			}
+			return browserExecution{}, actionErr
+		}
+	}
+	var network []sdk.BrowserNetworkResult
+	if capture != nil {
+		stopped, stopErr := capture.Stop(executionContext)
+		if stopErr != nil {
+			return browserExecution{}, stopErr
+		}
+		<-captureDrained
+		if captureErr := capture.Err(); captureErr != nil {
+			return browserExecution{}, captureErr
+		}
+		network = stopped.Events
+	}
+	return browserExecution{Duration: time.Since(started).Milliseconds(), Actions: results, Network: network}, nil
 }
 
 func commonConfigProperties() map[string]any {
-	return map[string]any{
-		"url":            map[string]any{"type": "string", "format": "uri"},
-		"always_new_tab": map[string]any{"type": "boolean", "default": false},
-		"tab_reuse_key":  map[string]any{"type": "string", "maxLength": 256},
-	}
+	return map[string]any{"url": map[string]any{"type": "string", "format": "uri"}}
 }
-
 func commonParameters() []sdk.ParameterDescriptor {
-	return []sdk.ParameterDescriptor{
-		{Key: "url", Label: "页面地址", Type: sdk.ParameterURL, Required: true, Order: 10, FullWidth: true, Placeholder: "https://example.com"},
-		{Key: "always_new_tab", Label: "每次使用新标签页", Type: sdk.ParameterBoolean, Default: false, Order: 900, Description: "关闭时优先刷新此前为该地址保留的标签页，适合需要用户登录的页面。"},
-		{Key: "tab_reuse_key", Label: "标签页复用标识", Type: sdk.ParameterString, Order: 910, FullWidth: true, Description: "可选。用于区分同一模块、同一地址的多个登录会话；保持不变即可跨跳转复用。", Placeholder: "例如 account-a", VisibleWhen: []sdk.ParameterCondition{{Field: "always_new_tab", Operator: "equals", Value: false}}},
-	}
+	return []sdk.ParameterDescriptor{{Key: "url", Label: "页面地址", Type: sdk.ParameterURL, Required: true, Order: 10, FullWidth: true, Placeholder: "https://example.com"}}
 }
-
 func decodeConfig(raw json.RawMessage, target any) error {
 	if err := json.Unmarshal(raw, target); err != nil {
 		return fmt.Errorf("invalid browser example config: %w", err)
 	}
 	return nil
 }
-
 func actionData(results []sdk.BrowserActionResult, id string) map[string]any {
 	for _, result := range results {
 		if result.ID == id {
@@ -113,17 +137,21 @@ func actionData(results []sdk.BrowserActionResult, id string) map[string]any {
 	}
 	return map[string]any{}
 }
-
 func stringValue(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
 }
-
-func boolValue(values map[string]any, key string) bool {
-	value, _ := values[key].(bool)
-	return value
+func boolValue(values map[string]any, key string) bool { value, _ := values[key].(bool); return value }
+func intValue(values map[string]any, key string) int {
+	switch value := values[key].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
 }
-
 func summarize(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
 	if len([]rune(value)) > 80 {
@@ -134,14 +162,9 @@ func summarize(value string) string {
 	}
 	return value
 }
-
 func failedObservation(resultSet, message string, result map[string]any) sdk.Observation {
 	if message == "" {
 		message = "浏览器示例采集失败"
 	}
-	return sdk.Observation{
-		Success: false, SchemaVersion: resultSchemaVersion, Result: result,
-		ResultSets: map[string]map[string]any{resultSet: result}, Summary: message,
-		ErrorCode: "browser_example_execution_failed", ErrorMessage: message,
-	}
+	return sdk.Observation{Success: false, SchemaVersion: resultSchemaVersion, Result: result, ResultSets: map[string]map[string]any{resultSet: result}, Summary: message, ErrorCode: "browser_example_execution_failed", ErrorMessage: message}
 }

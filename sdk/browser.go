@@ -5,58 +5,95 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
+	"io"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-const (
-	BrowserCapabilityEndpointEnv = "MEERKIT_BROWSER_CAPABILITY_ENDPOINT"
-	BrowserCapabilityTokenEnv    = "MEERKIT_BROWSER_CAPABILITY_TOKEN"
-	BrowserProtocolVersion       = 1
-	browserRunMethod             = "/meerkit.sdk.BrowserCapability/Run"
-)
+const BrowserProtocolVersion = 1
+const browserSendQueueSize = 256
+
+type BrowserTarget struct {
+	AgentID  string `json:"agent_id,omitempty"`
+	WindowID int    `json:"window_id,omitempty"`
+	TabID    int    `json:"tab_id,omitempty"`
+}
 
 type BrowserAction struct {
-	ID              string         `json:"id"`
-	Type            string         `json:"type"`
-	Params          map[string]any `json:"params,omitempty"`
-	ContinueOnError bool           `json:"continue_on_error,omitempty"`
+	ID     string         `json:"id,omitempty"`
+	Type   string         `json:"type"`
+	Params map[string]any `json:"params,omitempty"`
 }
 
-type BrowserNetworkCapture struct {
-	ID           string `json:"id"`
-	URLContains  string `json:"url_contains"`
-	ResourceType string `json:"resource_type,omitempty"`
-	MaxBodyBytes int    `json:"max_body_bytes,omitempty"`
-}
-
-type BrowserRunRequest struct {
-	AgentID         string                  `json:"agent_id,omitempty"`
-	TabID           int                     `json:"tab_id,omitempty"`
-	WindowID        int                     `json:"window_id,omitempty"`
-	TimeoutMS       int                     `json:"timeout_ms,omitempty"`
-	KeepTab         bool                    `json:"keep_tab,omitempty"`
-	Actions         []BrowserAction         `json:"actions"`
-	NetworkCaptures []BrowserNetworkCapture `json:"network_captures,omitempty"`
+type BrowserActionRequest struct {
+	Target    BrowserTarget `json:"target,omitempty"`
+	TimeoutMS int           `json:"timeout_ms,omitempty"`
+	Action    BrowserAction `json:"action"`
 }
 
 type BrowserActionResult struct {
-	ID       string         `json:"id"`
+	ID       string         `json:"id,omitempty"`
 	Type     string         `json:"type"`
 	Success  bool           `json:"success"`
+	Target   BrowserTarget  `json:"target,omitempty"`
 	Duration int64          `json:"duration_ms,omitempty"`
 	Data     map[string]any `json:"data,omitempty"`
 	Error    string         `json:"error,omitempty"`
 }
 
+type BrowserTargets struct {
+	AgentID string          `json:"agent_id,omitempty"`
+	Windows []BrowserWindow `json:"windows,omitempty"`
+}
+
+type BrowserWindow struct {
+	ID      int          `json:"id"`
+	Focused bool         `json:"focused,omitempty"`
+	Type    string       `json:"type,omitempty"`
+	Tabs    []BrowserTab `json:"tabs,omitempty"`
+}
+
+type BrowserTab struct {
+	ID         int    `json:"id"`
+	WindowID   int    `json:"window_id"`
+	Index      int    `json:"index,omitempty"`
+	Active     bool   `json:"active,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Title      string `json:"title,omitempty"`
+	URL        string `json:"url,omitempty"`
+	GroupID    int    `json:"group_id,omitempty"`
+	GroupTitle string `json:"group_title,omitempty"`
+}
+
+type BrowserNetworkCaptureRule struct {
+	ID           string `json:"id,omitempty"`
+	URLContains  string `json:"url_contains,omitempty"`
+	ResourceType string `json:"resource_type,omitempty"`
+	MaxBodyBytes int    `json:"max_body_bytes,omitempty"`
+}
+
+type BrowserNetworkStartRequest struct {
+	Target BrowserTarget               `json:"target"`
+	Rules  []BrowserNetworkCaptureRule `json:"rules,omitempty"`
+}
+
+type BrowserNetworkSession struct {
+	ID        string        `json:"id"`
+	Target    BrowserTarget `json:"target"`
+	Status    string        `json:"status,omitempty"`
+	StartedAt string        `json:"started_at,omitempty"`
+	Count     int           `json:"count,omitempty"`
+	Error     string        `json:"error,omitempty"`
+}
+
 type BrowserNetworkResult struct {
-	CaptureID            string             `json:"capture_id"`
-	URL                  string             `json:"url"`
+	SessionID            string             `json:"session_id,omitempty"`
+	CaptureID            string             `json:"capture_id,omitempty"`
+	URL                  string             `json:"url,omitempty"`
 	Method               string             `json:"method,omitempty"`
 	Status               int                `json:"status,omitempty"`
 	StatusText           string             `json:"status_text,omitempty"`
@@ -81,105 +118,429 @@ type BrowserNetworkResult struct {
 	Error                string             `json:"error,omitempty"`
 }
 
-type BrowserRunResult struct {
-	AgentID  string                 `json:"agent_id"`
-	TabID    int                    `json:"tab_id,omitempty"`
-	WindowID int                    `json:"window_id,omitempty"`
-	Duration int64                  `json:"duration_ms"`
-	Actions  []BrowserActionResult  `json:"actions"`
-	Network  []BrowserNetworkResult `json:"network,omitempty"`
+type BrowserNetworkStopResult struct {
+	Session BrowserNetworkSession  `json:"session"`
+	Events  []BrowserNetworkResult `json:"events,omitempty"`
 }
 
-type browserCapabilityResponse struct {
-	Result *BrowserRunResult `json:"result,omitempty"`
-	Error  string            `json:"error,omitempty"`
+type BrowserCapture interface {
+	Session() BrowserNetworkSession
+	Events() <-chan BrowserNetworkResult
+	Err() error
+	Stop(context.Context) (BrowserNetworkStopResult, error)
 }
 
 type BrowserClient interface {
-	Run(context.Context, BrowserRunRequest) (BrowserRunResult, error)
-	Close() error
+	ListTargets(context.Context, string) (BrowserTargets, error)
+	ExecuteAction(context.Context, BrowserActionRequest) (BrowserActionResult, error)
+	StartNetworkCapture(context.Context, BrowserNetworkStartRequest) (BrowserCapture, error)
 }
 
-type browserClient struct {
-	connection *grpc.ClientConn
-	token      string
+type BrowserBridgeEnvelope struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id,omitempty"`
+	ReplyTo   string          `json:"reply_to,omitempty"`
+	Operation string          `json:"operation,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
-func NewBrowserClient(endpoint, token string) (BrowserClient, error) {
-	endpoint, token = strings.TrimSpace(endpoint), strings.TrimSpace(token)
-	if endpoint == "" || token == "" {
-		return nil, errors.New("browser capability endpoint and token are required")
+type BrowserBridgeServer interface {
+	Session(BrowserBridgeSessionServer) error
+}
+type BrowserBridgeSessionServer interface {
+	Send(*wrapperspb.BytesValue) error
+	Recv() (*wrapperspb.BytesValue, error)
+	grpc.ServerStream
+}
+type BrowserBridgeSessionClient interface {
+	Send(*wrapperspb.BytesValue) error
+	Recv() (*wrapperspb.BytesValue, error)
+	grpc.ClientStream
+}
+
+var browserBridgeDesc = grpc.ServiceDesc{
+	ServiceName: "meerkit.sdk.BrowserBridge",
+	HandlerType: (*BrowserBridgeServer)(nil),
+	Streams: []grpc.StreamDesc{{StreamName: "Session", ServerStreams: true, ClientStreams: true, Handler: func(server any, stream grpc.ServerStream) error {
+		return server.(BrowserBridgeServer).Session(&browserBridgeServerStream{ServerStream: stream})
+	}}},
+}
+
+type browserBridgeServerStream struct{ grpc.ServerStream }
+
+func (s *browserBridgeServerStream) Send(value *wrapperspb.BytesValue) error { return s.SendMsg(value) }
+func (s *browserBridgeServerStream) Recv() (*wrapperspb.BytesValue, error) {
+	value := new(wrapperspb.BytesValue)
+	if err := s.RecvMsg(value); err != nil {
+		return nil, err
 	}
-	connection, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return value, nil
+}
+
+type browserBridgeClientStream struct{ grpc.ClientStream }
+
+func (s *browserBridgeClientStream) Send(value *wrapperspb.BytesValue) error { return s.SendMsg(value) }
+func (s *browserBridgeClientStream) Recv() (*wrapperspb.BytesValue, error) {
+	value := new(wrapperspb.BytesValue)
+	if err := s.RecvMsg(value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func RegisterBrowserBridgeServer(server grpc.ServiceRegistrar, implementation BrowserBridgeServer) {
+	server.RegisterService(&browserBridgeDesc, implementation)
+}
+
+type BrowserBridgeClient struct{ connection grpc.ClientConnInterface }
+
+func NewBrowserBridgeClient(connection grpc.ClientConnInterface) *BrowserBridgeClient {
+	return &BrowserBridgeClient{connection: connection}
+}
+func (c *BrowserBridgeClient) Session(ctx context.Context, options ...grpc.CallOption) (BrowserBridgeSessionClient, error) {
+	stream, err := c.connection.NewStream(ctx, &browserBridgeDesc.Streams[0], "/meerkit.sdk.BrowserBridge/Session", options...)
 	if err != nil {
-		return nil, fmt.Errorf("connect browser capability: %w", err)
+		return nil, err
 	}
-	return &browserClient{connection: connection, token: token}, nil
+	return &browserBridgeClientStream{ClientStream: stream}, nil
 }
 
-func NewBrowserClientFromEnvironment() (BrowserClient, error) {
-	return NewBrowserClient(os.Getenv(BrowserCapabilityEndpointEnv), os.Getenv(BrowserCapabilityTokenEnv))
+type PluginRuntime struct{ browser *sessionBrowserClient }
+
+func NewPluginRuntime() *PluginRuntime                      { return &PluginRuntime{browser: newSessionBrowserClient()} }
+func (r *PluginRuntime) Browser() BrowserClient             { return r.browser }
+func (r *PluginRuntime) Serve(provider Provider)            { serveWithRuntime(provider, r) }
+func (r *PluginRuntime) browserServer() BrowserBridgeServer { return &pluginBrowserBridge{runtime: r} }
+
+type pendingBrowserResponse struct{ envelope BrowserBridgeEnvelope }
+type sessionBrowserClient struct {
+	mu           sync.Mutex
+	stream       BrowserBridgeSessionServer
+	send         chan BrowserBridgeEnvelope
+	pending      map[string]chan pendingBrowserResponse
+	captures     map[string]*sessionCapture
+	orphanEvents map[string][]BrowserNetworkResult
+	sequence     atomic.Uint64
+	disconnected chan struct{}
 }
 
-func (c *browserClient) Run(ctx context.Context, request BrowserRunRequest) (BrowserRunResult, error) {
-	data, err := json.Marshal(request)
-	if err != nil {
-		return BrowserRunResult{}, err
-	}
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.token)
-	response := new(wrapperspb.BytesValue)
-	if err := c.connection.Invoke(ctx, browserRunMethod, wrapperspb.Bytes(data), response); err != nil {
-		return BrowserRunResult{}, err
-	}
-	var envelope browserCapabilityResponse
-	if err := json.Unmarshal(response.Value, &envelope); err != nil {
-		return BrowserRunResult{}, fmt.Errorf("decode browser capability response: %w", err)
-	}
-	if envelope.Error != "" {
-		return BrowserRunResult{}, errors.New(envelope.Error)
-	}
-	if envelope.Result == nil {
-		return BrowserRunResult{}, errors.New("browser capability returned no result")
-	}
-	return *envelope.Result, nil
+func newSessionBrowserClient() *sessionBrowserClient {
+	return &sessionBrowserClient{pending: make(map[string]chan pendingBrowserResponse), captures: make(map[string]*sessionCapture), orphanEvents: make(map[string][]BrowserNetworkResult)}
 }
 
-func (c *browserClient) Close() error { return c.connection.Close() }
-
-type BrowserCapabilityServer interface {
-	Run(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+func (c *sessionBrowserClient) attach(stream BrowserBridgeSessionServer) error {
+	c.mu.Lock()
+	if c.stream != nil {
+		c.mu.Unlock()
+		return errors.New("browser bridge session is already connected")
+	}
+	c.stream, c.send, c.disconnected = stream, make(chan BrowserBridgeEnvelope, browserSendQueueSize), make(chan struct{})
+	c.mu.Unlock()
+	writerDone := make(chan error, 1)
+	go c.writeLoop(stream, writerDone)
+	if err := c.enqueue(BrowserBridgeEnvelope{Type: "ready"}); err != nil {
+		c.disconnect(stream)
+		return err
+	}
+	readDone := make(chan error, 1)
+	go func() { readDone <- c.readLoop(stream) }()
+	var readErr error
+	select {
+	case readErr = <-readDone:
+	case readErr = <-writerDone:
+	case <-stream.Context().Done():
+		readErr = stream.Context().Err()
+	}
+	c.disconnect(stream)
+	return readErr
 }
 
-func RegisterBrowserCapabilityServer(server grpc.ServiceRegistrar, implementation BrowserCapabilityServer) {
-	server.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "meerkit.sdk.BrowserCapability",
-		HandlerType: (*BrowserCapabilityServer)(nil),
-		Methods: []grpc.MethodDesc{{MethodName: "Run", Handler: func(server any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-			input := new(wrapperspb.BytesValue)
-			if err := decode(input); err != nil {
-				return nil, err
+func (c *sessionBrowserClient) writeLoop(stream BrowserBridgeSessionServer, done chan<- error) {
+	for {
+		select {
+		case <-stream.Context().Done():
+			done <- stream.Context().Err()
+			return
+		case envelope, ok := <-c.send:
+			if !ok {
+				done <- io.EOF
+				return
 			}
-			if interceptor == nil {
-				return implementation.Run(ctx, input)
+			data, err := json.Marshal(envelope)
+			if err == nil {
+				err = stream.Send(wrapperspb.Bytes(data))
 			}
-			info := &grpc.UnaryServerInfo{Server: server, FullMethod: browserRunMethod}
-			return interceptor(ctx, input, info, func(ctx context.Context, request any) (any, error) {
-				return implementation.Run(ctx, request.(*wrapperspb.BytesValue))
-			})
-		}}},
-		Streams:  []grpc.StreamDesc{},
-		Metadata: "meerkit-browser-capability",
-	}, implementation)
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}
 }
 
-func MarshalBrowserCapabilityResponse(result *BrowserRunResult, err error) (*wrapperspb.BytesValue, error) {
-	response := browserCapabilityResponse{Result: result}
+func (c *sessionBrowserClient) readLoop(stream BrowserBridgeSessionServer) error {
+	for {
+		value, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		var envelope BrowserBridgeEnvelope
+		if json.Unmarshal(value.Value, &envelope) != nil {
+			continue
+		}
+		switch envelope.Type {
+		case "response":
+			c.mu.Lock()
+			response := c.pending[envelope.ReplyTo]
+			delete(c.pending, envelope.ReplyTo)
+			c.mu.Unlock()
+			if response != nil {
+				response <- pendingBrowserResponse{envelope: envelope}
+			}
+		case "event":
+			switch envelope.Operation {
+			case "browser.network":
+				var event BrowserNetworkResult
+				if json.Unmarshal(envelope.Payload, &event) != nil {
+					continue
+				}
+				c.mu.Lock()
+				capture := c.captures[event.SessionID]
+				if capture == nil && len(c.orphanEvents[event.SessionID]) < 128 {
+					c.orphanEvents[event.SessionID] = append(c.orphanEvents[event.SessionID], event)
+				}
+				c.mu.Unlock()
+				if capture != nil {
+					capture.publish(event)
+				}
+			case "browser.network.status":
+				var status struct {
+					ID     string `json:"id"`
+					Status string `json:"status"`
+					Error  string `json:"error"`
+				}
+				if json.Unmarshal(envelope.Payload, &status) != nil || status.ID == "" || status.Status != "stopped" {
+					continue
+				}
+				c.mu.Lock()
+				capture := c.captures[status.ID]
+				delete(c.captures, status.ID)
+				c.mu.Unlock()
+				if capture != nil {
+					capture.closeWithError(status.Error)
+				}
+			}
+		}
+	}
+}
+
+func (c *sessionBrowserClient) disconnect(stream BrowserBridgeSessionServer) {
+	c.mu.Lock()
+	if c.stream != stream {
+		c.mu.Unlock()
+		return
+	}
+	c.stream = nil
+	close(c.disconnected)
+	for id, response := range c.pending {
+		response <- pendingBrowserResponse{envelope: BrowserBridgeEnvelope{Error: "browser bridge disconnected"}}
+		delete(c.pending, id)
+	}
+	for id, capture := range c.captures {
+		capture.close()
+		delete(c.captures, id)
+	}
+	clear(c.orphanEvents)
+	c.mu.Unlock()
+}
+
+func (c *sessionBrowserClient) enqueue(envelope BrowserBridgeEnvelope) error {
+	c.mu.Lock()
+	send := c.send
+	stream := c.stream
+	c.mu.Unlock()
+	if stream == nil {
+		return errors.New("browser bridge is not connected")
+	}
+	select {
+	case send <- envelope:
+		return nil
+	default:
+		return errors.New("browser bridge send queue is full")
+	}
+}
+
+func (c *sessionBrowserClient) request(ctx context.Context, operation string, input, output any) error {
+	payload, err := json.Marshal(input)
 	if err != nil {
-		response.Error = err.Error()
+		return err
 	}
-	data, marshalErr := json.Marshal(response)
-	if marshalErr != nil {
-		return nil, marshalErr
+	id := fmt.Sprintf("browser-%d", c.sequence.Add(1))
+	response := make(chan pendingBrowserResponse, 1)
+	c.mu.Lock()
+	if c.stream == nil {
+		c.mu.Unlock()
+		return errors.New("browser bridge is not connected")
 	}
-	return wrapperspb.Bytes(data), nil
+	c.pending[id] = response
+	disconnected := c.disconnected
+	c.mu.Unlock()
+	if err := c.enqueue(BrowserBridgeEnvelope{Type: "request", ID: id, Operation: operation, Payload: payload}); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		_ = c.enqueue(BrowserBridgeEnvelope{Type: "cancel", ReplyTo: id})
+		return ctx.Err()
+	case <-disconnected:
+		return errors.New("browser bridge disconnected")
+	case result := <-response:
+		if result.envelope.Error != "" {
+			return errors.New(result.envelope.Error)
+		}
+		if output == nil {
+			return nil
+		}
+		return json.Unmarshal(result.envelope.Payload, output)
+	}
+}
+
+func (c *sessionBrowserClient) ListTargets(ctx context.Context, agentID string) (BrowserTargets, error) {
+	var result BrowserTargets
+	err := c.request(ctx, "browser.targets", BrowserTarget{AgentID: agentID}, &result)
+	return result, err
+}
+func (c *sessionBrowserClient) ExecuteAction(ctx context.Context, request BrowserActionRequest) (BrowserActionResult, error) {
+	var result BrowserActionResult
+	err := c.request(ctx, "browser.action", request, &result)
+	return result, err
+}
+func (c *sessionBrowserClient) StartNetworkCapture(ctx context.Context, request BrowserNetworkStartRequest) (BrowserCapture, error) {
+	var session BrowserNetworkSession
+	if err := c.request(ctx, "browser.network.start", request, &session); err != nil {
+		return nil, err
+	}
+	capture := &sessionCapture{client: c, session: session, events: make(chan BrowserNetworkResult, 128), stopDone: make(chan struct{})}
+	c.mu.Lock()
+	c.captures[session.ID] = capture
+	orphans := c.orphanEvents[session.ID]
+	delete(c.orphanEvents, session.ID)
+	c.mu.Unlock()
+	for _, event := range orphans {
+		capture.publish(event)
+	}
+	return capture, nil
+}
+
+type sessionCapture struct {
+	client     *sessionBrowserClient
+	session    BrowserNetworkSession
+	events     chan BrowserNetworkResult
+	once       sync.Once
+	stopOnce   sync.Once
+	stopDone   chan struct{}
+	mu         sync.Mutex
+	closed     bool
+	err        error
+	stopResult BrowserNetworkStopResult
+	stopErr    error
+}
+
+func (c *sessionCapture) Session() BrowserNetworkSession      { return c.session }
+func (c *sessionCapture) Events() <-chan BrowserNetworkResult { return c.events }
+func (c *sessionCapture) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+func (c *sessionCapture) publish(event BrowserNetworkResult) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	select {
+	case c.events <- event:
+		c.mu.Unlock()
+	default:
+		queueErr := errors.New("browser network capture event queue is full")
+		c.err = queueErr
+		c.closed = true
+		close(c.events)
+		c.mu.Unlock()
+		c.beginStop(queueErr)
+	}
+}
+func (c *sessionCapture) close() {
+	c.closeWithError("")
+}
+func (c *sessionCapture) closeWithError(message string) {
+	if message != "" {
+		c.mu.Lock()
+		c.err = errors.New(message)
+		c.mu.Unlock()
+	}
+	c.once.Do(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if !c.closed {
+			c.closed = true
+			close(c.events)
+		}
+	})
+}
+func (c *sessionCapture) Stop(ctx context.Context) (BrowserNetworkStopResult, error) {
+	c.beginStop(nil)
+	select {
+	case <-ctx.Done():
+		return BrowserNetworkStopResult{}, ctx.Err()
+	case <-c.stopDone:
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.stopResult, c.stopErr
+	}
+}
+
+func (c *sessionCapture) beginStop(reason error) {
+	if reason != nil {
+		c.mu.Lock()
+		if c.err == nil {
+			c.err = reason
+		}
+		c.mu.Unlock()
+	}
+	c.stopOnce.Do(func() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var result BrowserNetworkStopResult
+			requestErr := c.client.request(ctx, "browser.network.stop", map[string]string{"id": c.session.ID}, &result)
+			c.client.mu.Lock()
+			delete(c.client.captures, c.session.ID)
+			c.client.mu.Unlock()
+			c.close()
+			c.mu.Lock()
+			c.stopResult = result
+			if c.err != nil {
+				c.stopErr = c.err
+			} else {
+				c.stopErr = requestErr
+			}
+			c.mu.Unlock()
+			close(c.stopDone)
+		}()
+	})
+}
+
+type pluginBrowserBridge struct{ runtime *PluginRuntime }
+
+func (s *pluginBrowserBridge) Session(stream BrowserBridgeSessionServer) error {
+	return s.runtime.browser.attach(stream)
 }
