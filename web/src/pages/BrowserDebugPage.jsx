@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, Clipboard, Code2, Globe2, Group, Keyboard, LoaderCircle, MousePointerClick, Network, PanelTopOpen, Play, RefreshCw, Search, Settings2, SquareTerminal, Timer, Trash2, X } from "lucide-react";
+import { Camera, Check, Clipboard, Code2, FileText, Globe2, Group, Image, Keyboard, LoaderCircle, MousePointerClick, Network, PanelTopOpen, Play, RefreshCw, Search, Settings2, SquareTerminal, Timer, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -24,9 +25,8 @@ export function BrowserDebugPage() {
   const [params, setParams] = useState({});
   const [timeoutMS, setTimeoutMS] = useState(60000);
   const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
+  const [lastRequest, setLastRequest] = useState(null);
   const [running, setRunning] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [capture, setCapture] = useState(null);
   const [network, setNetwork] = useState([]);
   const [networkFilter, setNetworkFilter] = useState("");
@@ -51,7 +51,7 @@ export function BrowserDebugPage() {
 
   const loadTargets = useCallback(async (id) => {
     if (!id) { setTargets(null); return; }
-    try { const value = await api(`/api/v1/browser/targets?agent_id=${encodeURIComponent(id)}`); setTargets(value); setError(""); } catch (err) { setError(err.message); }
+    try { const value = await api(`/api/v1/browser/targets?agent_id=${encodeURIComponent(id)}`); setTargets(value); } catch (err) { notifyBrowserError(err); }
   }, []);
 
   const loadStatus = useCallback(async () => {
@@ -67,7 +67,7 @@ export function BrowserDebugPage() {
       setStatus(statusValue); setCatalog(catalogValue);
       const id = statusValue?.connected_agents?.[0]?.id || "";
       setAgentID(id); setActionType(catalogValue?.actions?.[0]?.type || "");
-    }).catch((err) => active && setError(err.message));
+    }).catch((err) => { if (active) notifyBrowserError(err); });
     return () => { active = false; };
   }, [loadStatus]);
 
@@ -100,7 +100,7 @@ export function BrowserDebugPage() {
           const value = JSON.parse(event.data);
           if (value.type === "browser.network" && value.payload?.session_id === captureIDRef.current) setNetwork((items) => [...items.slice(-999), value.payload]);
           if (value.type === "browser.network.status" && value.session_id === captureIDRef.current && value.payload?.status === "stopped") {
-            captureIDRef.current = ""; setCapture(null); if (value.payload.error) setError(value.payload.error);
+            captureIDRef.current = ""; setCapture(null); if (value.payload.error) notifyBrowserError(value.payload.error);
           }
           if (value.type === "browser.targets.changed") { void loadStatus(); void loadTargets(agentRef.current); }
         } catch { /* ignore malformed debug events */ }
@@ -111,7 +111,7 @@ export function BrowserDebugPage() {
     return () => { stopped = true; window.clearTimeout(retry); socket?.close(); };
   }, [loadStatus, loadTargets]);
 
-  const chooseAction = (item) => { setActionType(item.type); setResult(null); setParams(defaultParams(item)); };
+  const chooseAction = (item) => { setActionType(item.type); setResult(null); setLastRequest(null); setParams(defaultParams(item)); };
   const chooseCategory = (key) => {
     const category = categories.find((item) => item.key === key);
     if (category?.actions?.[0]) chooseAction(category.actions[0]);
@@ -125,7 +125,7 @@ export function BrowserDebugPage() {
 
   const execute = async () => {
     if (!definition) return;
-    setRunning(true); setError("");
+    setRunning(true);
     try {
       const target = { agent_id: agentID };
       if (definition.target_mode === "window_optional" && effectiveWindowID) target.window_id = Number(effectiveWindowID);
@@ -134,27 +134,31 @@ export function BrowserDebugPage() {
         const tab = allTabs.find((item) => String(item.id) === String(effectiveTabID));
         if (tab) target.window_id = tab.window_id;
       }
-      const value = await api("/api/v1/browser/action", { method: "POST", body: JSON.stringify({ timeout_ms: Number(timeoutMS) || 60000, target, action: { id: actionType.replaceAll(".", "-"), type: actionType, params } }) });
+      const request = { timeout_ms: Number(timeoutMS) || 60000, target, action: { id: actionType.replaceAll(".", "-"), type: actionType, params } };
+      setLastRequest(request);
+      setResult(null);
+      const value = await api("/api/v1/browser/action", { method: "POST", body: JSON.stringify(request) });
       setResult(value);
       if (actionType === "tab.open" && value?.data?.tab_id) { await loadTargets(agentID); setWindowID(String(value.data.window_id || "")); setTabID(String(value.data.tab_id)); }
-    } catch (err) { setError(err.message); } finally { setRunning(false); }
+    } catch (err) {
+      notifyBrowserError(err);
+      setResult({ type: definition.type, success: false, duration_ms: 0, error: err.message, data: {} });
+    } finally { setRunning(false); }
   };
 
   const startCapture = async () => {
-    if (!tabID) { setError("请先选择标签页"); return; }
+    if (!tabID) { notifyBrowserError("请先选择标签页"); return; }
     try {
       const value = await api("/api/v1/browser/network-captures", { method: "POST", body: JSON.stringify({ target: { agent_id: agentID, window_id: Number(windowID), tab_id: Number(tabID) }, rules: [{ id: "debug", ...captureRules }] }) });
       captureIDRef.current = value.id;
-      setCapture(value); setNetwork([]); setSelectedNetwork(null); setError("");
-    } catch (err) { setError(err.message); }
+      setCapture(value); setNetwork([]); setSelectedNetwork(null);
+    } catch (err) { notifyBrowserError(err); }
   };
-  const stopCapture = async () => { if (!capture) return; try { const value = await api(`/api/v1/browser/network-captures/${capture.id}/stop`, { method: "POST" }); captureIDRef.current = ""; setNetwork(value.events || network); setCapture(null); } catch (err) { setError(err.message); } };
-  const copy = async () => { if (!result) return; await navigator.clipboard.writeText(JSON.stringify(result, null, 2)); setCopied(true); setTimeout(() => setCopied(false), 1200); };
+  const stopCapture = async () => { if (!capture) return; try { const value = await api(`/api/v1/browser/network-captures/${capture.id}/stop`, { method: "POST" }); captureIDRef.current = ""; setNetwork(value.events || network); setCapture(null); } catch (err) { notifyBrowserError(err); } };
   const filteredNetwork = network.filter((item) => !networkFilter || String(item.url || "").toLowerCase().includes(networkFilter.toLowerCase()));
 
   return <div className="page-stack browser-debug-page">
     <PageHeader eyebrow="BROWSER TOOLS" title="浏览器操作调试" description="" />
-    {error && <div className="browser-debug-error" role="alert"><X size={15} /><span>{error}</span></div>}
     <div className="browser-target-toolbar">
       <Field label="执行节点"><Select value={agentID || undefined} onValueChange={setAgentID}><SelectTrigger><SelectValue placeholder="选择在线节点" /></SelectTrigger><SelectContent>{agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name || agent.id}</SelectItem>)}</SelectContent></Select></Field>
       <Field label="窗口"><Select value={windowID || undefined} onValueChange={(value) => { setWindowID(value); setTabID(""); }}><SelectTrigger><SelectValue placeholder="选择窗口" /></SelectTrigger><SelectContent>{windows.map((item) => <SelectItem key={item.id} value={String(item.id)}>窗口 {item.id}{item.focused ? " · 当前" : ""}</SelectItem>)}</SelectContent></Select></Field>
@@ -204,7 +208,7 @@ export function BrowserDebugPage() {
               onExecute={execute}
             />
           </section>
-          <ResultPanel result={result} copied={copied} onCopy={copy} onClear={() => setResult(null)} />
+          <ResultPanel request={lastRequest} result={result} onClear={() => { setResult(null); setLastRequest(null); }} />
         </div>
       </TabsContent>
       <TabsContent value="network"><Card className="browser-network-card"><div className="browser-network-control"><div><Network size={16} /><strong>持续网络捕获</strong><span>{capture ? `固定绑定标签页 #${capture.target?.tab_id}` : "未启动"}</span></div><Button variant={capture ? "secondary" : "default"} onClick={() => void (capture ? stopCapture() : startCapture())}>{capture ? "停止捕获" : "开始捕获"}</Button></div><div className="browser-network-filters"><Field label="URL 包含"><Input disabled={Boolean(capture)} value={captureRules.url_contains} onChange={(event) => setCaptureRules((value) => ({ ...value, url_contains: event.target.value }))} /></Field><Field label="资源类型"><Input disabled={Boolean(capture)} value={captureRules.resource_type} onChange={(event) => setCaptureRules((value) => ({ ...value, resource_type: event.target.value }))} placeholder="XHR / Fetch" /></Field><Field label="正文上限"><Input disabled={Boolean(capture)} type="number" value={captureRules.max_body_bytes} onChange={(event) => setCaptureRules((value) => ({ ...value, max_body_bytes: Number(event.target.value) }))} /></Field><Field label="筛选"><Input value={networkFilter} onChange={(event) => setNetworkFilter(event.target.value)} placeholder="筛选 URL" /></Field></div><div className="browser-network-workspace"><NetworkList items={filteredNetwork} selected={selectedNetwork} onSelect={setSelectedNetwork} /><NetworkDetail item={selectedNetwork} /></div></Card></TabsContent>
@@ -239,7 +243,73 @@ function Parameter({ definition, params, onChange }) {
   if (["textarea", "code"].includes(definition.type)) return <Field label={definition.label}><textarea className={`browser-debug-textarea ${definition.type === "code" ? "is-code" : ""}`} value={value} placeholder={definition.placeholder} onChange={(event) => onChange(definition.key, event.target.value)} /></Field>;
   return <Field label={definition.label}><Input type={definition.type === "number" ? "number" : definition.type === "url" ? "url" : "text"} value={value} placeholder={definition.placeholder} min={definition.min} max={definition.max} step={definition.step} onChange={(event) => onChange(definition.key, definition.type === "number" ? Number(event.target.value) : event.target.value)} /></Field>;
 }
-function ResultPanel({ result, copied, onCopy, onClear }) { return <section className="browser-debug-output"><div className="browser-debug-panel-header"><div><SquareTerminal size={16} /><strong>执行结果</strong></div><div className="browser-debug-output-actions"><IconButton title={copied ? "已复制" : "复制结果"} aria-label="复制结果" disabled={!result} onClick={onCopy}>{copied ? <Check size={14} /> : <Clipboard size={14} />}</IconButton><IconButton title="清空结果" aria-label="清空结果" disabled={!result} onClick={onClear}><Trash2 size={14} /></IconButton></div></div>{result ? <pre className="browser-debug-json">{JSON.stringify(result, null, 2)}</pre> : <div className="browser-debug-empty"><SquareTerminal size={22} /><span>尚未执行 Action</span></div>}</section>; }
+function ResultPanel({ request, result, onClear }) {
+  const [copied, setCopied] = useState("");
+  const [activeTab, setActiveTab] = useState("preview");
+  useEffect(() => { if (result) setActiveTab("preview"); }, [result]);
+  const copy = async (key, value) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(JSON.stringify(value, null, 2));
+    setCopied(key);
+    window.setTimeout(() => setCopied((current) => current === key ? "" : current), 1200);
+  };
+  return <section className="browser-debug-output">
+    <div className="browser-debug-panel-header"><div><SquareTerminal size={16} /><strong>执行结果</strong></div><IconButton title="清空结果" aria-label="清空结果" disabled={!result && !request} onClick={onClear}><Trash2 size={14} /></IconButton></div>
+    {result ? <Tabs value={activeTab} onValueChange={setActiveTab} className="browser-result-tabs">
+      <TabsList>
+        <TabsTrigger value="preview"><Image size={13} />结果预览</TabsTrigger>
+        <TabsTrigger value="request"><FileText size={13} />原始请求</TabsTrigger>
+        <TabsTrigger value="response"><Code2 size={13} />原始响应</TabsTrigger>
+      </TabsList>
+      <TabsContent value="preview"><ResultPreview result={result} /></TabsContent>
+      <TabsContent value="request"><RawResult value={request} label="复制原始请求" copied={copied === "request"} onCopy={() => void copy("request", request)} /></TabsContent>
+      <TabsContent value="response"><RawResult value={result} label="复制原始响应" copied={copied === "response"} onCopy={() => void copy("response", result)} /></TabsContent>
+    </Tabs> : <div className="browser-debug-empty"><SquareTerminal size={22} /><span>{request ? "Action 执行中或未返回结果" : "尚未执行 Action"}</span></div>}
+  </section>;
+}
+function RawResult({ value, label, copied, onCopy }) {
+  return <div className="browser-result-raw"><div><span>{label.replace("复制", "")}</span><IconButton title={copied ? "已复制" : label} aria-label={label} disabled={!value} onClick={onCopy}>{copied ? <Check size={14} /> : <Clipboard size={14} />}</IconButton></div><pre>{value ? JSON.stringify(value, null, 2) : "暂无数据"}</pre></div>;
+}
+function ResultPreview({ result }) {
+  const images = collectResultImages(result?.data);
+  return <div className="browser-result-preview">
+    <div className="browser-result-summary">
+      <span><small>执行状态</small><Badge tone={result.success ? "success" : "warning"}>{result.success ? "成功" : "失败"}</Badge></span>
+      <span><small>Action</small><strong>{result.type || "-"}</strong></span>
+      <span><small>执行耗时</small><strong>{result.duration_ms ?? 0} ms</strong></span>
+      <span><small>目标</small><strong>{formatTarget(result.target)}</strong></span>
+    </div>
+    {result.error ? <div className="browser-result-error">{result.error}</div> : null}
+    {images.length ? <div className="browser-result-images">{images.map((item, index) => <figure key={`${item.label}-${index}`}><img src={item.src} alt={item.label} loading="lazy" referrerPolicy="no-referrer" /><figcaption>{item.label}</figcaption></figure>)}</div> : null}
+    <section className="browser-result-data"><h3>响应数据</h3><PreviewValue value={result.data} /></section>
+  </div>;
+}
+function PreviewValue({ value, depth = 0 }) {
+  if (value == null) return <span className="browser-result-null">null</span>;
+  if (typeof value === "boolean") return <Badge tone={value ? "success" : "muted"}>{value ? "true" : "false"}</Badge>;
+  if (typeof value === "number") return <code>{value}</code>;
+  if (typeof value === "string") return <PreviewString value={value} />;
+  if (Array.isArray(value)) return value.length ? <div className="browser-result-array">{value.map((item, index) => <div key={index}><span>#{index + 1}</span><PreviewValue value={item} depth={depth + 1} /></div>)}</div> : <span className="browser-result-null">空数组</span>;
+  const entries = Object.entries(value).filter(([, item]) => !isRenderedImage(item));
+  return entries.length ? <dl className={`browser-result-object${depth ? " is-nested" : ""}`}>{entries.map(([key, item]) => <div key={key}><dt>{key}</dt><dd><PreviewValue value={item} depth={depth + 1} /></dd></div>)}</dl> : <span className="browser-result-null">无数据</span>;
+}
+function PreviewString({ value }) {
+  const trimmed = value.trim();
+  if (isRenderedImage(trimmed)) return <span className="browser-result-null">已在图片区域显示</span>;
+  if (/^https?:\/\//i.test(trimmed)) return <a href={trimmed} target="_blank" rel="noreferrer">{value}</a>;
+  if (trimmed.startsWith("<") || value.includes("\n") || value.length > 180) return <pre>{value}</pre>;
+  return <span>{value || "空字符串"}</span>;
+}
+function collectResultImages(value, path = "image", found = []) {
+  if (found.length >= 8 || value == null) return found;
+  if (typeof value === "string" && isRenderedImage(value)) found.push({ label: path, src: value });
+  else if (Array.isArray(value)) value.forEach((item, index) => collectResultImages(item, `${path}[${index}]`, found));
+  else if (typeof value === "object") Object.entries(value).forEach(([key, item]) => collectResultImages(item, key, found));
+  return found;
+}
+function isRenderedImage(value) { return typeof value === "string" && (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value) || /^https?:\/\/[^?#]+\.(png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(value)); }
+function formatTarget(target) { return target?.tab_id ? `窗口 ${target.window_id || "-"} / 标签页 ${target.tab_id}` : target?.window_id ? `窗口 ${target.window_id}` : "无指定目标"; }
+function notifyBrowserError(error) { toast.error(error?.message || String(error || "浏览器操作失败"), { id: "browser-debug-error" }); }
 function NetworkList({ items, selected, onSelect }) { return <div className="browser-network-list"><div className="browser-network-list-head"><span>状态</span><span>方法</span><span>地址</span><span>类型</span><span>耗时</span></div>{items.length ? items.map((item, index) => <button type="button" className="browser-network-list-row" data-selected={item === selected} key={`${item.session_id}-${item.url}-${index}`} onClick={() => onSelect(item)}><span>{item.status || "ERR"}</span><span>{item.method || "GET"}</span><strong title={item.url}>{item.url}</strong><span>{item.resource_type || item.mime_type || "-"}</span><span>{item.duration_ms || 0} ms</span></button>) : <div className="browser-debug-empty">暂无捕获请求</div>}</div>; }
 function NetworkDetail({ item }) { if (!item) return <div className="browser-network-detail-empty">选择请求查看标头、正文和时序</div>; return <div className="browser-network-detail"><div><strong>{item.method || "GET"} {item.url}</strong><span>{item.status || "ERR"} · {item.mime_type || item.resource_type || "未知类型"} · {item.duration_ms || 0} ms</span></div><Tabs defaultValue="response"><TabsList><TabsTrigger value="response">响应</TabsTrigger><TabsTrigger value="request">请求</TabsTrigger><TabsTrigger value="timing">时序</TabsTrigger></TabsList><TabsContent value="response"><DetailObject title="响应标头" value={item.headers} /><DetailBody value={item.body} error={item.error} truncated={item.truncated} /></TabsContent><TabsContent value="request"><DetailObject title="请求标头" value={item.request_headers} /><DetailBody value={item.request_body} truncated={item.request_body_truncated} /></TabsContent><TabsContent value="timing"><DetailObject title="连接与时序" value={{ protocol: item.protocol, remote_address: [item.remote_ip_address, item.remote_port].filter(Boolean).join(":"), encoded_data_length: item.encoded_data_length, from_disk_cache: item.from_disk_cache, from_service_worker: item.from_service_worker, ...(item.timing || {}) }} /></TabsContent></Tabs></div>; }
 function DetailObject({ title, value }) { const entries = Object.entries(value || {}).filter(([, item]) => item !== undefined && item !== ""); return <section className="browser-network-detail-section"><h4>{title}</h4>{entries.length ? <dl>{entries.map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{String(item)}</dd></div>)}</dl> : <div className="browser-network-detail-empty">无数据</div>}</section>; }
