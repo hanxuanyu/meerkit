@@ -76,6 +76,7 @@ function MonitorRecordsPanel({ monitor, descriptor, channels = [], initialRecord
 
   useEffect(() => { void loadRecords(); }, [loadRecords, refreshVersion]);
   useEffect(() => {
+    if (initialRecordID === null) return undefined;
     if (!initialRecordID) {
       if (onRecordRouteChange) setSelectedRecord(null);
       return;

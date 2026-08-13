@@ -55,6 +55,7 @@ export function NotificationCenterPage({ refreshVersion = 0, initialNotification
     return () => window.clearTimeout(timer);
   }, [searchInput]);
   useEffect(() => {
+    if (initialNotificationID === null) return undefined;
     if (!initialNotificationID) {
       setSelected(null);
       return;

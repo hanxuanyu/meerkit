@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { usePageChrome } from "./PageChrome";
 
 export function PageHeader({ eyebrow, title, description }) {
-  const { titleHost } = usePageChrome();
+  const { titleHost, pageKey, activePage } = usePageChrome();
+  if (pageKey && pageKey !== activePage) return null;
 
   return <>
     {titleHost && createPortal(<div className="topbar-page-copy">

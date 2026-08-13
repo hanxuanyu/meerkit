@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "../components/layout/AppShell";
+import { PageChromeScope } from "../components/layout/PageChrome";
 import { Sidebar } from "../components/layout/Sidebar";
 import { Topbar } from "../components/layout/Topbar";
 import { WorkspaceTabs } from "../components/layout/WorkspaceTabs";
@@ -31,6 +32,7 @@ export function App() {
   const [recordTabs, setRecordTabs] = useState({});
   const [routeRecordID, setRouteRecordID] = useState(initialRoute.recordID);
   const [routeNotificationID, setRouteNotificationID] = useState(initialRoute.notificationID);
+  const tabRouteStateRef = useRef(new Map([[initialRoute.page, { recordID: initialRoute.recordID, notificationID: initialRoute.notificationID }]]));
   const { sidebarCollapsed, mobileSidebarOpen, mobileTopbarHidden, toggleNavigation, closeMobileSidebar, resetMobileNavigation } = useMobileShell();
   const [modules, setModules] = useState([]);
   const [notifiers, setNotifiers] = useState([]);
@@ -50,6 +52,10 @@ export function App() {
   const [togglingChannelId, setTogglingChannelId] = useState("");
   const [executionDetail, setExecutionDetail] = useState(null);
   const executionDetailRequest = useRef(0);
+  const pageContentRef = useRef(null);
+  const pageScrollPositionsRef = useRef(new Map());
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
 
   const notify = useCallback((message, tone = "success") => {
     if (tone === "error") toast.error(message);
@@ -85,12 +91,16 @@ export function App() {
 
   useEffect(() => { void refresh(); void refreshInboxSummary(); }, [refresh, refreshInboxSummary]);
 
-  const activateRoute = useCallback((page, { replace = false, recordID = "", notificationID = "" } = {}) => {
+  const activateRoute = useCallback((page, { replace = false, recordID, notificationID } = {}) => {
+    const savedRoute = tabRouteStateRef.current.get(page) || {};
+    const nextRecordID = recordID === undefined ? savedRoute.recordID || "" : recordID;
+    const nextNotificationID = notificationID === undefined ? savedRoute.notificationID || "" : notificationID;
+    tabRouteStateRef.current.set(page, { recordID: nextRecordID, notificationID: nextNotificationID });
     setActivePage(page);
     setOpenTabs((current) => current.includes(page) ? current : [...current, page]);
-    setRouteRecordID(recordID);
-    setRouteNotificationID(notificationID);
-    const path = pathForRoute(page, recordID, notificationID);
+    setRouteRecordID(nextRecordID);
+    setRouteNotificationID(nextNotificationID);
+    const path = pathForRoute(page, nextRecordID, nextNotificationID);
     if (window.location.pathname !== path) window.history[replace ? "replaceState" : "pushState"]({}, "", path);
   }, []);
   const navigate = useCallback((page) => {
@@ -105,11 +115,22 @@ export function App() {
       setOpenTabs((current) => current.includes(route.page) ? current : [...current, route.page]);
       setRouteRecordID(route.recordID);
       setRouteNotificationID(route.notificationID);
+      tabRouteStateRef.current.set(route.page, { recordID: route.recordID, notificationID: route.notificationID });
       resetMobileNavigation();
     };
     window.addEventListener("popstate", popState);
     return () => window.removeEventListener("popstate", popState);
   }, [resetMobileNavigation]);
+
+  const rememberPageScroll = useCallback((event) => {
+    pageScrollPositionsRef.current.set(activePageRef.current, event.currentTarget.scrollTop);
+  }, []);
+  useLayoutEffect(() => {
+    const content = pageContentRef.current;
+    if (!content) return;
+    const saved = pageScrollPositionsRef.current.get(activePage) || 0;
+    content.scrollTop = saved;
+  }, [activePage]);
 
   const monitorContext = useCallback((monitor) => ({ monitor, descriptor: modules.find((item) => item.type === monitor.module_type) }), [modules]);
   useEffect(() => {
@@ -158,10 +179,14 @@ export function App() {
     const index = openTabs.indexOf(page);
     const remaining = openTabs.filter((item) => item !== page);
     setOpenTabs(remaining);
+    pageScrollPositionsRef.current.delete(page);
+    tabRouteStateRef.current.delete(page);
     if (activePage === page) activateRoute(remaining[index - 1] || remaining[index] || "overview", { replace: true });
   }, [activateRoute, activePage, openTabs]);
   const closeOtherTabs = useCallback((page) => {
     setOpenTabs((current) => current.filter((item) => item === "overview" || item === page));
+    pageScrollPositionsRef.current.forEach((_value, key) => { if (key !== "overview" && key !== page) pageScrollPositionsRef.current.delete(key); });
+    tabRouteStateRef.current.forEach((_value, key) => { if (key !== "overview" && key !== page) tabRouteStateRef.current.delete(key); });
     activateRoute(page, { replace: true });
   }, [activateRoute]);
   const closeRightTabs = useCallback((page) => {
@@ -169,6 +194,8 @@ export function App() {
     if (index < 0) return;
     const remaining = openTabs.slice(0, index + 1);
     setOpenTabs(remaining);
+    pageScrollPositionsRef.current.forEach((_value, key) => { if (!remaining.includes(key)) pageScrollPositionsRef.current.delete(key); });
+    tabRouteStateRef.current.forEach((_value, key) => { if (!remaining.includes(key)) tabRouteStateRef.current.delete(key); });
     if (!remaining.includes(activePage)) activateRoute(page, { replace: true });
   }, [activateRoute, activePage, openTabs]);
 
@@ -264,6 +291,8 @@ export function App() {
       setDeleteTarget(null);
       const detailPage = `monitor-details:${target.id}`;
       setOpenTabs((current) => current.filter((item) => item !== detailPage));
+      pageScrollPositionsRef.current.delete(detailPage);
+      tabRouteStateRef.current.delete(detailPage);
       setRecordTabs((current) => { const next = { ...current }; delete next[detailPage]; return next; });
       if (activePage === detailPage) {
         activateRoute("monitors", { replace: true });
@@ -285,25 +314,27 @@ export function App() {
     finally { setTogglingChannelId(""); }
   }, [notify, refresh, togglingChannelId]);
 
-  const page = activePage === "overview"
+  const renderPage = (pageKey) => pageKey === "overview"
     ? <OverviewPage monitors={monitors} modules={modules} channels={channels} recentNotifications={recentNotifications} unreadCount={unreadCount} loading={loading} onCreate={openCreateMonitor} onOpenMonitor={openRecords} onOpenMonitors={() => navigate("monitors")} onOpenInbox={() => navigate("inbox")} onOpenNotification={openNotification} />
-    : activePage === "monitors"
+    : pageKey === "monitors"
       ? <MonitorsPage modules={modules} onCreate={openCreateMonitor} onEdit={openEditMonitor} onDuplicate={openDuplicateMonitor} onRun={runMonitor} onDelete={deleteMonitor} onViewRecords={openRecords} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} onRefresh={refresh} refreshVersion={refreshVersion} />
-      : activePage === "statusBoard"
+      : pageKey === "statusBoard"
         ? <StatusBoardPage monitors={monitors} channels={channels} refreshVersion={refreshVersion} onOpenExecution={openExecution} notify={notify} />
-      : activePage === "inbox"
-        ? <NotificationCenterPage refreshVersion={inboxVersion} initialNotificationID={routeNotificationID} onNotificationRouteChange={changeNotificationRoute} onOpenExecution={openExecution} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onNotificationsDeleted={handleNotificationsDeleted} unreadCount={unreadCount} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />
-        : activePage === "notifications"
-          ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onDuplicate={openDuplicateChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
-          : activePage === "plugins"
-            ? <PluginsPage notify={notify} onChanged={refresh} />
-          : activePage === "browserDebug"
-            ? <BrowserDebugPage />
-          : activePage === "logs"
-            ? <SystemLogsPage />
-          : activePage.startsWith("monitor-details:")
-            ? recordTabs[activePage] ? <MonitorRecordsPage monitor={recordTabs[activePage].monitor} descriptor={recordTabs[activePage].descriptor} channels={channels} initialRecordID={routeRecordID} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onDuplicate={openDuplicateMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
-            : <SettingsPage />;
+      : pageKey === "inbox"
+        ? <NotificationCenterPage refreshVersion={inboxVersion} initialNotificationID={pageKey === activePage ? routeNotificationID : null} onNotificationRouteChange={changeNotificationRoute} onOpenExecution={openExecution} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onNotificationsDeleted={handleNotificationsDeleted} unreadCount={unreadCount} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />
+      : pageKey === "notifications"
+        ? <NotificationsPage channels={channels} onCreate={openCreateChannel} onEdit={openEditChannel} onDuplicate={openDuplicateChannel} onToggleEnabled={toggleChannelEnabled} togglingChannelId={togglingChannelId} onRefresh={refresh} />
+        : pageKey === "plugins"
+          ? <PluginsPage notify={notify} onChanged={refresh} />
+        : pageKey === "browserDebug"
+          ? <BrowserDebugPage />
+        : pageKey === "logs"
+          ? <SystemLogsPage />
+        : pageKey.startsWith("monitor-details:")
+          ? recordTabs[pageKey] ? <MonitorRecordsPage monitor={recordTabs[pageKey].monitor} descriptor={recordTabs[pageKey].descriptor} channels={channels} initialRecordID={pageKey === activePage ? routeRecordID : null} onRecordRouteChange={changeRecordRoute} onRecordsDeleted={handleRecordsDeleted} onEdit={openEditMonitor} onDuplicate={openDuplicateMonitor} onRun={runMonitor} onDelete={deleteMonitor} onToggleEnabled={toggleMonitorEnabled} togglingMonitorId={togglingMonitorId} /> : <div className="records-empty">正在加载监控详情...</div>
+          : <SettingsPage />;
+
+  const pagePanels = openTabs.map((pageKey) => <div className={`page-tab-panel ${pageKey === activePage ? "is-active" : ""}`} key={pageKey} aria-hidden={pageKey !== activePage}><PageChromeScope pageKey={pageKey}>{renderPage(pageKey)}</PageChromeScope></div>);
 
   const notificationBell = <NotificationBell items={recentNotifications} unreadCount={unreadCount} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onOpenCenter={() => navigate("inbox")} onOpenNotification={openNotification} browserNotificationStatus={browserNotificationStatus} onToggleBrowserNotifications={toggleBrowserNotifications} />;
   const overlays = <AppOverlays
@@ -314,5 +345,5 @@ export function App() {
     deleteMonitorDialog={{ target: deleteTarget, busy: deleting, onOpenChange: (open) => !open && !deleting && setDeleteTarget(null), onConfirm: confirmDeleteMonitor }}
   />;
 
-  return <AppShell sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={closeMobileSidebar} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onLogout={() => { void logout(); }} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{page}</AppShell>;
+  return <AppShell activePage={activePage} contentRef={pageContentRef} onContentScroll={rememberPageScroll} sidebar={<Sidebar activePage={activePage} collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} unreadCount={unreadCount} onCloseMobile={closeMobileSidebar} onNavigate={navigate} />} topbar={<Topbar activePage={activePage} mobileHidden={mobileTopbarHidden && !mobileSidebarOpen} onLogout={() => { void logout(); }} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleNavigation} notificationBell={notificationBell} />} tabs={<WorkspaceTabs tabs={openTabs} activeId={activePage} onActivate={navigate} onClose={closeTab} onRefresh={() => { void refresh(); void refreshInboxSummary(); }} onCloseOthers={closeOtherTabs} onCloseRight={closeRightTabs} recordTabs={recordTabs} />} sidebarCollapsed={sidebarCollapsed} overlays={overlays}>{pagePanels}</AppShell>;
 }
