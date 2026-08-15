@@ -1812,7 +1812,9 @@ button.collapsible-text-heading:focus-visible { outline: 0; box-shadow: 0 0 0 3p
 .overview-section-header p { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .overview-section-header .button { min-height: 30px; padding: 0 8px; color: var(--muted); font-size: 11px; font-weight: 500; }
 .overview-section-actions { display: flex; flex: none; align-items: center; gap: 5px; }
-.overview-section-actions .button-default { padding-right: 10px; padding-left: 10px; color: var(--primary-foreground); }
+.overview-section-actions .overview-create-monitor.button { min-height: 32px; padding-right: 11px; padding-left: 11px; color: var(--primary-foreground); background: var(--primary); font-weight: 600; box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.overview-section-actions .overview-create-monitor.button:hover:not(:disabled) { color: var(--primary-foreground); background: color-mix(in srgb, var(--primary) 90%, var(--background)); }
+.overview-section-actions .overview-create-monitor.button:focus-visible { color: var(--primary-foreground); box-shadow: 0 0 0 3px var(--ring-soft); }
 .overview-status-list { display: grid; gap: 2px; padding: 11px 20px 16px; }
 .overview-status-row { display: grid; grid-template-columns: 27px 76px minmax(0, 1fr) 30px; gap: 10px; min-height: 39px; align-items: center; }
 .overview-status-icon { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid var(--border); border-radius: 7px; }

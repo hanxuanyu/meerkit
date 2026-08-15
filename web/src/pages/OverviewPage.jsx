@@ -49,7 +49,7 @@ export function OverviewPage({ monitors = [], modules = [], channels = [], recen
 
     <div className="overview-primary-grid">
       <Card className="overview-panel overview-status-panel">
-        <SectionHeader title="状态分布" description="按当前运行状态查看监控覆盖情况。" action={<div className="overview-section-actions"><Button variant="ghost" onClick={onOpenMonitors}>查看列表<ChevronRight size={15} /></Button><Button size="sm" onClick={onCreate}><Plus size={15} />新建监控</Button></div>} />
+        <SectionHeader title="状态分布" description="按当前运行状态查看监控覆盖情况。" action={<div className="overview-section-actions"><Button variant="ghost" onClick={onOpenMonitors}>查看列表<ChevronRight size={15} /></Button><Button size="sm" className="overview-create-monitor" onClick={onCreate}><Plus size={15} />新建监控</Button></div>} />
         <div className="overview-status-list">{statusOrder.map((key) => <StatusRow key={key} status={key} count={monitorSummary.statuses[key]} total={monitorSummary.total} />)}</div>
       </Card>
 
