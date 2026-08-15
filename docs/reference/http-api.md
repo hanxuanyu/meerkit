@@ -246,6 +246,7 @@ Selector 候选请求包含 `target`、`queries` 和可选 `limit`。`target.tab
     "window_id": 4,
     "tab_id": 21
   },
+  "disable_cache": true,
   "rules": [
     {
       "id": "api",
@@ -257,7 +258,7 @@ Selector 候选请求包含 `target`、`queries` 和可选 `limit`。`target.tab
 }
 ```
 
-规则数量为 1 到 32，`max_body_bytes` 最大 1048576。响应返回 `id`、固定目标、`running` 状态和开始时间。停止响应格式为：
+规则数量为 1 到 32，`max_body_bytes` 最大 1048576。`disable_cache` 为 `true` 时，扩展会在捕获期间通过 CDP 禁用目标标签页缓存；同一标签页上的多个捕获采用引用计数，最后一个要求禁用缓存的捕获停止后才恢复。响应返回 `id`、固定目标、`running` 状态和开始时间。停止响应格式为：
 
 ```json
 {

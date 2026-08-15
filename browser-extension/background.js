@@ -299,7 +299,7 @@ async function startNetworkSession(request) {
   const tab = await chrome.tabs.get(tabId);
   if (request.target?.window_id && tab.windowId !== request.target.window_id) throw new Error("Selected tab does not belong to the selected window.");
   if (networkSessions.has(sessionId)) throw new Error("Network capture session already exists.");
-  const capture = await createNetworkCapture(tabId, request.rules || [], sessionId);
+  const capture = await createNetworkCapture(tabId, request.rules || [], sessionId, Boolean(request.disable_cache));
   const session = { id: sessionId, target: { agent_id: await ensureIdentity(), window_id: tab.windowId, tab_id: tabId }, status: "running", started_at: new Date().toISOString(), count: 0 };
   networkSessions.set(sessionId, { session, capture });
   return session;
@@ -973,7 +973,7 @@ async function acquireDebugger(tabId) {
   const existing = debuggerSessions.get(tabId);
   if (existing) { existing.references++; await existing.ready; return existing.target; }
   const target = { tabId };
-  const session = { target, references: 1, networkReferences: 0, ready: null };
+  const session = { target, references: 1, networkReferences: 0, cacheDisabledReferences: 0, ready: null };
   session.ready = chrome.debugger.attach(target, "1.3").catch((error) => { if (debuggerSessions.get(tabId) === session) debuggerSessions.delete(tabId); throw error; });
   debuggerSessions.set(tabId, session);
   await session.ready;
@@ -994,7 +994,7 @@ async function withDebugger(tabId, callback) {
   try { return await callback(target); } finally { await releaseDebugger(tabId); }
 }
 
-async function acquireNetworkDebugger(tabId) {
+async function acquireNetworkDebugger(tabId, disableCache = false) {
   const target = await acquireDebugger(tabId);
   const session = debuggerSessions.get(tabId);
   if (!session) throw new Error("Debugger session was detached.");
@@ -1007,12 +1007,27 @@ async function acquireNetworkDebugger(tabId) {
       throw error;
     }
   }
+  if (disableCache && session.cacheDisabledReferences++ === 0) {
+    try {
+      await chrome.debugger.sendCommand(target, "Network.setCacheDisabled", { cacheDisabled: true });
+    } catch (error) {
+      session.cacheDisabledReferences--;
+      session.networkReferences--;
+      if (session.networkReferences === 0) await chrome.debugger.sendCommand(target, "Network.disable").catch(() => {});
+      await releaseDebugger(tabId);
+      throw error;
+    }
+  }
   return target;
 }
 
-async function releaseNetworkDebugger(tabId) {
+async function releaseNetworkDebugger(tabId, disableCache = false) {
   const session = debuggerSessions.get(tabId);
   if (!session) return;
+  if (disableCache) {
+    session.cacheDisabledReferences = Math.max(0, session.cacheDisabledReferences - 1);
+    if (session.cacheDisabledReferences === 0) await chrome.debugger.sendCommand(session.target, "Network.setCacheDisabled", { cacheDisabled: false }).catch(() => {});
+  }
   session.networkReferences = Math.max(0, session.networkReferences - 1);
   if (session.networkReferences === 0) await chrome.debugger.sendCommand(session.target, "Network.disable").catch(() => {});
   await releaseDebugger(tabId);
@@ -1093,8 +1108,8 @@ async function realWheel(tabId, selector, deltaX, deltaY) {
   });
 }
 
-async function createNetworkCapture(tabId, rules, sessionId) {
-  const target = await acquireNetworkDebugger(tabId);
+async function createNetworkCapture(tabId, rules, sessionId, disableCache = false) {
+  const target = await acquireNetworkDebugger(tabId, disableCache);
   const results = [];
   const requests = new Map();
   const responses = new Map();
@@ -1147,7 +1162,7 @@ async function createNetworkCapture(tabId, rules, sessionId) {
       if (stopped) return;
       stopped = true;
       chrome.debugger.onEvent.removeListener(listener);
-      await releaseNetworkDebugger(tabId);
+      await releaseNetworkDebugger(tabId, disableCache);
     }
   };
 }

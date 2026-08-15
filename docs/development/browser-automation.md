@@ -113,7 +113,7 @@ Cookie 与 Storage Action 标记 `sensitive`，写入、删除和清空同时标
 
 ## 网络捕获生命周期
 
-网络捕获与 Action 分离，启动请求包含目标和 1 到 32 条规则。每条规则可以按 URL 包含文本和资源类型过滤，`max_body_bytes` 最大为 1 MiB。
+网络捕获与 Action 分离，启动请求包含目标、可选的 `disable_cache` 和 1 到 32 条规则。每条规则可以按 URL 包含文本和资源类型过滤，`max_body_bytes` 最大为 1 MiB。禁用缓存与 Network 域一样按标签页引用计数，多个并行捕获不会互相提前恢复缓存。
 
 ```text
 StartNetworkCapture

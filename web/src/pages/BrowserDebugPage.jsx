@@ -5,12 +5,12 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { DynamicFields } from "../components/forms/DynamicFields";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/Select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
+import { NetworkPanel } from "../features/browser/NetworkPanel";
 import { api } from "../lib/api";
 import { findMissingRequiredParameters, getDefaultValues, sanitizeValues } from "../lib/parameterSchema";
 
@@ -31,8 +31,6 @@ export function BrowserDebugPage() {
   const [running, setRunning] = useState(false);
   const [capture, setCapture] = useState(null);
   const [network, setNetwork] = useState([]);
-  const [networkFilter, setNetworkFilter] = useState("");
-  const [captureRules, setCaptureRules] = useState({ url_contains: "", resource_type: "", max_body_bytes: 262144 });
   const [overrideTarget, setOverrideTarget] = useState(false);
   const [overrideWindowID, setOverrideWindowID] = useState("");
   const [overrideTabID, setOverrideTabID] = useState("");
@@ -159,16 +157,15 @@ export function BrowserDebugPage() {
     } finally { setRunning(false); }
   };
 
-  const startCapture = async () => {
+  const startCapture = async ({ preserveLog, disableCache, maxBodyBytes }) => {
     if (!tabID) { notifyBrowserError("请先选择标签页"); return; }
     try {
-      const value = await api("/api/v1/browser/network-captures", { method: "POST", body: JSON.stringify({ target: { agent_id: agentID, window_id: Number(windowID), tab_id: Number(tabID) }, rules: [{ id: "debug", ...captureRules }] }) });
+      const value = await api("/api/v1/browser/network-captures", { method: "POST", body: JSON.stringify({ target: { agent_id: agentID, window_id: Number(windowID), tab_id: Number(tabID) }, disable_cache: disableCache, rules: [{ id: "debug", max_body_bytes: maxBodyBytes }] }) });
       captureIDRef.current = value.id;
-      setCapture(value); setNetwork([]); setSelectedNetwork(null);
+      setCapture(value); if (!preserveLog) { setNetwork([]); setSelectedNetwork(null); }
     } catch (err) { notifyBrowserError(err); }
   };
-  const stopCapture = async () => { if (!capture) return; try { const value = await api(`/api/v1/browser/network-captures/${capture.id}/stop`, { method: "POST" }); captureIDRef.current = ""; setNetwork(value.events || network); setCapture(null); } catch (err) { notifyBrowserError(err); } };
-  const filteredNetwork = network.filter((item) => !networkFilter || String(item.url || "").toLowerCase().includes(networkFilter.toLowerCase()));
+  const stopCapture = async () => { if (!capture) return; try { const value = await api(`/api/v1/browser/network-captures/${capture.id}/stop`, { method: "POST" }); captureIDRef.current = ""; setNetwork((items) => { const received = items.filter((item) => item.session_id === capture.id).length; const missing = (value.events || []).slice(received); return [...items, ...missing].slice(-1000); }); setCapture(null); } catch (err) { notifyBrowserError(err); } };
 
   return <div className="page-stack browser-debug-page">
     <PageHeader eyebrow="LAB / BROWSER" title="浏览器控制" description="" />
@@ -214,7 +211,7 @@ export function BrowserDebugPage() {
           <ResultPanel request={lastRequest} result={result} onClear={() => { setResult(null); setLastRequest(null); }} />
         </div>
       </TabsContent>
-      <TabsContent value="network"><Card className="browser-network-card"><div className="browser-network-control"><div><Network size={16} /><strong>持续网络捕获</strong><span>{capture ? `固定绑定标签页 #${capture.target?.tab_id}` : "未启动"}</span></div><Button variant={capture ? "secondary" : "default"} onClick={() => void (capture ? stopCapture() : startCapture())}>{capture ? "停止捕获" : "开始捕获"}</Button></div><div className="browser-network-filters"><Field label="URL 包含"><Input disabled={Boolean(capture)} value={captureRules.url_contains} onChange={(event) => setCaptureRules((value) => ({ ...value, url_contains: event.target.value }))} /></Field><Field label="资源类型"><Input disabled={Boolean(capture)} value={captureRules.resource_type} onChange={(event) => setCaptureRules((value) => ({ ...value, resource_type: event.target.value }))} placeholder="XHR / Fetch" /></Field><Field label="正文上限"><Input disabled={Boolean(capture)} type="number" value={captureRules.max_body_bytes} onChange={(event) => setCaptureRules((value) => ({ ...value, max_body_bytes: Number(event.target.value) }))} /></Field><Field label="筛选"><Input value={networkFilter} onChange={(event) => setNetworkFilter(event.target.value)} placeholder="筛选 URL" /></Field></div><div className="browser-network-workspace"><NetworkList items={filteredNetwork} selected={selectedNetwork} onSelect={setSelectedNetwork} /><NetworkDetail item={selectedNetwork} /></div></Card></TabsContent>
+      <TabsContent value="network"><NetworkPanel capture={capture} items={network} selected={selectedNetwork} onSelect={setSelectedNetwork} onStart={startCapture} onStop={stopCapture} onClear={() => { setNetwork([]); setSelectedNetwork(null); }} canStart={Boolean(agentID && tabID)} targetLabel={capture ? `标签页 #${capture.target?.tab_id}` : selectedTab ? `标签页 #${selectedTab.id} · ${selectedTab.title || selectedTab.url || "未命名"}` : ""} /></TabsContent>
     </Tabs>
     <AlertDialog open={confirmAction} onOpenChange={(open) => !running && setConfirmAction(open)}><AlertDialogContent><AlertDialogHeader><div className="alert-dialog-icon"><AlertTriangle size={18} /></div><AlertDialogTitle>确认执行“{definition?.label}”？</AlertDialogTitle><AlertDialogDescription>{definition?.description} 此操作会修改浏览器状态或页面认证数据，请确认目标窗口和标签页无误。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={running}>取消</AlertDialogCancel><AlertDialogAction disabled={running} onClick={(event) => { event.preventDefault(); void execute(true); }}>{running ? "执行中..." : "确认执行"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>;
@@ -347,8 +344,4 @@ function collectResultImages(value, path = "image", found = []) {
 function isRenderedImage(value) { return typeof value === "string" && (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value) || /^https?:\/\/[^?#]+\.(png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(value)); }
 function formatTarget(target) { return target?.tab_id ? `窗口 ${target.window_id || "-"} / 标签页 ${target.tab_id}` : target?.window_id ? `窗口 ${target.window_id}` : "无指定目标"; }
 function notifyBrowserError(error) { toast.error(error?.message || String(error || "浏览器操作失败"), { id: "browser-debug-error" }); }
-function NetworkList({ items, selected, onSelect }) { return <div className="browser-network-list"><div className="browser-network-list-head"><span>状态</span><span>方法</span><span>地址</span><span>类型</span><span>耗时</span></div>{items.length ? items.map((item, index) => <button type="button" className="browser-network-list-row" data-selected={item === selected} key={`${item.session_id}-${item.url}-${index}`} onClick={() => onSelect(item)}><span>{item.status || "ERR"}</span><span>{item.method || "GET"}</span><strong title={item.url}>{item.url}</strong><span>{item.resource_type || item.mime_type || "-"}</span><span>{item.duration_ms || 0} ms</span></button>) : <div className="browser-debug-empty">暂无捕获请求</div>}</div>; }
-function NetworkDetail({ item }) { if (!item) return <div className="browser-network-detail-empty">选择请求查看标头、正文和时序</div>; return <div className="browser-network-detail"><div><strong>{item.method || "GET"} {item.url}</strong><span>{item.status || "ERR"} · {item.mime_type || item.resource_type || "未知类型"} · {item.duration_ms || 0} ms</span></div><Tabs defaultValue="response"><TabsList><TabsTrigger value="response">响应</TabsTrigger><TabsTrigger value="request">请求</TabsTrigger><TabsTrigger value="timing">时序</TabsTrigger></TabsList><TabsContent value="response"><DetailObject title="响应标头" value={item.headers} /><DetailBody value={item.body} error={item.error} truncated={item.truncated} /></TabsContent><TabsContent value="request"><DetailObject title="请求标头" value={item.request_headers} /><DetailBody value={item.request_body} truncated={item.request_body_truncated} /></TabsContent><TabsContent value="timing"><DetailObject title="连接与时序" value={{ protocol: item.protocol, remote_address: [item.remote_ip_address, item.remote_port].filter(Boolean).join(":"), encoded_data_length: item.encoded_data_length, from_disk_cache: item.from_disk_cache, from_service_worker: item.from_service_worker, ...(item.timing || {}) }} /></TabsContent></Tabs></div>; }
-function DetailObject({ title, value }) { const entries = Object.entries(value || {}).filter(([, item]) => item !== undefined && item !== ""); return <section className="browser-network-detail-section"><h4>{title}</h4>{entries.length ? <dl>{entries.map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{String(item)}</dd></div>)}</dl> : <div className="browser-network-detail-empty">无数据</div>}</section>; }
-function DetailBody({ value, error, truncated }) { return <section className="browser-network-body"><pre className={error ? "is-error" : ""}>{value || error || "无正文"}</pre>{truncated ? <span>正文已按配置上限截断</span> : null}</section>; }
 function defaultParams(definition) { return getDefaultValues({ parameters: definition?.parameters || [] }); }

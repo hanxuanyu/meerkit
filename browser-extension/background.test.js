@@ -171,6 +171,17 @@ test("shares one debugger attachment between capture and screenshot", async () =
   assert.equal(harness.stats.detached, 1);
 });
 
+test("keeps cache disabled until the last requesting capture stops", async () => {
+  const harness = createHarness();
+  const first = await harness.context.startNetworkSession({ session_id: "capture-cache-1", target: { tab_id: 21, window_id: 4 }, disable_cache: true, rules: [{ id: "all" }] });
+  const second = await harness.context.startNetworkSession({ session_id: "capture-cache-2", target: { tab_id: 21, window_id: 4 }, disable_cache: true, rules: [{ id: "all" }] });
+  assert.equal(harness.stats.commands.filter((item) => item.method === "Network.setCacheDisabled" && item.params.cacheDisabled).length, 1);
+  await harness.context.stopNetworkSession({ session_id: first.id });
+  assert.equal(harness.stats.commands.filter((item) => item.method === "Network.setCacheDisabled" && !item.params.cacheDisabled).length, 0);
+  await harness.context.stopNetworkSession({ session_id: second.id });
+  assert.equal(harness.stats.commands.filter((item) => item.method === "Network.setCacheDisabled" && !item.params.cacheDisabled).length, 1);
+});
+
 test("stops network capture when Chrome detaches the shared debugger", async () => {
   const harness = createHarness();
   await harness.context.startNetworkSession({ session_id: "capture-detached", target: { tab_id: 21, window_id: 4 }, rules: [{ id: "api" }] });

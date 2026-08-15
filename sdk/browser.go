@@ -98,8 +98,9 @@ type BrowserNetworkCaptureRule struct {
 }
 
 type BrowserNetworkStartRequest struct {
-	Target BrowserTarget               `json:"target"`
-	Rules  []BrowserNetworkCaptureRule `json:"rules,omitempty"`
+	Target       BrowserTarget               `json:"target"`
+	Rules        []BrowserNetworkCaptureRule `json:"rules,omitempty"`
+	DisableCache bool                        `json:"disable_cache,omitempty"`
 }
 
 type BrowserNetworkSession struct {
