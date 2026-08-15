@@ -25,8 +25,32 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 - 在页面主世界执行 JavaScript
 - 以 PNG、JPEG 或 WebP 截取当前可见区域或完整页面
 - 通过 `chrome.debugger` 和 CDP 捕获匹配的网络请求、响应正文、标头、连接、缓存与时序信息
+- 从扩展 Popup 为当前标签页开启元素调试，悬浮高亮页面元素、显示稳定 CSS Selector，并可一键复制
+- 在扩展图标角标和 Popup 中实时显示当前正在执行的 Browser Capability 任务数量
 
 业务 URL、选择器、操作顺序和监控结果语义由独立的 Meerkit 监控插件维护。扩展不保存站点流程或标签页复用关系。
+
+## 元素调试
+
+在普通 HTTP、HTTPS 或本地文件页面中打开扩展 Popup，开启“元素调试”。鼠标移动时只预览元素范围和 CSS Selector；单击页面元素后会拦截该次页面操作并固定当前目标，此时可以稳定点击“复制”、“继续检查”或“退出”。悬浮阶段也可以按 `Ctrl/Command + C` 快速复制当前 Selector；按 `Esc` 或再次关闭开关也可退出。调试状态按标签页保存在 Chrome Session Storage 中，页面刷新后会自动恢复，关闭标签页时自动清理。
+
+Chrome 内部页面、Chrome Web Store 和其他扩展页面禁止脚本注入，因此不能开启元素调试。检查器通过 Shadow DOM 隔离样式，生成和复制选择器完全在本地完成，不会把页面内容发送到 Meerkit。
+
+## 代码结构
+
+扩展按职责拆分，新增能力不应继续堆叠到后台入口：
+
+| 目录/文件 | 职责 |
+| --- | --- |
+| `background.js` | Service Worker 入口、连接生命周期与浏览器命令协调 |
+| `modules/config.js` | 协议、能力清单和默认配置 |
+| `modules/action-badge.js` | 连接状态与实时任务数量角标 |
+| `modules/debug-controller.js` | 调试标签页状态、脚本注入、刷新恢复和清理 |
+| `content/selector-inspector.js` | 页面元素高亮、Selector 生成和剪贴板复制 |
+| `popup/status.js` | Popup 连接及任务状态 |
+| `popup/debug-mode.js` | Popup 调试模式开关 |
+
+后台模块使用独立工厂接收 Chrome API，保持状态边界清晰并便于测试；页面检查器为可重复注入的自包含脚本。
 
 页面类 Action 必须显式传入 `tab_id`；同时传入 `window_id` 时扩展会校验标签页归属。`tab.open` 只接受可选的 `window_id`，成功后返回新标签页目标。网络捕获不是 Action，而是固定绑定启动时标签页的独立会话，通过 `browser.network.start` 和 `browser.network.stop` 管理；切换管理页当前选择不会迁移捕获目标。
 

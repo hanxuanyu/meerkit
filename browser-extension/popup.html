@@ -6,8 +6,12 @@
     <header><span class="brand-mark"><img src="icons/meerkit.png" alt=""></span><div><h1>Browser Agent</h1><p id="agent-name">Meerkit</p></div></header>
     <section id="popup-status" class="popup-status" data-state="disconnected"><span></span><div><strong>检查连接状态</strong><small id="endpoint"></small></div></section>
     <dl><div><dt>版本</dt><dd id="version">-</dd></div><div><dt>运行任务</dt><dd id="active-runs">0</dd></div></dl>
+    <section id="popup-debug" class="popup-debug" data-enabled="false">
+      <div class="popup-debug-heading"><span><strong>元素调试</strong><small id="debug-tab">正在读取活动标签页</small></span><label class="popup-switch" title="切换元素调试模式"><input id="debug-mode" type="checkbox"><span></span></label></div>
+      <p id="debug-description">开启后悬浮预览，单击元素固定后可复制选择器。</p>
+    </section>
     <footer><button id="reconnect" class="secondary" type="button">重新连接</button><button id="settings" class="primary" type="button">连接设置</button></footer>
   </main>
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

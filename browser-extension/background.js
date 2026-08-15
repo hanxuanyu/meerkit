@@ -1,24 +1,12 @@
-const PROTOCOL_VERSION = 1;
+importScripts("modules/config.js", "modules/action-badge.js", "modules/debug-controller.js");
+
+const PROTOCOL_VERSION = MeerkitConfig.protocolVersion;
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
-const DEFAULT_SETTINGS = {
-  endpoint: "ws://127.0.0.1:8080/api/v1/browser/extension/ws",
-  pairingToken: "",
-  agentName: "Local Chrome",
-  maxConcurrent: 2
-};
-const CAPABILITIES = [
-  "window.open", "window.focus", "window.state", "window.resize", "window.close",
-  "tab.open", "tab.activate", "tab.navigate", "tab.reload", "tab.back", "tab.forward", "tab.duplicate", "tab.move", "tab.pin", "tab.mute", "tab.discard", "tab.auto_discardable", "tab.detect_language", "tab.group", "tab.ungroup", "tab.zoom", "tab.close",
-  "page.info", "page.wait", "page.scroll", "page.stop_loading", "page.performance", "page.screenshot",
-  "dom.document", "dom.query", "dom.query_all", "dom.focus", "dom.blur", "dom.click", "dom.input", "dom.check", "dom.select", "dom.submit", "dom.set_attribute", "dom.remove_attribute", "dom.dispatch_event", "dom.scroll_into_view",
-  "input.click", "input.hover", "input.type", "input.key", "input.wheel",
-  "cookie.list", "cookie.set", "cookie.delete", "cookie.clear",
-  "storage.get", "storage.set", "storage.remove", "storage.clear",
-  "runtime.evaluate", "network.start", "network.stop", "browser.targets", "browser.selector_candidates"
-];
-const RESPONSE_CHUNK_SIZE = 512 * 1024;
-const MAX_RESPONSE_SIZE = 60 * 1024 * 1024;
-const MAX_SOCKET_BUFFER = 4 * 1024 * 1024;
+const DEFAULT_SETTINGS = MeerkitConfig.defaultSettings;
+const CAPABILITIES = MeerkitConfig.capabilities;
+const RESPONSE_CHUNK_SIZE = MeerkitConfig.responseChunkSize;
+const MAX_RESPONSE_SIZE = MeerkitConfig.maxResponseSize;
+const MAX_SOCKET_BUFFER = MeerkitConfig.maxSocketBuffer;
 
 let socket = null;
 let reconnectTimer = null;
@@ -31,6 +19,10 @@ const networkSessions = new Map();
 const debuggerSessions = new Map();
 const inputQueues = new Map();
 let targetsChangedTimer = null;
+const actionBadge = MeerkitActionBadge.create(chrome);
+const debugController = MeerkitDebugController.create(chrome);
+actionBadge.update(connectionState, activeRuns);
+void debugController.initialize();
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureIdentity();
@@ -53,6 +45,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "reconnect") {
     reconnect();
     sendResponse({ ok: true });
+  }
+  if (["debug.status", "debug.set", "debug.inspector.disabled"].includes(message?.type)) {
+    void debugController.handleMessage(message, _sender).then(sendResponse).catch((error) => sendResponse({ error: safeError(error) }));
+    return true;
   }
   return false;
 });
@@ -123,8 +119,7 @@ async function status() {
 function setState(state, error = "") {
   connectionState = state;
   lastError = error;
-  void chrome.action.setBadgeText({ text: state === "connected" ? "" : "!" });
-  void chrome.action.setBadgeBackgroundColor({ color: state === "connected" ? "#16a34a" : "#dc2626" });
+  actionBadge.update(connectionState, activeRuns);
 }
 
 async function connect() {
@@ -215,13 +210,15 @@ async function handleMessage(raw) {
     return;
   }
   activeRuns++;
+  actionBadge.update(connectionState, activeRuns);
   try {
     const result = await executeCommand(message.command, message.payload || {});
     await sendCommandResult(message.id, result);
   } catch (error) {
     send({ protocol: PROTOCOL_VERSION, type: "response", id: message.id, error: safeError(error) });
   } finally {
-    activeRuns--;
+    activeRuns = Math.max(0, activeRuns - 1);
+    actionBadge.update(connectionState, activeRuns);
   }
 }
 

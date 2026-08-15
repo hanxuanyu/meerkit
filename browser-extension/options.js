@@ -1,4 +1,4 @@
-const defaults = { endpoint: "ws://127.0.0.1:8080/api/v1/browser/extension/ws", pairingToken: "", agentName: "Local Chrome", maxConcurrent: 2 };
+const defaults = MeerkitConfig.defaultSettings;
 const form = document.querySelector("#settings-form");
 const endpoint = document.querySelector("#endpoint");
 const token = document.querySelector("#pairing-token");
