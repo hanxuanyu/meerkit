@@ -4,19 +4,14 @@ id: meerkit.browser-example
 name: Browser Example Monitor
 version: 0.0.1
 vendor: Meerkit
-desp: 使用多个 Example 模块演示页面 HTML、CSS 文本和网络响应采集。
+desp: 精简演示 CSS 元素读取、持久标签页复用和网络响应采集。
 url: https://github.com/hanxuanyu/meerkit
 protocol:
   min: 1
   max: 1
 modules:
-  - type: browser-example-html
-    name: Example - Page HTML
-    version: "1"
-    config_version: "1"
-    result_schema_version: "1"
-  - type: browser-example-css-text
-    name: Example - CSS Text
+  - type: browser-example-element
+    name: Example - CSS Element
     version: "1"
     config_version: "1"
     result_schema_version: "1"

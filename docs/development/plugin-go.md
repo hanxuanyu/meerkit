@@ -46,14 +46,11 @@ func main() {
     runtime := sdk.NewPluginRuntime()
     browser := runtime.Browser()
 
-    runtime.Serve(sdk.NewProvider(
-        monitor.NewHTML(browser),
-        monitor.NewResponse(browser),
-    ))
+    runtime.Serve(sdk.NewProvider(monitor.NewModules(browser)...))
 }
 ```
 
-`BrowserClient` 提供目标查询、单 Action 和网络捕获。Session 未建立或已断开时会返回明确错误；调用方必须传播 Context、显式停止捕获并关闭自己创建的标签页。详见[浏览器自动化架构](/development/browser-automation#插件-browserbridge)。
+`BrowserClient` 提供目标查询、单 Action 和网络捕获。Session 未建立或已断开时会返回明确错误；调用方必须传播 Context、显式停止捕获，并关闭不需要持续复用的标签页。需要保留标签页时，应提供明确配置、限定识别范围，并处理标签页被用户关闭的情况。详见[浏览器自动化架构](/development/browser-automation#插件-browserbridge)。
 
 ## 模块描述器
 

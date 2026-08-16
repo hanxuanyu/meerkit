@@ -1,11 +1,31 @@
 # Browser Example Monitor
 
-这是一个演示“单个插件提供多个监控模块”的 Browser Capability 示例插件。模块名称与类型均包含 `example`，用于明确提示这些模块只作为开发参考：
+这是一个刻意保持精简的 Browser Capability 示例插件，版本仍为 `0.0.1`。它展示如何把宿主提供的浏览器原子能力组合成监控场景，而不把业务流程写入 Chrome 扩展。
 
-- `browser-example-html`：获取页面最终 DOM 的 HTML。
-- `browser-example-css-text`：获取指定 CSS Selector 对应元素的文本。
-- `browser-example-response`：获取 URL 包含指定文本的最近一次网络响应。
+## 示例模块
 
-每次执行都先调用 `tab.open` 创建标签页，保存返回的 `window_id/tab_id`，然后把目标显式传给后续原子 Action；执行结束后关闭该标签页。响应模块先在空白页创建独立网络捕获会话，再导航到目标地址，以覆盖首次页面请求，最后显式停止捕获。
+- `browser-example-element`：输入页面地址和 CSS Selector，读取第一个匹配元素的文本、HTML、表单值、属性、可见性及页面信息。选择器参数使用 `css_selector` 类型，可在创建监控时从当前浏览器目标发现候选元素。
+- `browser-example-response`：刷新或打开页面并捕获 URL 包含指定文本的最近一次网络响应，返回状态码、响应头和受大小限制的正文。
 
-插件通过 `PluginRuntime.Browser()` 使用宿主浏览器能力。站点地址、选择器、操作顺序和结果解释均保留在监控插件中；通用 Chrome 扩展不包含这些业务逻辑。
+两个模块都提供以下页面选项：
+
+- **保持标签页**关闭时，每次执行创建后台标签页，完成后自动关闭。
+- **保持标签页**开启时，插件复用 `Meerkit Examples` 标签页分组中相同地址的页面。每次采集前先执行 `tab.reload`，再等待元素或读取响应；可以同时选择刷新时绕过缓存。
+- 用户手动关闭保持的标签页后，下次执行会自动创建新标签页。插件重启后也会尝试从示例分组恢复相同地址的标签页。
+
+网络响应模块会先启动捕获，再触发导航或刷新，确保页面首批请求也处于捕获范围内。共享工作区会串行使用同一个保持标签页，避免两个示例任务同时刷新和读取同一页面。
+
+## 代码结构
+
+- `main.go`：创建插件 Runtime 并注册示例模块。
+- `monitor/shared.go`：标签页获取、分组、复用、刷新、关闭和网络捕获生命周期。
+- `monitor/element.go`：CSS 元素内容模块。
+- `monitor/response.go`：网络响应模块。
+- `monitor/descriptor.go`：结果 Schema 与条件操作符辅助函数。
+
+构建与测试：
+
+```bash
+go test ./...
+go build ./...
+```

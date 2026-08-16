@@ -21,7 +21,11 @@ type ResponseConfig struct {
 type ResponseModule struct{ moduleBase }
 
 func NewResponse(browser sdk.BrowserClient) *ResponseModule {
-	return &ResponseModule{moduleBase{browser: browser}}
+	return newResponse(newBrowserWorkspace(browser))
+}
+
+func newResponse(workspace *browserWorkspace) *ResponseModule {
+	return &ResponseModule{moduleBase{workspace: workspace}}
 }
 
 func (m *ResponseModule) Descriptor() sdk.ModuleDescriptor {
@@ -45,6 +49,10 @@ func (m *ResponseModule) Descriptor() sdk.ModuleDescriptor {
 		{Name: "body_base64", Label: "正文为 Base64", Type: "boolean", Operators: boolOperators()},
 		{Name: "truncated", Label: "正文已截断", Type: "boolean", Operators: boolOperators()},
 		{Name: "error", Label: "捕获错误", Type: "string", Operators: stringOperators()},
+		{Name: "tab_id", Label: "标签页 ID", Type: "number", Operators: numberOperators()},
+		{Name: "tab_reused", Label: "复用标签页", Type: "boolean", Operators: boolOperators()},
+		{Name: "tab_refreshed", Label: "执行前已刷新", Type: "boolean", Operators: boolOperators()},
+		{Name: "tab_kept_open", Label: "标签页保持打开", Type: "boolean", Operators: boolOperators()},
 		{Name: "duration_ms", Label: "执行耗时", Type: "number", Unit: "ms", Operators: numberOperators()},
 	}
 	return sdk.ModuleDescriptor{
@@ -61,7 +69,7 @@ func (m *ResponseModule) ValidateConfig(raw json.RawMessage) error {
 	if err := decodeConfig(raw, &config); err != nil {
 		return err
 	}
-	if err := validatePageConfig(config.pageConfig, m.browser); err != nil {
+	if err := validatePageConfig(config.pageConfig, m.workspace.browser); err != nil {
 		return err
 	}
 	if rule := strings.TrimSpace(config.URLContains); rule == "" || len(rule) > 2048 {
@@ -83,7 +91,7 @@ func (m *ResponseModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.
 		config.MaxBodyBytes = 262144
 	}
 	rule := sdk.BrowserNetworkCaptureRule{ID: "response", URLContains: config.URLContains, MaxBodyBytes: config.MaxBodyBytes}
-	result, err := m.run(ctx, config.pageConfig, []sdk.BrowserAction{{ID: "settle", Type: "page.wait", Params: map[string]any{"mode": "duration", "duration_ms": 1000}}}, &rule)
+	result, err := m.workspace.run(ctx, config.pageConfig, []sdk.BrowserAction{{ID: "settle", Type: "page.wait", Params: map[string]any{"mode": "duration", "duration_ms": 1000}}}, &rule)
 	if err != nil {
 		return failedObservation("response", err.Error(), emptyResponseResult()), err
 	}
@@ -97,10 +105,10 @@ func (m *ResponseModule) Execute(ctx context.Context, raw json.RawMessage) (sdk.
 		err = fmt.Errorf("no response URL contained %q", config.URLContains)
 		return failedObservation("response", err.Error(), emptyResponseResult()), err
 	}
-	value := map[string]any{"url": latest.URL, "method": latest.Method, "status": latest.Status, "status_text": latest.StatusText, "resource_type": latest.ResourceType, "mime_type": latest.MimeType, "headers": latest.Headers, "body": latest.Body, "body_base64": latest.BodyBase64, "truncated": latest.Truncated, "error": latest.Error, "duration_ms": result.Duration}
+	value := map[string]any{"url": latest.URL, "method": latest.Method, "status": latest.Status, "status_text": latest.StatusText, "resource_type": latest.ResourceType, "mime_type": latest.MimeType, "headers": latest.Headers, "body": latest.Body, "body_base64": latest.BodyBase64, "truncated": latest.Truncated, "error": latest.Error, "tab_id": result.Target.TabID, "tab_reused": result.Reused, "tab_refreshed": result.Refreshed, "tab_kept_open": result.KeptOpen, "duration_ms": result.Duration}
 	return sdk.Observation{Success: true, SchemaVersion: resultSchemaVersion, Result: value, ResultSets: map[string]map[string]any{"response": value}, Summary: fmt.Sprintf("最近匹配响应：HTTP %d %s", latest.Status, latest.URL)}, nil
 }
 
 func emptyResponseResult() map[string]any {
-	return map[string]any{"url": "", "method": "", "status": 0, "status_text": "", "resource_type": "", "mime_type": "", "headers": map[string]string{}, "body": "", "body_base64": false, "truncated": false, "error": "", "duration_ms": int64(0)}
+	return map[string]any{"url": "", "method": "", "status": 0, "status_text": "", "resource_type": "", "mime_type": "", "headers": map[string]string{}, "body": "", "body_base64": false, "truncated": false, "error": "", "tab_id": 0, "tab_reused": false, "tab_refreshed": false, "tab_kept_open": false, "duration_ms": int64(0)}
 }

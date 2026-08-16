@@ -7,10 +7,5 @@ import (
 
 func main() {
 	runtime := sdk.NewPluginRuntime()
-	client := runtime.Browser()
-	runtime.Serve(sdk.NewProvider(
-		browsermonitor.NewHTML(client),
-		browsermonitor.NewCSSText(client),
-		browsermonitor.NewResponse(client),
-	))
+	runtime.Serve(sdk.NewProvider(browsermonitor.NewModules(runtime.Browser())...))
 }
