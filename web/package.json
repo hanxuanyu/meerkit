@@ -8,6 +8,11 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "allowScripts": {
+    "@tailwindcss/oxide@4.1.10": true,
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.3": true
+  },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-checkbox": "1.3.3",
