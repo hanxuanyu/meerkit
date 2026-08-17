@@ -9,10 +9,10 @@ const MAX_RESPONSE_SIZE = MeerkitConfig.maxResponseSize;
 const MAX_SOCKET_BUFFER = MeerkitConfig.maxSocketBuffer;
 
 let socket = null;
-let reconnectTimer = null;
 let heartbeatTimer = null;
-let reconnectAttempt = 0;
-let connectionState = "disconnected";
+let connectionState = "idle";
+let connectionEnabled = false;
+let awaitingPong = false;
 let lastError = "";
 let activeRuns = 0;
 const networkSessions = new Map();
@@ -27,24 +27,22 @@ void debugController.initialize();
 chrome.runtime.onInstalled.addListener(() => {
   void ensureIdentity();
   chrome.runtime.openOptionsPage();
-  scheduleReconnect(100);
-});
-chrome.runtime.onStartup.addListener(() => scheduleReconnect(100));
-chrome.alarms.create("meerkit-browser-reconnect", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "meerkit-browser-reconnect" && (!socket || socket.readyState > WebSocket.OPEN)) connect();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && ["endpoint", "pairingToken", "agentName", "maxConcurrent"].some((key) => changes[key])) reconnect();
+  if (area === "local" && connectionEnabled && ["endpoint", "pairingToken", "agentName"].some((key) => changes[key])) void requestDisconnect();
 });
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "status") {
     void status().then(sendResponse);
     return true;
   }
-  if (message?.type === "reconnect") {
-    reconnect();
-    sendResponse({ ok: true });
+  if (message?.type === "connection.connect") {
+    void requestConnect().then(sendResponse).catch((error) => sendResponse({ ok: false, error: safeError(error) }));
+    return true;
+  }
+  if (message?.type === "connection.disconnect") {
+    void requestDisconnect().then(sendResponse).catch((error) => sendResponse({ ok: false, error: safeError(error) }));
+    return true;
   }
   if (["debug.status", "debug.set", "debug.inspector.disabled"].includes(message?.type)) {
     void debugController.handleMessage(message, _sender).then(sendResponse).catch((error) => sendResponse({ error: safeError(error) }));
@@ -113,7 +111,7 @@ async function ensureIdentity() {
 
 async function status() {
   const config = await settings();
-  return { state: connectionState, error: lastError, endpoint: config.endpoint, agentName: config.agentName, activeRuns, version: EXTENSION_VERSION };
+  return { state: connectionState, enabled: connectionEnabled, error: lastError, endpoint: config.endpoint, agentName: config.agentName, activeRuns, version: EXTENSION_VERSION };
 }
 
 function setState(state, error = "") {
@@ -123,22 +121,28 @@ function setState(state, error = "") {
 }
 
 async function connect() {
+  if (!connectionEnabled) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-  clearTimeout(reconnectTimer);
   const config = await settings();
+  if (!connectionEnabled) return;
+  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   if (!config.endpoint || !config.pairingToken) {
-    setState("unconfigured", "Configure the Meerkit WebSocket endpoint and pairing token.");
+    connectionEnabled = false;
+    setState("unconfigured", "请先配置 WebSocket 地址和配对令牌。");
     return;
   }
   setState("connecting");
+  let candidate;
   try {
-    socket = new WebSocket(config.endpoint);
+    candidate = new WebSocket(config.endpoint);
+    socket = candidate;
   } catch (error) {
-    setState("disconnected", error.message);
-    scheduleReconnect();
+    connectionEnabled = false;
+    setState("failed", safeError(error));
     return;
   }
-  socket.addEventListener("open", async () => {
+  candidate.addEventListener("open", async () => {
+    if (!connectionEnabled || socket !== candidate) return;
     const agentId = await ensureIdentity();
     send({
       protocol: PROTOCOL_VERSION,
@@ -147,39 +151,60 @@ async function connect() {
       payload: { id: agentId, name: config.agentName, version: EXTENSION_VERSION, capabilities: CAPABILITIES }
     });
   });
-  socket.addEventListener("message", (event) => void handleMessage(event.data));
-  socket.addEventListener("close", () => {
+  candidate.addEventListener("message", (event) => {
+    if (socket === candidate) void handleMessage(event.data);
+  });
+  candidate.addEventListener("close", () => {
+    if (socket !== candidate) return;
     stopHeartbeat();
     void stopAllNetworkSessions("Meerkit connection closed.");
     socket = null;
-    if (connectionState !== "unconfigured") setState("disconnected", lastError || "Connection closed.");
-    scheduleReconnect();
+    if (connectionEnabled) {
+      connectionEnabled = false;
+      setState("failed", lastError || "连接已中断。");
+    } else {
+      setState("idle");
+    }
   });
-  socket.addEventListener("error", () => setState("disconnected", "Unable to connect to Meerkit."));
+  candidate.addEventListener("error", () => {
+    if (connectionEnabled && socket === candidate) setState("failed", "无法连接 Meerkit。");
+  });
 }
 
-function reconnect() {
+async function requestConnect() {
+  connectionEnabled = true;
+  await connect();
+  return { ok: true, ...(await status()) };
+}
+
+async function requestDisconnect() {
+  connectionEnabled = false;
   stopHeartbeat();
-  reconnectAttempt = 0;
-  if (socket) socket.close(1000, "configuration changed");
+  const current = socket;
   socket = null;
-  scheduleReconnect(100);
-}
-
-function scheduleReconnect(delay) {
-  clearTimeout(reconnectTimer);
-  const wait = delay ?? Math.min(30000, 1000 * (2 ** reconnectAttempt++));
-  reconnectTimer = setTimeout(connect, wait);
+  if (current) current.close(1000, "disconnected by user");
+  await stopAllNetworkSessions("Meerkit connection closed by user.");
+  setState("idle");
+  return { ok: true, ...(await status()) };
 }
 
 function startHeartbeat(seconds = 15) {
   stopHeartbeat();
-  heartbeatTimer = setInterval(() => send({ protocol: PROTOCOL_VERSION, type: "ping" }), Math.max(10, seconds) * 1000);
+  if (!connectionEnabled || connectionState !== "connected") return;
+  heartbeatTimer = setInterval(() => {
+    if (awaitingPong) {
+      lastError = "Meerkit 心跳响应超时。";
+      socket?.close(4000, "heartbeat timeout");
+      return;
+    }
+    awaitingPong = send({ protocol: PROTOCOL_VERSION, type: "ping" });
+  }, Math.max(10, seconds) * 1000);
 }
 
 function stopHeartbeat() {
   clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  awaitingPong = false;
 }
 
 function send(message) {
@@ -197,12 +222,15 @@ async function handleMessage(raw) {
     return;
   }
   if (message.type === "welcome") {
-    reconnectAttempt = 0;
+    if (!connectionEnabled) return;
     setState("connected");
     startHeartbeat(message.payload?.heartbeat_seconds || 15);
     return;
   }
-  if (message.type === "pong") return;
+  if (message.type === "pong") {
+    awaitingPong = false;
+    return;
+  }
   if (message.type !== "command" || !message.id) return;
   const config = await settings();
   if (activeRuns >= Math.max(1, Number(config.maxConcurrent) || 1)) {
@@ -1241,4 +1269,10 @@ async function withTimeout(promise, milliseconds, message) {
 }
 function safeError(error) { return String(error?.message || error || "Browser operation failed.").slice(0, 2000); }
 
-void ensureIdentity().then(connect);
+function initializeConnection() {
+  connectionEnabled = false;
+  setState("idle");
+  return ensureIdentity();
+}
+
+const connectionReady = initializeConnection();

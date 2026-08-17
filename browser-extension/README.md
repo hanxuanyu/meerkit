@@ -8,9 +8,9 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它不包含�
 2. 开启开发者模式。
 3. 选择“加载已解压的扩展程序”，加载本目录。
 4. 在 Meerkit 的系统设置中取得 WebSocket 地址和配对令牌。
-5. 打开扩展设置，填写地址和令牌。
+5. 打开扩展设置，填写地址和令牌，然后从设置页或 Popup 主动连接后端。
 
-扩展会持久化执行节点 ID 和连接设置，并自动重连 Meerkit。配对令牌只保存在 Chrome 本地扩展存储中。
+扩展会持久化执行节点 ID 和连接设置，但不会主动连接 Meerkit。只有用户点击“连接后端”后才建立连接；浏览器或扩展重新启动、连接失败后都不会自动重试。配对令牌只保存在 Chrome 本地扩展存储中。
 
 ## 能力
 
@@ -44,7 +44,7 @@ Chrome 内部页面、Chrome Web Store 和其他扩展页面禁止脚本注入�
 | --- | --- |
 | `background.js` | Service Worker 入口、连接生命周期与浏览器命令协调 |
 | `modules/config.js` | 协议、能力清单和默认配置 |
-| `modules/action-badge.js` | 连接状态与实时任务数量角标 |
+| `modules/action-badge.js` | 按连接状态显示低干扰标记或实时任务数量 |
 | `modules/debug-controller.js` | 调试标签页状态、脚本注入、刷新恢复和清理 |
 | `content/selector-inspector.js` | 页面元素高亮、Selector 生成和剪贴板复制 |
 | `popup/status.js` | Popup 连接及任务状态 |
@@ -56,7 +56,7 @@ Chrome 内部页面、Chrome Web Store 和其他扩展页面禁止脚本注入�
 
 `browser.selector_candidates` 每次最多接收 16 条查询并返回 200 个元素摘要；结果不包含 DOM HTML，选择器优先使用唯一 ID 和稳定属性。参数未声明候选查询时，管理界面仍显示普通的手动输入框。
 
-扩展与 Meerkit 使用协议版本 `1` 的 WebSocket 长连接。连接或目标标签页断开时，扩展会停止相关 CDP 会话并释放 debugger attachment。
+扩展与 Meerkit 使用协议版本 `1` 的 WebSocket 长连接。收到服务端 `welcome` 后才启动心跳检查；连接失败时扩展图标只显示淡色标记，用户主动断开后清空角标并恢复原始 Logo。连接或目标标签页断开时，扩展会停止相关 CDP 会话并释放 debugger attachment。
 
 截图、真实输入和网络捕获按标签页共享同一个 CDP attachment，并使用引用计数释放。同一标签页的输入序列串行执行；多个网络捕获共享 Network 域，停止一个捕获不会中断其他捕获。
 

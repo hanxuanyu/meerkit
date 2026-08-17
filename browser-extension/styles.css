@@ -22,9 +22,10 @@ input:focus { border-color: var(--muted); box-shadow: 0 0 0 3px color-mix(in srg
 .password-field input { padding-right: 58px; }
 .password-field button { position: absolute; top: 3px; right: 3px; min-height: 31px; padding: 0 9px; border: 0; color: var(--muted); background: transparent; font-size: 10px; }
 .status { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
-.status span, .popup-status > span { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #dc2626; }
+.status span, .popup-status > span { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #d4d4d8; }
 .status[data-state="connected"] span, .popup-status[data-state="connected"] > span { background: #16a34a; }
 .status[data-state="connecting"] span, .popup-status[data-state="connecting"] > span { background: #d97706; }
+.status[data-state="failed"] span, .status[data-state="unconfigured"] span, .popup-status[data-state="failed"] > span, .popup-status[data-state="unconfigured"] > span { background: #a1a1aa; }
 footer { display: flex; justify-content: flex-end; gap: 8px; }
 .popup-page { width: 330px; }
 .popup-shell { padding: 16px; }

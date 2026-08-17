@@ -13,8 +13,8 @@
       <label><span>WebSocket 地址</span><input id="endpoint" type="url" required placeholder="ws://127.0.0.1:8080/api/v1/browser/extension/ws"></label>
       <label><span>配对令牌</span><div class="password-field"><input id="pairing-token" type="password" required autocomplete="off"><button id="toggle-token" type="button" title="显示配对令牌" aria-label="显示配对令牌">显示</button></div></label>
       <div class="field-grid"><label><span>执行节点名称</span><input id="agent-name" type="text" maxlength="80" required></label><label><span>最大并发任务</span><input id="max-concurrent" type="number" min="1" max="8" required></label></div>
-      <div id="status" class="status" data-state="disconnected"><span></span><strong>尚未连接</strong></div>
-      <footer><button id="reconnect" class="secondary" type="button">重新连接</button><button class="primary" type="submit">保存设置</button></footer>
+      <div id="status" class="status" data-state="idle"><span></span><strong>未连接</strong></div>
+      <footer><button id="connection-toggle" class="secondary" type="button">连接后端</button><button class="primary" type="submit">保存设置</button></footer>
     </form>
   </main>
   <script src="modules/config.js"></script>

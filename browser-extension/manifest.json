@@ -10,7 +10,6 @@
     "128": "icons/meerkit.png"
   },
   "permissions": [
-    "alarms",
     "cookies",
     "debugger",
     "scripting",
