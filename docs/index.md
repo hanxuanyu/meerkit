@@ -33,6 +33,6 @@ features:
 
 ## 文档范围
 
-本网站描述仓库当前已经实现的功能，不作为未来路线图。使用者可以从[快速开始](/guide/getting-started)进入；需要真实浏览器采集时阅读[浏览器执行节点](/guide/browser-agent)；部署维护者应重点阅读[配置](/operations/configuration)、[部署与升级](/operations/deployment)和[安全边界](/operations/security)；插件作者可以选择 [Go SDK](/development/plugin-go) 或[跨语言协议](/development/plugin-protocol)。
+本网站描述仓库当前已经实现的功能，不作为未来路线图。使用者可以从[快速开始](/guide/getting-started)进入；需要真实浏览器采集时阅读[浏览器执行节点](/guide/browser-agent)；部署维护者应重点阅读[配置](/operations/configuration)、[部署与升级](/operations/deployment)和[安全边界](/operations/security)；插件作者可以选择 [Go SDK](/development/plugin-go) 或[跨语言协议](/development/plugin-protocol)，需要控制 Chrome 时继续阅读[浏览器能力插件开发](/development/browser-plugin)。
 
 Meerkit 主项目、官方插件、SDK 和本文档均以 [Apache License 2.0](https://github.com/hanxuanyu/meerkit/blob/main/LICENSE) 开源。

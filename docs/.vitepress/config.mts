@@ -58,6 +58,7 @@ export default defineConfig({
           text: "插件开发",
           items: [
             { text: "Go 插件", link: "/development/plugin-go" },
+            { text: "浏览器能力插件", link: "/development/browser-plugin" },
             { text: "跨语言协议", link: "/development/plugin-protocol" },
             { text: "一致性测试", link: "/development/plugin-testing" },
             { text: "打包与发布", link: "/development/releasing" },
@@ -70,6 +71,7 @@ export default defineConfig({
           items: [
             { text: "命令行", link: "/reference/cli" },
             { text: "HTTP API", link: "/reference/http-api" },
+            { text: "浏览器 Action", link: "/reference/browser-actions" },
             { text: "插件清单", link: "/reference/plugin-manifest" },
             { text: "配置字段", link: "/reference/configuration" },
           ],

@@ -58,6 +58,8 @@ Chrome 内部页面、Chrome Web Store 和其他扩展页面禁止脚本注入�
 
 扩展与 Meerkit 使用协议版本 `1` 的 WebSocket 长连接。收到服务端 `welcome` 后才启动心跳检查；连接失败时扩展图标只显示淡色标记，用户主动断开后清空角标并恢复原始 Logo。连接或目标标签页断开时，扩展会停止相关 CDP 会话并释放 debugger attachment。
 
+线协议的握手、命令、事件、分块响应和限制见 [`docs/development/browser-automation.md`](../docs/development/browser-automation.md)。监控插件如何调用这些能力见 [`docs/development/browser-plugin.md`](../docs/development/browser-plugin.md)，56 个 Action 的完整参数与返回值见 [`docs/reference/browser-actions.md`](../docs/reference/browser-actions.md)。新增 Action 时必须同时更新后端 Catalog、`modules/config.js` capability、`background.js` 执行分支、测试和 Action 参考。
+
 截图、真实输入和网络捕获按标签页共享同一个 CDP attachment，并使用引用计数释放。同一标签页的输入序列串行执行；多个网络捕获共享 Network 域，停止一个捕获不会中断其他捕获。
 
 Cookie、页面存储和页面主世界 JavaScript 属于敏感能力，只作用于显式选择的标签页。扩展不会把读取值写入本地存储或日志。页面存储单值最多返回 1 MiB，单次总响应最多返回 4 MiB，超出部分会标记截断。

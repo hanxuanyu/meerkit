@@ -237,6 +237,8 @@ Selector 候选请求包含 `target`、`queries` 和可选 `limit`。`target.tab
 
 `page.screenshot` 支持 `png`、`jpeg` 和 `webp`，完整页面通过 `full_page: true` 开启。图片位于 `data.data_url`，并返回 `format`、`full_page` 和估算的 `size_bytes`。扩展 WebSocket 会自动分块传输大结果，HTTP API 对调用方仍返回一个完整 JSON 响应；结果超过 60 MiB 时当前请求失败。
 
+56 个 Action 的目标模式、参数默认值、范围、标记和 `data` 字段见[浏览器 Action 参考](/reference/browser-actions)。
+
 启动捕获：
 
 ```json

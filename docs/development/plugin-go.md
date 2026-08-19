@@ -50,7 +50,7 @@ func main() {
 }
 ```
 
-`BrowserClient` 提供目标查询、单 Action 和网络捕获。Session 未建立或已断开时会返回明确错误；调用方必须传播 Context、显式停止捕获，并关闭不需要持续复用的标签页。需要保留标签页时，应提供明确配置、限定识别范围，并处理标签页被用户关闭的情况。详见[浏览器自动化架构](/development/browser-automation#插件-browserbridge)。
+`BrowserClient` 提供目标查询、单 Action 和网络捕获。Session 未建立或已断开时会返回明确错误；调用方必须传播 Context、显式停止捕获，并关闭不需要持续复用的标签页。需要保留标签页时，应提供明确配置、限定识别范围，并处理标签页被用户关闭的情况。完整的执行流程、清理、复用、捕获和测试方式见[浏览器能力插件开发](/development/browser-plugin)，全部参数见[浏览器 Action 参考](/reference/browser-actions)。
 
 ## 模块描述器
 

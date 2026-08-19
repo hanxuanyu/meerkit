@@ -69,9 +69,72 @@ Meerkit 主进程
 | 扩展到宿主 | `event` | `browser.targets.changed`、`browser.network`、`browser.network.status` |
 | 双向 | `ping` / `pong` | 应用层连接活性；宿主还发送 WebSocket Ping frame |
 
+`welcome` 载荷当前是 `{"heartbeat_seconds":15}`。扩展每 15 秒发送应用层 `ping`，宿主用同版本 `pong` 响应；宿主同时发送 WebSocket Ping frame，并要求 45 秒内持续收到 Pong frame。握手必须在连接后 10 秒内完成。相同 Agent ID 建立新连接时，新连接替换旧连接，并终止旧连接关联的捕获。
+
+命令帧格式：
+
+```json
+{
+  "protocol": 1,
+  "type": "command",
+  "id": "host-generated-uuid",
+  "command": "browser.action",
+  "payload": {}
+}
+```
+
+| command | payload | 正常响应 payload |
+| --- | --- | --- |
+| `browser.targets` | `{"agent_id":"可选"}` | `agent_id` 和 `windows[].tabs[]` |
+| `browser.selector_candidates` | `target`、`queries`、`limit` | `items`、`total`、`truncated` |
+| `browser.action` | `BrowserActionRequest` | `BrowserActionResult` |
+| `browser.network.start` | `session_id`、`target`、`rules`、`disable_cache` | 运行中的捕获 Session |
+| `browser.network.stop` | `session_id` | 停止后的 Session 和 `events` |
+
+小响应使用相同 ID：
+
+```json
+{
+  "protocol": 1,
+  "type": "response",
+  "id": "host-generated-uuid",
+  "payload": {}
+}
+```
+
+失败时省略 payload 并返回最多 2000 字符的 `error`。这是单次命令业务错误，不应主动关闭 WebSocket。扩展只执行自己在 `hello.payload.capabilities` 中声明的能力；宿主在发送 Action 前检查 capability，网络捕获分别检查 `network.start` 和 `network.stop`。
+
+事件帧没有请求 ID：
+
+```json
+{
+  "protocol": 1,
+  "type": "event",
+  "command": "browser.network",
+  "payload": {"session_id":"capture-id"}
+}
+```
+
+`browser.network` 和 `browser.network.status` 必须携带捕获会话标识，宿主据此执行 owner 隔离。`browser.targets.changed` 只是失效通知，消费者收到后重新查询完整目标快照，不把事件 payload 当作增量真相。
+
 协议版本保持 `1`，当前实现不解析旧 `browser.run` 工作流消息。新增命令时应直接更新宿主、扩展和测试，不增加旧结构兼容分支。
 
 完整页面截图等大结果不会作为一个超大 WebSocket frame 发送。扩展将超过 512 KiB 的序列化响应拆为有序 `response_chunk`，并在浏览器发送缓冲区超过 4 MiB 时等待背压释放；宿主按请求 ID 重组。单 frame 最大 8 MiB，重组结果最大 64 MiB、最多 128 块；扩展主动把结果限制为 60 MiB。超过上限时只终止当前请求，并提示改用 WebP/JPEG，不会断开整个 Agent。
+
+分块帧的 `sequence` 从 0 开始，所有块的 `total` 必须相同，并严格连续到 `total-1`：
+
+```json
+{
+  "protocol": 1,
+  "type": "response_chunk",
+  "id": "host-generated-uuid",
+  "sequence": 0,
+  "total": 3,
+  "chunk": "{\"id\":..."
+}
+```
+
+`chunk` 是完整响应 payload 序列化 JSON 的字符串片段，不是 Base64。宿主拼接所有片段后再做一次 JSON 解码。ID 不存在、块乱序、total 改变、块数或总长度超限时，仅让对应请求失败并丢弃重组状态。
 
 Agent 握手最多接受 128 个 capability。该值用于限制不受信任的握手元数据大小，不是 Action Catalog 的数量上限；新增 Action 不需要调整它，只有扩展实际声明的 capability 总数接近该边界时才需要重新评估。
 
@@ -90,6 +153,8 @@ Action Catalog 当前包含 56 个原子能力：
 | 输入 | `input.click/hover/type/key/wheel` | 必选标签页 | CDP 真实输入坐标和执行状态 |
 | 认证态 | `cookie.*`、`storage.*` | 必选标签页 | 当前 URL 的 Cookie 或 Web Storage 数据 |
 | 运行时 | `runtime.evaluate` | 必选标签页 | 可 JSON 序列化的表达式结果 |
+
+每一项的参数类型、默认值、范围、敏感/破坏性标记和 `data` 返回字段见[浏览器 Action 参考](/reference/browser-actions)。插件如何取得 `BrowserClient`、组织步骤、捕获首次导航请求和正确清理标签页见[浏览器能力插件开发](/development/browser-plugin)。
 
 `tab.open` 不能携带已有 `tab_id`。`window_required` 必须携带窗口 ID；`tab_required` 必须携带标签页 ID，若同时携带窗口 ID，扩展通过 `chrome.tabs.get` 校验归属。目标 ID 是 Chrome 运行时标识，不应写入长期插件配置。
 

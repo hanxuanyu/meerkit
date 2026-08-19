@@ -12,7 +12,7 @@ Meerkit Browser Agent 是平台维护的通用 Chrome 执行端。它通过 Chro
 4. 打开 Meerkit 的“系统设置 > 浏览器”，复制 WebSocket 地址和配对令牌。
 5. 打开扩展设置页，填写连接信息、节点名称与最大并发任务数并保存。
 
-扩展会在 Chrome 本地存储连接设置和稳定的节点 ID，并在浏览器启动、配置变化或连接中断后自动重连。连接成功后，设置页会显示节点名称、扩展版本、能力列表和最近心跳。
+扩展会在 Chrome 本地存储连接设置和稳定的节点 ID，但不会在浏览器启动或连接中断后自动连接。填写配置后需要在设置页或 Popup 点击“连接后端”；失败后排除问题并再次手动连接。连接成功后，设置页会显示节点名称、扩展版本、能力列表和最近心跳。
 
 ::: tip 跨主机连接
 WebSocket 地址必须是 Chrome 实际可访问的地址。本机开发通常使用 `ws://127.0.0.1:8080/api/v1/browser/extension/ws`；通过 HTTPS 反向代理访问时使用对应的 `wss://` 地址，并确保代理允许 WebSocket Upgrade。
@@ -46,6 +46,8 @@ Meerkit 首次启动时生成 32 字节随机配对令牌，保存在 `${storage
 - DOM 单项/多项查询、表单控件和滚动操作。
 - CDP 真实鼠标、键盘和滚轮输入。
 - Cookie、localStorage、sessionStorage 和 JavaScript 表达式。
+
+完整的 56 项能力、参数默认值、范围和返回字段见[浏览器 Action 参考](/reference/browser-actions)。
 
 Cookie 与 Storage 标记为敏感能力；调试页对读取操作直接显示结果，对写入、删除、清空及窗口/标签页关闭等破坏性操作要求二次确认。
 

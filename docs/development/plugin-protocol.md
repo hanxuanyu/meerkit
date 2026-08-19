@@ -64,7 +64,54 @@ browser := runtime.Browser()
 runtime.Serve(sdk.NewProvider(...))
 ```
 
-`BrowserClient` 提供目标查询、单个原子 Action 和独立网络捕获会话。浏览器操作通过带请求 ID 的 JSON 信封关联响应、取消和持续事件。Session 不可用时调用立即返回能力不可用错误；事件队列有界，并以插件及捕获 ID 隔离。具体信封和 operation 见 SDK 协议文档，宿主、扩展和网络捕获的完整生命周期见[浏览器自动化架构](/development/browser-automation)。
+`BrowserClient` 提供目标查询、单个原子 Action 和独立网络捕获会话。`BrowserBridge` 由插件实现，宿主作为 gRPC 客户端建立唯一的长期流。插件发送的第一帧必须是：
+
+```json
+{"type":"ready"}
+```
+
+宿主收到 `ready` 后才完成插件启用。之后每个 `BytesValue.value` 都是 UTF-8 JSON 信封：
+
+```json
+{
+  "type": "request|response|event|cancel",
+  "id": "browser-1",
+  "reply_to": "browser-1",
+  "operation": "browser.action",
+  "payload": {},
+  "error": ""
+}
+```
+
+| 消息 | 必填字段 | 说明 |
+| --- | --- | --- |
+| `request` | `id`、`operation`、`payload` | ID 在当前 Session 内唯一；允许并发和乱序响应 |
+| `response` | `reply_to`、`operation` | 成功放 `payload`，失败放非空 `error` |
+| `event` | `operation`、`payload` | 宿主主动推送，不关联普通请求 |
+| `cancel` | `reply_to` | 取消对应 request；迟到响应应忽略 |
+
+请求 operation：
+
+| operation | 请求 payload | 成功响应 payload |
+| --- | --- | --- |
+| `browser.targets` | `{"agent_id":"可选"}` | 窗口与标签页快照 |
+| `browser.action` | `target`、`timeout_ms`、`action` | 标准 Action 结果 |
+| `browser.network.start` | `target`、`rules`、`disable_cache` | 运行中的捕获 Session |
+| `browser.network.stop` | `{"id":"session-id"}` | Session 摘要与缓存事件 |
+
+宿主事件 operation：
+
+| operation | 用途 |
+| --- | --- |
+| `browser.network` | 对应插件所拥有捕获的单条网络结果；按 `session_id` 路由 |
+| `browser.network.status` | 捕获停止、目标关闭或故障状态 |
+| `browser.targets.changed` | Agent、窗口、标签页或分组发生变化 |
+
+取消与浏览器执行存在竞态，取消 `tab.open` 时标签页可能已经创建；插件仍需有独立清理策略。网络事件也可能早于 start 响应，客户端应暂存并在取得 session ID 后交给捕获消费者。
+
+每个方向只能有一个 gRPC `Send` 协程，并使用有界队列。参考实现的 Session 发送队列容量为 256，单捕获事件通道容量为 128。慢消费者只能停止自己的捕获；控制状态无法投递时应结束 Session，不能无限缓存或阻塞 Monitor RPC。
+
+规范级字段、取消、错误、断线和背压语义见 [`sdk/PROTOCOL.md`](https://github.com/hanxuanyu/meerkit/blob/main/sdk/PROTOCOL.md)。Go 插件的完整开发过程见[浏览器能力插件开发](/development/browser-plugin)，全部 Action 参数和结果见[浏览器 Action 参考](/reference/browser-actions)，宿主到扩展的协议与捕获生命周期见[浏览器自动化架构](/development/browser-automation)。
 
 ## 错误语义
 

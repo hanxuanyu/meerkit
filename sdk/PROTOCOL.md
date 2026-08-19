@@ -49,9 +49,125 @@
 }
 ```
 
-插件建立 Session 后先发送 `ready`。插件以 `request` 调用 `browser.targets`、`browser.action`、`browser.network.start` 和 `browser.network.stop`；宿主以 `response.reply_to` 关联结果。调用 Context 取消时插件发送 `cancel.reply_to`。宿主可发送 `browser.network`、`browser.network.status` 和 `browser.targets.changed` 事件。
+字段约束：
 
-页面类 Action 必须显式指定 `tab_id`，`tab.open` 只接受可选 `window_id`。网络捕获是独立、固定绑定标签页的会话，不属于 Action 工作流。实现必须保证单个 Session 只有一个 gRPC 发送协程，使用有界队列，并按插件和捕获会话隔离事件；慢捕获消费者只能终止自己的捕获，不能阻塞 Monitor RPC 或其他插件。
+| 字段 | 约束 |
+| --- | --- |
+| `type` | 必填；取值为 `ready`、`request`、`response`、`event` 或 `cancel` |
+| `id` | `request` 必填，在当前 Session 内唯一；建议使用单调序号或 UUID |
+| `reply_to` | `response` 和 `cancel` 必填，等于被关联的 request `id` |
+| `operation` | `request` 和 `event` 必填；`response` 应原样带回请求 operation |
+| `payload` | operation 对应的 JSON 值；成功响应必须符合下表结构 |
+| `error` | 失败响应的非空可读字符串；与成功 payload 互斥 |
+
+#### 建连与时序
+
+`BrowserBridge` 由插件提供服务，宿主是 gRPC 客户端。宿主健康检查成功后调用 `Session`，插件发送的第一条消息必须是 `{"type":"ready"}`。首帧不能是事件或请求；宿主只有收到 `ready` 后才认为插件启用完成。每个插件进程只允许一个活动 Session，断线后本 Session 的 request ID、挂起调用和捕获关联全部失效。
+
+插件发起调用的时序是：
+
+```text
+plugin                         host
+  |---- ready ----------------->|
+  |---- request(id=browser-1) ->|
+  |                             | execute operation
+  |<--- response(reply_to=...)--|
+```
+
+响应可以乱序返回。插件必须使用 `reply_to` 关联请求，不能依赖发送顺序。未知、重复或已经取消的 `reply_to` 应忽略。宿主可能在 `browser.network.start` 响应到达前发送该会话的网络事件，客户端必须按 `session_id` 暂存，取得 start 响应后再交给对应消费者。
+
+#### 请求 operation
+
+| operation | request `payload` | 成功 response `payload` |
+| --- | --- | --- |
+| `browser.targets` | `{"agent_id":"可选"}` | `BrowserTargets`：`agent_id`、`windows[]` 及其 `tabs[]` |
+| `browser.action` | `BrowserActionRequest` | `BrowserActionResult` |
+| `browser.network.start` | `BrowserNetworkStartRequest` | `BrowserNetworkSession` |
+| `browser.network.stop` | `{"id":"capture-session-id"}` | `BrowserNetworkStopResult` |
+
+`BrowserActionRequest`：
+
+```json
+{
+  "target": {"agent_id":"agent-id","window_id":4,"tab_id":21},
+  "timeout_ms": 60000,
+  "action": {
+    "id": "step-id",
+    "type": "dom.query",
+    "params": {"selector":"main","max_length":65536}
+  }
+}
+```
+
+成功的 `BrowserActionResult` 包含 `id`、`type`、`success:true`、执行后的 `target`、`duration_ms` 和 action 特定的 `data`。`timeout_ms` 默认 60000，范围 1000 到 300000。页面、DOM、输入、Cookie、Storage 和 Runtime Action 要求正整数 `tab_id`；窗口操作按其 Catalog 要求 `window_id`；`tab.open` 只接受可选 `window_id`，不能携带已有 `tab_id`。同时提供窗口和标签页时必须属于同一窗口。
+
+Action type、参数、默认值和返回 Data 的完整列表见主仓库 `docs/reference/browser-actions.md`。宿主负责补齐 Catalog 默认值、参数校验和 Agent capability 检查；插件仍应验证业务所需返回字段。
+
+`BrowserNetworkStartRequest`：
+
+```json
+{
+  "target": {"agent_id":"agent-id","window_id":4,"tab_id":21},
+  "disable_cache": false,
+  "rules": [
+    {
+      "id":"api",
+      "url_contains":"/api/",
+      "resource_type":"XHR",
+      "max_body_bytes":262144
+    }
+  ]
+}
+```
+
+目标标签页必填。规则数为 1 到 32，`max_body_bytes` 最大 1048576；会话固定绑定启动时的 Agent、窗口和标签页。成功返回 `BrowserNetworkSession`，包含 `id`、规范化后的 `target`、`status:"running"`、`started_at`、`count` 和可选 `error`。
+
+停止操作只能停止当前插件拥有的捕获。成功返回：
+
+```json
+{
+  "session": {
+    "id":"capture-id",
+    "target":{"agent_id":"agent-id","window_id":4,"tab_id":21},
+    "status":"stopped",
+    "count":1
+  },
+  "events": []
+}
+```
+
+#### 宿主事件
+
+| operation | payload | 发送条件 |
+| --- | --- | --- |
+| `browser.network` | `BrowserNetworkResult`，必须含 `session_id` | 捕获到匹配请求的响应或失败结果 |
+| `browser.network.status` | `BrowserNetworkSession` 风格对象，至少含 `id/status` | 会话启动、停止、目标关闭或故障清理 |
+| `browser.targets.changed` | 当前为空对象；后续可增加可选字段 | Agent、窗口、标签页或分组变化 |
+
+网络事件只发送给创建该捕获的插件 Session。结果可包含 URL、方法、请求/响应头、请求体、状态、MIME、资源类型、协议、远端地址、响应正文、Base64 标记、截断标记、缓存来源、耗时、timing 和错误。实现必须忽略未知可选字段。
+
+#### 取消、错误与断线
+
+调用 Context 取消时插件发送：
+
+```json
+{"type":"cancel","reply_to":"browser-1"}
+```
+
+宿主取消对应 operation，但底层 Chrome 命令可能已经完成。取消与响应存在竞态：插件应立即向调用者返回取消错误，并忽略之后到达的响应；清理逻辑不能假定被取消的 `tab.open` 一定没有创建标签页。网络捕获应显式调用 stop；插件 Session 断开、插件退出或禁用时，宿主会停止其全部捕获作为兜底。
+
+operation 业务失败使用 `response.error`，gRPC stream 保持可用。非法信封可能被忽略；写入失败、Session Context 取消、无法投递控制事件等连接级错误会结束 stream。Session 结束后，客户端应让全部挂起请求返回断线错误并关闭所有捕获事件通道。
+
+#### 并发与背压
+
+gRPC stream 不允许多个 goroutine/thread 同时调用 `Send`。插件和宿主各自必须使用一个写协程及有界发送队列；读取循环不能等待业务消费者。参考 Go SDK 的发送队列容量为 256，单捕获事件通道容量为 128：
+
+- 单个捕获消费者过慢时，只停止该捕获，并让捕获的 `Err()` 返回队列溢出。
+- 普通目标变化事件无法入队时可以终止 Session；不能无限增长内存。
+- 捕获停止状态属于控制事件。若控制事件持续无法投递，应终止 Session，而不是留下看似运行中的捕获。
+- Monitor 一元 RPC、其他插件和其他捕获不能被慢消费者阻塞。
+
+网络捕获是独立会话，不属于 Action 工作流。正常流程必须消费事件、显式停止并释放目标；宿主故障清理不能替代插件自己的生命周期管理。
 
 ## 版本
 

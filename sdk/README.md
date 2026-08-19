@@ -1,6 +1,6 @@
 # Meerkit Go 插件 SDK
 
-[English](README.en.md) · [协议规范](PROTOCOL.md) · [Go 插件指南](../docs/development/plugin-go.md)
+[English](README.en.md) · [协议规范](PROTOCOL.md) · [Go 插件指南](../docs/development/plugin-go.md) · [浏览器能力插件](../docs/development/browser-plugin.md)
 
 `github.com/hanxuanyu/meerkit/sdk` 是 Meerkit 监控插件协议的官方 Go 实现。它提供模块描述器、参数与结果契约、`Provider` 聚合器、gRPC 适配层、进程握手和结构化日志初始化。
 
@@ -41,6 +41,20 @@ func main() { sdk.Serve(sdk.NewProvider(module{})) }
 ```
 
 插件只应依赖 SDK 的公开包，不应导入 Meerkit 的 `internal` 包。清单中的模块类型、模块版本、配置版本和结果 Schema 版本必须与运行时描述器及执行结果一致。
+
+## 浏览器能力
+
+需要控制 Chrome 的插件使用统一运行时取得宿主提供的客户端：
+
+```go
+func main() {
+    runtime := sdk.NewPluginRuntime()
+    browser := runtime.Browser()
+    runtime.Serve(sdk.NewProvider(monitor.New(browser)))
+}
+```
+
+`BrowserClient` 支持目标查询、单 Action 和网络捕获。插件不直接连接 Chrome，不接触扩展配对令牌，并负责自己创建的标签页和捕获会话的完整生命周期。开发流程见[浏览器能力插件开发](../docs/development/browser-plugin.md)，56 个 Action 见[浏览器 Action 参考](../docs/reference/browser-actions.md)，跨语言流协议见 [`PROTOCOL.md`](PROTOCOL.md#browserbridge-双向流)。
 
 ## 契约文件
 
