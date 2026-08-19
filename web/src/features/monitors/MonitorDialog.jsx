@@ -7,9 +7,9 @@ import { Checkbox } from "../../components/ui/Checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../components/ui/Dialog";
 import { IconButton } from "../../components/ui/IconButton";
 import { Input, Label } from "../../components/ui/Input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/Select";
 import { ConditionEditor } from "../../components/forms/ConditionEditor";
 import { DynamicFields } from "../../components/forms/DynamicFields";
+import { ModulePicker } from "../../components/forms/ModulePicker";
 import { getResultFields, findUnsupportedPlaceholders } from "../../lib/resultSchema";
 import { previewSchedule } from "../../lib/schedules";
 import { CronScheduleRow } from "./CronScheduleRow";
@@ -91,7 +91,7 @@ export function MonitorDialog({ monitor, modules, channels, onClose, onSaved, on
         <div className="modal-body">
           <div className="form-grid">
             <label className="field"><Label>名称</Label><Input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：生产 API 响应" /></label>
-            <label className="field"><Label>采集模块</Label><Select value={moduleType} onValueChange={setModuleType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{modules.map((item) => <SelectItem key={item.type} value={item.type}>{item.name}</SelectItem>)}</SelectContent></Select></label>
+            <div className="field"><Label id="monitor-module-label">采集模块</Label><ModulePicker id="monitor-module-picker" aria-labelledby="monitor-module-label" modules={modules} value={moduleType} onValueChange={setModuleType} /></div>
           </div>
 
           <div className="form-section">

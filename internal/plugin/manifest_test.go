@@ -16,7 +16,7 @@ import (
 
 func TestSourcePluginManifestsMatchRuntimeContract(t *testing.T) {
 	schema := loadManifestSchema(t)
-	for _, name := range []string{"http", "tcp", "template"} {
+	for _, name := range []string{"network", "template"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "plugins", name, "meerkit-plugin.yaml"))
 		if err != nil {
 			t.Fatal(err)
@@ -35,6 +35,17 @@ func TestSourcePluginManifestsMatchRuntimeContract(t *testing.T) {
 			t.Fatalf("source manifest %s does not declare the complete direct runtime: %#v", name, manifest.Runtime)
 		}
 		validateManifestSchema(t, schema, data)
+		if name == "network" {
+			types := make(map[string]bool, len(manifest.Modules))
+			for _, module := range manifest.Modules {
+				types[module.Type] = true
+			}
+			for _, moduleType := range []string{"http", "tcp", "dns", "tls-certificate", "icmp"} {
+				if !types[moduleType] {
+					t.Fatalf("network source manifest does not declare %s", moduleType)
+				}
+			}
+		}
 	}
 }
 

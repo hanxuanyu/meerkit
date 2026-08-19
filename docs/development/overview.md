@@ -70,8 +70,7 @@ browser-extension/         平台维护的通用 Chrome 执行端
 go test ./...
 (cd sdk && go test ./...)
 (cd plugins/browser-example && go test ./...)
-(cd plugins/http && go test ./...)
-(cd plugins/tcp && go test ./...)
+(cd plugins/network && go test ./...)
 (cd plugins/template && go test ./...)
 ```
 

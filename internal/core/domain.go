@@ -112,6 +112,8 @@ type ModuleDescriptor struct {
 	Version             string                       `json:"version"`
 	ConfigVersion       string                       `json:"config_version,omitempty"`
 	ResultSchemaVersion string                       `json:"result_schema_version,omitempty"`
+	PluginID            string                       `json:"plugin_id,omitempty"`
+	PluginName          string                       `json:"plugin_name,omitempty"`
 	Name                string                       `json:"name"`
 	Description         string                       `json:"description"`
 	ListSummary         *ModuleListSummaryDescriptor `json:"list_summary,omitempty"`

@@ -147,7 +147,7 @@ package-plugins:
 package-plugin:
 	@set -eu; \
 	if [ -z "$(PLUGIN)" ]; then \
-		echo 'PLUGIN is required, for example: make package-plugin PLUGIN=plugins/http' >&2; \
+		echo 'PLUGIN is required, for example: make package-plugin PLUGIN=plugins/network' >&2; \
 		exit 2; \
 	fi; \
 	if [ -n "$(SIGN_KEY)" ] && [ -n "$(KEY_ID)" ]; then \

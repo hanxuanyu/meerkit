@@ -45,7 +45,7 @@ Cron / 手动执行
 - `summary` 公共结果集，包括条件状态、事件类型、匹配数量和逐条详情。
 - 结果 Schema 版本和整个结果的 SHA-256 哈希。
 
-HTTP 与 TCP 插件的字段分别见其 [HTTP README](https://github.com/hanxuanyu/meerkit/blob/main/plugins/http/README.md) 和 [TCP README](https://github.com/hanxuanyu/meerkit/blob/main/plugins/tcp/README.md)。
+官方 Network 插件提供 HTTP、TCP、DNS、TLS 证书和 ICMP 五个模块；输入、结果和权限说明见 [Network README](https://github.com/hanxuanyu/meerkit/blob/main/plugins/network/README.md)。
 
 ## 条件规则
 

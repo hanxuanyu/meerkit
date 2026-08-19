@@ -9,8 +9,9 @@ import (
 )
 
 type registryEntry struct {
-	owner  string
-	module core.MonitorModule
+	owner     string
+	ownerName string
+	module    core.MonitorModule
 }
 
 type Registry struct {
@@ -24,6 +25,10 @@ func NewRegistry() *Registry { return &Registry{modules: make(map[string]registr
 func (r *Registry) Register(module core.MonitorModule) { _ = r.RegisterOwned("system", module) }
 
 func (r *Registry) RegisterOwned(owner string, module core.MonitorModule) error {
+	return r.RegisterOwnedAs(owner, owner, module)
+}
+
+func (r *Registry) RegisterOwnedAs(owner, ownerName string, module core.MonitorModule) error {
 	if owner == "" || module == nil {
 		return fmt.Errorf("module owner and implementation are required")
 	}
@@ -36,11 +41,15 @@ func (r *Registry) RegisterOwned(owner string, module core.MonitorModule) error 
 	if current, exists := r.modules[descriptor.Type]; exists && current.owner != owner {
 		return fmt.Errorf("module type %q is owned by %s", descriptor.Type, current.owner)
 	}
-	r.modules[descriptor.Type] = registryEntry{owner: owner, module: module}
+	r.modules[descriptor.Type] = registryEntry{owner: owner, ownerName: ownerName, module: module}
 	return nil
 }
 
 func (r *Registry) ReplaceOwner(owner string, modules []core.MonitorModule) error {
+	return r.ReplaceOwnerAs(owner, owner, modules)
+}
+
+func (r *Registry) ReplaceOwnerAs(owner, ownerName string, modules []core.MonitorModule) error {
 	next := make(map[string]registryEntry, len(modules))
 	for _, module := range modules {
 		if module == nil || module.Descriptor().Type == "" {
@@ -50,7 +59,7 @@ func (r *Registry) ReplaceOwner(owner string, modules []core.MonitorModule) erro
 		if _, duplicate := next[moduleType]; duplicate {
 			return fmt.Errorf("plugin %s returned duplicate module type %q", owner, moduleType)
 		}
-		next[moduleType] = registryEntry{owner: owner, module: module}
+		next[moduleType] = registryEntry{owner: owner, ownerName: ownerName, module: module}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -125,7 +134,7 @@ func (r *Registry) Descriptors() []core.ModuleDescriptor {
 	defer r.mu.RUnlock()
 	result := make([]core.ModuleDescriptor, 0, len(r.modules))
 	for _, entry := range r.modules {
-		result = append(result, core.WithCommonResultSets(entry.module.Descriptor()))
+		result = append(result, descriptorWithOwner(entry))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Type < result[j].Type })
 	return result
@@ -137,5 +146,12 @@ func (r *Registry) Descriptor(moduleType string) (core.ModuleDescriptor, bool) {
 	if !ok {
 		return core.ModuleDescriptor{}, false
 	}
-	return core.WithCommonResultSets(entry.module.Descriptor()), true
+	return descriptorWithOwner(entry), true
+}
+
+func descriptorWithOwner(entry registryEntry) core.ModuleDescriptor {
+	descriptor := core.WithCommonResultSets(entry.module.Descriptor())
+	descriptor.PluginID = entry.owner
+	descriptor.PluginName = entry.ownerName
+	return descriptor
 }

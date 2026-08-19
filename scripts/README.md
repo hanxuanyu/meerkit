@@ -14,7 +14,7 @@
 脚本应从仓库根目录运行。默认目标是当前 `GOOS/GOARCH`，多个目标用逗号分隔。
 
 ```bash
-scripts/package-plugins.sh --plugin plugins/http --targets current
+scripts/package-plugins.sh --plugin plugins/network --targets current
 scripts/package-plugins.sh dist/plugins linux/amd64,windows/amd64
 scripts/package.sh dist/releases darwin/arm64,linux/amd64,windows/amd64
 ```

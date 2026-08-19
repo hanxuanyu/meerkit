@@ -36,3 +36,18 @@ func TestRegistryRejectsOwnerCollisionAndReplacesAtomically(t *testing.T) {
 		t.Fatalf("owner = %q, %v", owner, exists)
 	}
 }
+
+func TestRegistryDescriptorsIncludePluginOwnership(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.ReplaceOwnerAs("meerkit.network", "Meerkit Network", []core.MonitorModule{registryTestModule("http")}); err != nil {
+		t.Fatal(err)
+	}
+	descriptors := registry.Descriptors()
+	if len(descriptors) != 1 || descriptors[0].PluginID != "meerkit.network" || descriptors[0].PluginName != "Meerkit Network" {
+		t.Fatalf("unexpected descriptors: %#v", descriptors)
+	}
+	descriptor, exists := registry.Descriptor("http")
+	if !exists || descriptor.PluginID != "meerkit.network" || descriptor.PluginName != "Meerkit Network" {
+		t.Fatalf("unexpected descriptor: %#v, %v", descriptor, exists)
+	}
+}

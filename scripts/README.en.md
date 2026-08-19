@@ -14,7 +14,7 @@ This directory provides equivalent Unix Shell and Windows PowerShell release flo
 Run scripts from the repository root. The default target is the current `GOOS/GOARCH`; separate multiple targets with commas.
 
 ```bash
-scripts/package-plugins.sh --plugin plugins/http --targets current
+scripts/package-plugins.sh --plugin plugins/network --targets current
 scripts/package-plugins.sh dist/plugins linux/amd64,windows/amd64
 scripts/package.sh dist/releases darwin/arm64,linux/amd64,windows/amd64
 ```

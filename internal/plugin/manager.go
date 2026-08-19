@@ -465,7 +465,7 @@ func (m *Manager) Enable(ctx context.Context, id, version string, allowUnverifie
 		cleanupCandidate()
 		return m.markFailure(ctx, installation, err)
 	}
-	if err := m.registry.ReplaceOwner(id, modules); err != nil {
+	if err := m.registry.ReplaceOwnerAs(id, installation.Name, modules); err != nil {
 		if previous != nil {
 			previous.gate.Start()
 		}

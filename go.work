@@ -3,8 +3,7 @@ go 1.26
 use (
 	.
 	./plugins/browser-example
-	./plugins/http
-	./plugins/tcp
+	./plugins/network
 	./plugins/template
 	./sdk
 )

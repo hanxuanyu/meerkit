@@ -8,8 +8,7 @@
 
 | 目录 | 模块类型 | 当前能力 |
 | --- | --- | --- |
-| [`http`](http/README.md) | `http` | HTTP/HTTPS 请求、代理、请求体、重定向、TLS、文本/JSON 响应解析 |
-| [`tcp`](tcp/README.md) | `tcp` | TCP 连接、可选数据发送、单次响应读取、文本与 Base64 数据 |
+| [`network`](network/README.md) | `http`、`tcp`、`dns`、`tls-certificate`、`icmp` | HTTP、TCP、DNS、TLS 证书和 ICMP 网络探测 |
 | [`browser-example`](browser-example/README.md) | `browser-example-element`、`browser-example-response` | 浏览器标签页复用、DOM 读取和网络响应捕获的完整示例 |
 | [`template`](template/README.md) | `example` | Go 插件最小实现和一致性测试套件 |
 
@@ -55,12 +54,11 @@ bin/<goos>-<goarch>/...  # 清单声明的制品
 
 ```bash
 # 运行所有独立插件模块测试
-(cd plugins/http && go test ./...)
-(cd plugins/tcp && go test ./...)
+(cd plugins/network && go test ./...)
 (cd plugins/browser-example && go test ./...)
 (cd plugins/template && go test ./...)
 
-# 让开发宿主自动构建并运行 HTTP/TCP 源码插件
+# 让开发宿主自动构建并运行 Network 源码插件
 go run . serve
 ```
 

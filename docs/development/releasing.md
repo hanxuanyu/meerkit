@@ -30,7 +30,7 @@ make package-plugins \
 
 ```bash
 make package-plugin \
-  PLUGIN=./plugins/http \
+  PLUGIN=./plugins/network \
   TARGETS=linux/amd64 \
   SIGN_KEY=./keys/meerkit-official.private.key \
   KEY_ID=meerkit-official-2026

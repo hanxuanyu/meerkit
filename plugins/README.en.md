@@ -8,8 +8,7 @@ This directory contains the official monitor plugins and a source template. A mo
 
 | Directory | Module type | Current capability |
 | --- | --- | --- |
-| [`http`](http/README.en.md) | `http` | HTTP/HTTPS requests, proxies, request bodies, redirects, TLS, and text/JSON response parsing |
-| [`tcp`](tcp/README.en.md) | `tcp` | TCP connections, optional writes, one response read, text and Base64 payloads |
+| [`network`](network/README.en.md) | `http`, `tcp`, `dns`, `tls-certificate`, `icmp` | HTTP, TCP, DNS, TLS certificate, and ICMP network probes |
 | [`template`](template/README.en.md) | `example` | Minimal Go implementation and a conformance suite |
 
 Each plugin is an independent Go module. A development host scans manifests below `plugins.source_dir`, skips `template`, builds the plugin, and runs it from `${storage.data_dir}/plugins/development`. A release host runs installed packages only.
@@ -53,11 +52,10 @@ The signature binds the manifest, artifact hashes recorded by that manifest, and
 ## Development and testing
 
 ```bash
-(cd plugins/http && go test ./...)
-(cd plugins/tcp && go test ./...)
+(cd plugins/network && go test ./...)
 (cd plugins/template && go test ./...)
 
-# Let the development host build and run HTTP/TCP sources
+# Let the development host build and run the Network source
 go run . serve
 ```
 

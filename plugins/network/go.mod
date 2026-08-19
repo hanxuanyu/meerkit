@@ -1,8 +1,12 @@
-module github.com/hanxuanyu/meerkit/plugins/tcp
+module github.com/hanxuanyu/meerkit/plugins/network
 
 go 1.26
 
-require github.com/hanxuanyu/meerkit/sdk v0.0.0
+require (
+	github.com/hanxuanyu/meerkit/sdk v0.0.0
+	github.com/miekg/dns v1.1.63
+	golang.org/x/net v0.41.0
+)
 
 require (
 	github.com/fatih/color v1.7.0 // indirect
@@ -13,7 +17,6 @@ require (
 	github.com/mattn/go-colorable v0.1.4 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/oklog/run v1.0.0 // indirect
-	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
