@@ -9,7 +9,7 @@ npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Vite 固定在 `5173`，把 `/api`、`/healthz` 和 WebSocket 代理到 `127.0.0.1:8080`。另一个终端运行：
+Vite 固定在 `5173`，监听本机所有地址，因此 `http://localhost:5173` 和 `http://127.0.0.1:5173` 都可访问；它会把 `/api`、`/healthz` 和 WebSocket 代理到 `127.0.0.1:8080`。另一个终端运行：
 
 ```bash
 go run . serve

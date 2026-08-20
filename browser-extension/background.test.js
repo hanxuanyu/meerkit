@@ -233,9 +233,12 @@ test("connects only after user action and stops heartbeat on disconnect", async 
   assert.equal(vm.runInContext("connectionState", harness.context), "idle");
   assert.equal(vm.runInContext("heartbeatTimer", harness.context), null);
   assert.equal(harness.stats.badgeTexts.at(-1), "");
+  await harness.events.alarm.emit({ name: "meerkit-connection-retry" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.stats.sockets.length, 1);
 });
 
-test("does not retry automatically after an unexpected disconnect", async () => {
+test("retries automatically after an unexpected disconnect", async () => {
   const harness = createHarness();
   await vm.runInContext("connectionReady", harness.context);
   await harness.context.chrome.storage.local.set({ pairingToken: "pairing-token" });
@@ -246,10 +249,35 @@ test("does not retry automatically after an unexpected disconnect", async () => 
 
   await socket.emit("close");
   assert.equal(vm.runInContext("connectionState", harness.context), "failed");
-  assert.equal(vm.runInContext("connectionEnabled", harness.context), false);
+  assert.equal(vm.runInContext("connectionEnabled", harness.context), true);
   assert.equal(harness.stats.sockets.length, 1);
   assert.equal(harness.stats.badgeTexts.at(-1), "·");
   assert.equal(harness.stats.badgeColors.at(-1), "#d4d4d8");
+
+  await harness.events.alarm.emit({ name: "meerkit-connection-retry" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.stats.sockets.length, 2);
+  assert.equal(vm.runInContext("connectionState", harness.context), "connecting");
+  await harness.stats.sockets[1].emit("close");
+  assert.equal(vm.runInContext("connectionEnabled", harness.context), true);
+  await harness.events.alarm.emit({ name: "meerkit-connection-retry" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.stats.sockets.length, 3);
+  await harness.context.requestDisconnect();
+});
+
+test("keeps retry enabled and reports a rejected handshake", async () => {
+  const harness = createHarness();
+  await vm.runInContext("connectionReady", harness.context);
+  await harness.context.chrome.storage.local.set({ pairingToken: "stale-token" });
+  await harness.context.requestConnect();
+  const socket = harness.stats.sockets[0];
+  await socket.emit("open");
+  await harness.context.handleMessage(JSON.stringify({ protocol: 1, type: "error", error: "browser extension pairing failed" }));
+  assert.equal(vm.runInContext("connectionEnabled", harness.context), true);
+  assert.equal(vm.runInContext("connectionState", harness.context), "failed");
+  assert.equal(vm.runInContext("lastError", harness.context), "browser extension pairing failed");
+  await harness.context.requestDisconnect();
 });
 
 test("stops network capture when Chrome detaches the shared debugger", async () => {
@@ -302,14 +330,15 @@ function createDOMControlSandbox() {
 
 function createHarness() {
   const tabs = new Map([[21, { id: 21, windowId: 4, index: 0, active: true, title: "Meerkit", url: "https://example.com", status: "complete", groupId: -1 }]]);
-  const stats = { attached: 0, detached: 0, lastCommand: null, commands: [], cookieSetDetails: null, scriptWorlds: [], scriptFiles: [], tabMessages: [], badgeTexts: [], badgeColors: [], sockets: [], localStorage: {} };
+  const stats = { attached: 0, detached: 0, lastCommand: null, commands: [], cookieSetDetails: null, scriptWorlds: [], scriptFiles: [], tabMessages: [], badgeTexts: [], badgeColors: [], sockets: [], alarms: new Map(), localStorage: {} };
   const sessionStorage = {};
   const createEvent = () => { const listeners = new Set(); return { addListener(listener) { listeners.add(listener); }, removeListener(listener) { listeners.delete(listener); }, async emit(...args) { await Promise.all([...listeners].map((listener) => listener(...args))); } }; };
   const event = createEvent();
   const debuggerDetach = createEvent();
+  const alarm = createEvent();
   const chrome = {
     runtime: { getManifest: () => ({ version: "test" }), onInstalled: event, onStartup: event, onMessage: event, openOptionsPage() {} },
-    alarms: { create() {}, onAlarm: event },
+    alarms: { create(name, options) { stats.alarms.set(name, options); }, async clear(name) { return stats.alarms.delete(name); }, onAlarm: alarm },
     storage: { local: { async get(keys) { if (typeof keys === "string") return { [keys]: stats.localStorage[keys] }; if (keys && typeof keys === "object") return { ...keys, ...stats.localStorage }; return { ...stats.localStorage }; }, async set(values) { Object.assign(stats.localStorage, values); } }, session: { async get(key) { return typeof key === "string" ? { [key]: sessionStorage[key] } : { ...sessionStorage }; }, async set(values) { Object.assign(sessionStorage, values); } }, onChanged: event },
     action: { async setBadgeText({ text }) { stats.badgeTexts.push(text); }, async setBadgeBackgroundColor({ color }) { stats.badgeColors.push(color); } },
     windows: { onCreated: event, onRemoved: event, onFocusChanged: event, onBoundsChanged: event, async getAll() { return [{ id: 4, focused: true, type: "normal", state: "normal", tabs: [...tabs.values()] }]; }, async create(options) { return { id: 5, focused: true, ...options, tabs: [] }; }, async update(id, values) { return { id, focused: Boolean(values.focused), type: "normal", state: values.state || "normal", ...values }; }, async remove() {} },
@@ -331,5 +360,5 @@ function createHarness() {
   }
   const context = vm.createContext({ chrome, console, crypto: { randomUUID: () => "test-agent" }, performance, setInterval, clearInterval, setTimeout, clearTimeout, TextEncoder, URL, importScripts() {}, WebSocket: FakeWebSocket });
   vm.runInContext(source, context, { filename: "background.js" });
-  return { context, stats, events: { debuggerDetach } };
+  return { context, stats, events: { alarm, debuggerDetach } };
 }

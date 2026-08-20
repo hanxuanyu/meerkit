@@ -7,9 +7,16 @@ const CAPABILITIES = MeerkitConfig.capabilities;
 const RESPONSE_CHUNK_SIZE = MeerkitConfig.responseChunkSize;
 const MAX_RESPONSE_SIZE = MeerkitConfig.maxResponseSize;
 const MAX_SOCKET_BUFFER = MeerkitConfig.maxSocketBuffer;
+const RECONNECT_ALARM = "meerkit-connection-retry";
+const RECONNECT_PENDING_KEY = "reconnectPending";
+const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 30000];
 
 let socket = null;
 let heartbeatTimer = null;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let socketWasConnected = false;
+let reconnectPending = false;
 let connectionState = "idle";
 let connectionEnabled = false;
 let awaitingPong = false;
@@ -29,7 +36,18 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.runtime.openOptionsPage();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && connectionEnabled && ["endpoint", "pairingToken", "agentName"].some((key) => changes[key])) void requestDisconnect();
+  if (area === "local" && connectionEnabled && ["endpoint", "pairingToken", "agentName"].some((key) => changes[key])) void restartConnection();
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RECONNECT_ALARM) return;
+  void chrome.storage.local.get(RECONNECT_PENDING_KEY).then((stored) => {
+    if (!connectionEnabled && !stored[RECONNECT_PENDING_KEY]) return;
+    connectionEnabled = true;
+    reconnectPending = true;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    void connect();
+  });
 });
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "status") {
@@ -123,11 +141,13 @@ function setState(state, error = "") {
 async function connect() {
   if (!connectionEnabled) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+  clearReconnectSchedule();
   const config = await settings();
   if (!connectionEnabled) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   if (!config.endpoint || !config.pairingToken) {
     connectionEnabled = false;
+    reconnectAttempt = 0;
     setState("unconfigured", "请先配置 WebSocket 地址和配对令牌。");
     return;
   }
@@ -137,8 +157,8 @@ async function connect() {
     candidate = new WebSocket(config.endpoint);
     socket = candidate;
   } catch (error) {
-    connectionEnabled = false;
     setState("failed", safeError(error));
+    if (reconnectPending) scheduleReconnect();
     return;
   }
   candidate.addEventListener("open", async () => {
@@ -156,12 +176,17 @@ async function connect() {
   });
   candidate.addEventListener("close", () => {
     if (socket !== candidate) return;
+    const wasConnected = socketWasConnected;
     stopHeartbeat();
     void stopAllNetworkSessions("Meerkit connection closed.");
     socket = null;
-    if (connectionEnabled) {
-      connectionEnabled = false;
-      setState("failed", lastError || "连接已中断。");
+    if (connectionEnabled && (wasConnected || reconnectPending)) {
+      setState("failed", lastError || "连接已中断，正在自动重连。");
+      reconnectPending = true;
+      void chrome.storage.local.set({ [RECONNECT_PENDING_KEY]: true });
+      scheduleReconnect();
+    } else if (connectionEnabled) {
+      setState("failed", lastError || "无法连接 Meerkit。请检查配置后重试。");
     } else {
       setState("idle");
     }
@@ -173,12 +198,19 @@ async function connect() {
 
 async function requestConnect() {
   connectionEnabled = true;
+  reconnectAttempt = 0;
+  reconnectPending = false;
   await connect();
   return { ok: true, ...(await status()) };
 }
 
 async function requestDisconnect() {
   connectionEnabled = false;
+  reconnectAttempt = 0;
+  socketWasConnected = false;
+  reconnectPending = false;
+  clearReconnectSchedule();
+  await chrome.storage.local.set({ [RECONNECT_PENDING_KEY]: false });
   stopHeartbeat();
   const current = socket;
   socket = null;
@@ -186,6 +218,35 @@ async function requestDisconnect() {
   await stopAllNetworkSessions("Meerkit connection closed by user.");
   setState("idle");
   return { ok: true, ...(await status()) };
+}
+
+async function restartConnection() {
+  if (!connectionEnabled) return;
+  socketWasConnected = false;
+  clearReconnectSchedule();
+  stopHeartbeat();
+  const current = socket;
+  socket = null;
+  if (current) current.close(1000, "connection settings changed");
+  await stopAllNetworkSessions("Meerkit connection settings changed.");
+  await connect();
+}
+
+function scheduleReconnect() {
+  if (!connectionEnabled || reconnectTimer) return;
+  const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+  reconnectAttempt++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void connect();
+  }, delay);
+  chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: Math.max(delay, 30000) / 60000 });
+}
+
+function clearReconnectSchedule() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  void chrome.alarms.clear(RECONNECT_ALARM);
 }
 
 function startHeartbeat(seconds = 15) {
@@ -221,8 +282,18 @@ async function handleMessage(raw) {
     socket?.close(1002, "protocol mismatch");
     return;
   }
+  if (message.type === "error") {
+    lastError = String(message.error || "Meerkit 拒绝了浏览器连接。").slice(0, 2000);
+    socket?.close(4001, "connection rejected");
+    return;
+  }
   if (message.type === "welcome") {
     if (!connectionEnabled) return;
+    socketWasConnected = true;
+    reconnectAttempt = 0;
+    reconnectPending = false;
+    void chrome.storage.local.set({ [RECONNECT_PENDING_KEY]: false });
+    clearReconnectSchedule();
     setState("connected");
     startHeartbeat(message.payload?.heartbeat_seconds || 15);
     return;
@@ -1271,6 +1342,7 @@ function safeError(error) { return String(error?.message || error || "Browser op
 
 function initializeConnection() {
   connectionEnabled = false;
+  socketWasConnected = false;
   setState("idle");
   return ensureIdentity();
 }
