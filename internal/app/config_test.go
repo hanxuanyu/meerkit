@@ -48,6 +48,36 @@ func TestDatabaseConfiguration(t *testing.T) {
 	}
 }
 
+func TestMCPConfigurationRequiresAndRedactsToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mcp:\n  enabled: true\n  token: short\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path}); err == nil || !strings.Contains(err.Error(), "mcp.token") {
+		t.Fatalf("expected invalid MCP token error, got %v", err)
+	}
+	token := "test-mcp-token-with-at-least-32-characters"
+	if err := os.WriteFile(path, []byte("mcp:\n  enabled: true\n  token: "+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfigWithOptions(ConfigOptions{ConfigFile: path})
+	if err != nil {
+		t.Fatalf("load MCP config: %v", err)
+	}
+	if !config.MCP.Enabled || config.MCP.Token != token {
+		t.Fatalf("unexpected MCP config: %#v", config.MCP)
+	}
+	for _, item := range config.Metadata.Items {
+		if item.Path == "mcp.token" {
+			if item.Value != "configured" || item.Default != "" {
+				t.Fatalf("MCP token metadata leaked the token: %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatal("mcp.token is missing from configuration metadata")
+}
+
 func TestMySQLRequiresDSN(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("storage:\n  database:\n    type: mysql\n"), 0o600); err != nil {

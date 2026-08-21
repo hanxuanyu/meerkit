@@ -6,6 +6,12 @@ export default defineConfig({
   description: "Meerkit 监控服务使用、运维与插件开发文档",
   cleanUrls: true,
   lastUpdated: true,
+  vite: {
+    server: {
+      host: "0.0.0.0",
+      port: 5173,
+    },
+  },
   head: [
     ["link", { rel: "icon", type: "image/png", href: "/favicon.png" }],
     ["meta", { name: "theme-color", content: "#16856f" }],

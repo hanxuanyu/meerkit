@@ -18,6 +18,7 @@ Meerkit 是一个自托管监控服务。它负责定时执行监控、保存结
 - 在 Web 页面中管理启动配置来源、运行时配置、系统日志和插件日志。
 - 以 `.zip` 或 `.tar.gz` 安装插件，校验制品哈希与 Ed25519 签名，并管理发布者信任。
 - 通过 gRPC + JSON 线协议支持第三方语言插件，提供 JSON Schema、Proto 和黑盒一致性检查工具。
+- 通过带独立 Bearer Token 的 MCP Streamable HTTP 端点向 AI 提供浏览器目标、原子 Action、截图、Selector 和网络捕获能力。
 
 ## 快速开始
 

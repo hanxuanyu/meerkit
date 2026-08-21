@@ -26,3 +26,6 @@ security:
 plugins:
     source_dir: ./plugins
     trusted_keys: {}
+mcp:
+    enabled: false
+    token: ""

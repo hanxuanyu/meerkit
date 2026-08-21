@@ -18,6 +18,7 @@ Meerkit is a self-hosted monitoring service. It schedules checks, stores observa
 - Inspect startup configuration sources, runtime configuration, host logs, and plugin logs from the web UI.
 - Install `.zip` or `.tar.gz` plugins with artifact hash verification, Ed25519 signatures, and publisher trust management.
 - Implement third-party plugins in other languages through the gRPC + JSON wire protocol, supported by Proto, JSON Schemas, and a black-box conformance tool.
+- Expose browser targets, atomic actions, screenshots, selector discovery, and network capture to AI clients through a bearer-protected MCP Streamable HTTP endpoint.
 
 ## Quick start
 

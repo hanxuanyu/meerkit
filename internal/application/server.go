@@ -17,6 +17,7 @@ import (
 	"meerkit/internal/browser"
 	"meerkit/internal/core"
 	"meerkit/internal/logging"
+	"meerkit/internal/mcpserver"
 	"meerkit/internal/monitor"
 	"meerkit/internal/notification"
 	"meerkit/internal/notification/inapp"
@@ -151,6 +152,14 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger, runtimeManager)
 	apiServer.SetStatusBoard(statusBoardService)
 	apiServer.SetBrowser(browserManager)
+	if config.MCP.Enabled {
+		mcpHandler, mcpErr := mcpserver.New(browserManager, mcpserver.Options{Token: config.MCP.Token, Version: options.Version, Logger: logger})
+		if mcpErr != nil {
+			return mcpErr
+		}
+		apiServer.SetMCP(mcpHandler)
+		logger.Info("Meerkit browser MCP enabled", "endpoint", "/mcp", "transport", "streamable_http")
+	}
 	runtimeManager.SetApply(func(applyCtx context.Context, oldConfig, newConfig app.RuntimeConfig) error {
 		if oldConfig.Logging != newConfig.Logging {
 			if err := loggingController.Apply(newConfig.Logging); err != nil {

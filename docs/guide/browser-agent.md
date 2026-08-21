@@ -24,6 +24,42 @@ Meerkit 首次启动时生成 32 字节随机配对令牌，保存在 `${storage
 
 扩展 WebSocket 不使用管理员会话 Cookie，而是在第一条 `hello` 消息中提交配对令牌。轮换令牌会立即断开所有已连接节点；每个扩展都必须保存新令牌才能重新连接。不要把令牌写入插件配置、监控结果、日志或公开文档。
 
+## MCP 接入
+
+Meerkit 可以通过标准 MCP Streamable HTTP 协议向 AI 客户端提供同一套浏览器控制能力。MCP 默认关闭，并使用独立 Bearer Token，不复用管理员密钥或扩展配对令牌。配置后重启服务：
+
+```yaml
+mcp:
+  enabled: true
+  token: "替换为至少 32 个字符的随机令牌"
+```
+
+也可以使用 `MEERKIT_MCP__ENABLED=true` 和 `MEERKIT_MCP__TOKEN=...` 注入。MCP 地址为 `http://127.0.0.1:8080/mcp`；通过反向代理时应使用 HTTPS。客户端配置的核心字段如下，外层格式按具体客户端调整：
+
+```json
+{
+  "url": "http://127.0.0.1:8080/mcp",
+  "headers": {
+    "Authorization": "Bearer <mcp.token>"
+  }
+}
+```
+
+MCP 提供以下工具：
+
+| 工具 | 用途 |
+| --- | --- |
+| `browser_list_agents` | 查询已连接的浏览器执行节点 |
+| `browser_list_targets` | 查询窗口与标签页 ID |
+| `browser_list_actions` | 按分类或关键词读取 Action Catalog |
+| `browser_execute_action` | 执行一个经过现有后端校验的原子 Action |
+| `browser_find_selectors` | 为目标元素读取 CSS Selector 候选 |
+| `browser_start_network_capture` | 启动 MCP 自己拥有的有界网络捕获 |
+| `browser_list_network_captures` | 查询 MCP 创建的活动捕获 |
+| `browser_stop_network_capture` | 停止捕获并返回网络事件 |
+
+推荐 AI 先调用 `browser_list_agents` 和 `browser_list_targets`，不清楚参数时再按需查询 `browser_list_actions`。`page.screenshot` 的 Base64 数据会转换为 MCP 图片内容，结构化结果中不会重复携带整张图片。MCP 工具只允许停止自己创建的网络捕获，不会误停管理界面或监控插件拥有的捕获。
+
 ## 浏览器工具
 
 “浏览器工具”页面用于验证执行节点的原子能力，不是监控流程编辑器。顶部选择 Agent、窗口和标签页；桌面端左侧按分类显示可滚动的 Action 列表，中间显示 Catalog 驱动的参数，右侧显示结果预览、原始请求和原始响应。移动端会把左侧列表自动替换为 Action 下拉框。

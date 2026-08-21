@@ -44,10 +44,12 @@ type APIServer struct {
 	loginLimiter *loginLimiter
 	statusBoard  *statusboard.Service
 	browser      *browser.Manager
+	mcp          http.Handler
 }
 
 func (a *APIServer) SetStatusBoard(service *statusboard.Service) { a.statusBoard = service }
 func (a *APIServer) SetBrowser(manager *browser.Manager)         { a.browser = manager }
+func (a *APIServer) SetMCP(handler http.Handler)                 { a.mcp = handler }
 
 func NewAPIServer(store store.APIRepository, modules *monitor.Registry, notifiers *notification.Registry, runner *runtimeapp.Runner, inAppHub *inapp.Hub, plugins *pluginruntime.Manager, authService *auth.Service, config app.Config, logger, accessLogger *slog.Logger, runtimeManagers ...*runtimeconfig.Manager) *APIServer {
 	var runtimeManager *runtimeconfig.Manager
@@ -73,7 +75,6 @@ func (a *APIServer) Router() http.Handler {
 		}
 		writeJSON(c.Writer, http.StatusOK, map[string]any{"status": "ready"})
 	})
-
 	api := router.Group("/api/v1")
 	api.GET("/auth/status", a.authStatus)
 	api.POST("/auth/setup", a.authSetup)
@@ -178,7 +179,21 @@ func (a *APIServer) Router() http.Handler {
 		}
 		serveFrontend(c.Writer, c.Request)
 	})
-	return router
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/mcp" {
+			if a.mcp == nil {
+				http.NotFound(writer, request)
+			} else {
+				a.mcp.ServeHTTP(writer, request)
+			}
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/mcp/") {
+			http.NotFound(writer, request)
+			return
+		}
+		router.ServeHTTP(writer, request)
+	})
 }
 
 func legacy(handler func(http.ResponseWriter, *http.Request)) gin.HandlerFunc {

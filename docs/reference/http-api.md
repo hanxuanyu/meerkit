@@ -14,6 +14,8 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 - `GET /api/v1/public/status-board/:token`
 - `GET WebSocket /api/v1/browser/extension/ws`，使用扩展配对令牌完成首帧鉴权
 
+启用 MCP 后，`GET`、`POST`、`DELETE /mcp` 使用 MCP Streamable HTTP 协议和独立的 `Authorization: Bearer <mcp.token>` 鉴权，不使用管理员会话与 CSRF Token。
+
 登录或初始化成功后，服务设置 `meerkit_session` HttpOnly Cookie，并返回：
 
 ```json
@@ -164,6 +166,8 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 ## 浏览器自动化
 
 除扩展 WebSocket 外，下列端点都要求管理员会话；写请求还要求 CSRF Token。
+
+MCP 不是 `/api/v1` 管理 API 的包装。它直接复用 `BrowserManager`、Action Catalog、请求校验和 Agent 能力检查，使用方式见[浏览器执行节点](/guide/browser-agent#mcp-接入)。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

@@ -21,6 +21,7 @@ type Config struct {
 	Logging  LoggingConfig  `yaml:"logging" mapstructure:"logging"`
 	Security SecurityConfig `yaml:"security" mapstructure:"security"`
 	Plugins  PluginConfig   `yaml:"plugins" mapstructure:"plugins"`
+	MCP      MCPConfig      `yaml:"mcp" mapstructure:"mcp"`
 	Metadata ConfigMetadata `yaml:"-" mapstructure:"-"`
 }
 
@@ -82,6 +83,11 @@ type PluginConfig struct {
 	TrustedKeys map[string]string `yaml:"trusted_keys" mapstructure:"trusted_keys"`
 }
 
+type MCPConfig struct {
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled"`
+	Token   string `yaml:"token,omitempty" mapstructure:"token"`
+}
+
 type ConfigOptions struct {
 	ConfigFile    string
 	CreateDefault bool
@@ -105,6 +111,7 @@ func DefaultConfig() Config {
 		},
 		Security: SecurityConfig{MasterKeyFile: "./data/master.key"},
 		Plugins:  PluginConfig{SourceDir: "./plugins", TrustedKeys: map[string]string{}},
+		MCP:      MCPConfig{Enabled: false},
 	}
 }
 
@@ -225,6 +232,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("security.master_key_file", defaults.Security.MasterKeyFile)
 	v.SetDefault("plugins.source_dir", defaults.Plugins.SourceDir)
 	v.SetDefault("plugins.trusted_keys", defaults.Plugins.TrustedKeys)
+	v.SetDefault("mcp.enabled", defaults.MCP.Enabled)
+	v.SetDefault("mcp.token", defaults.MCP.Token)
 }
 
 func bindEnvironment(v *viper.Viper) error {
@@ -251,6 +260,8 @@ func bindEnvironment(v *viper.Viper) error {
 		"logging.file.access.filename":        "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
 		"security.master_key_file":            "MEERKIT_SECURITY__MASTER_KEY_FILE",
 		"plugins.source_dir":                  "MEERKIT_PLUGINS__SOURCE_DIR",
+		"mcp.enabled":                         "MEERKIT_MCP__ENABLED",
+		"mcp.token":                           "MEERKIT_MCP__TOKEN",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -337,6 +348,10 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.Plugins.SourceDir) == "" {
 		return cfg, errors.New("plugins.source_dir cannot be empty")
+	}
+	cfg.MCP.Token = strings.TrimSpace(cfg.MCP.Token)
+	if cfg.MCP.Enabled && len(cfg.MCP.Token) < 32 {
+		return cfg, errors.New("mcp.token must contain at least 32 characters when MCP is enabled")
 	}
 	return cfg, nil
 }

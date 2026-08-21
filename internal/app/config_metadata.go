@@ -86,10 +86,19 @@ func configDefinitions() []configDefinition {
 		value("security.master_key_file", "MEERKIT_SECURITY__MASTER_KEY_FILE", "", "主密钥文件路径。", func(c Config) any { return c.Security.MasterKeyFile }, func(c Config) any { return c.Security.MasterKeyFile }),
 		value("plugins.source_dir", "MEERKIT_PLUGINS__SOURCE_DIR", "", "开发版宿主自动发现的源码插件根目录。", func(c Config) any { return c.Plugins.SourceDir }, func(c Config) any { return c.Plugins.SourceDir }),
 		value("plugins.trusted_keys", "", "", "可信插件签名公钥。", func(c Config) any { return c.Plugins.TrustedKeys }, func(c Config) any { return c.Plugins.TrustedKeys }),
+		value("mcp.enabled", "MEERKIT_MCP__ENABLED", "", "是否启用浏览器控制 MCP Streamable HTTP 端点。", func(c Config) any { return c.MCP.Enabled }, func(c Config) any { return c.MCP.Enabled }),
+		value("mcp.token", "MEERKIT_MCP__TOKEN", "", "MCP 客户端使用的 Bearer Token。", func(c Config) any { return redactSecret(c.MCP.Token) }, func(c Config) any { return redactSecret(c.MCP.Token) }),
 	}
 }
 
 func redactDSN(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "configured"
+}
+
+func redactSecret(value string) string {
 	if value == "" {
 		return ""
 	}
