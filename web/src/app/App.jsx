@@ -19,6 +19,7 @@ import { StatusBoardPage } from "../pages/StatusBoardPage";
 import { PluginsPage } from "../pages/PluginsPage";
 import { SystemLogsPage } from "../pages/SystemLogsPage";
 import { BrowserDebugPage } from "../pages/BrowserDebugPage";
+import { BrowserPage } from "../pages/BrowserPage";
 import { AppOverlays } from "./AppOverlays";
 import { pathForRoute, routeFromPath } from "./routes";
 import { useMobileShell } from "./useMobileShell";
@@ -328,6 +329,8 @@ export function App() {
           ? <PluginsPage notify={notify} onChanged={refresh} />
         : pageKey === "browserDebug"
           ? <BrowserDebugPage />
+        : pageKey === "browser"
+          ? <BrowserPage />
         : pageKey === "logs"
           ? <SystemLogsPage />
         : pageKey.startsWith("monitor-details:")

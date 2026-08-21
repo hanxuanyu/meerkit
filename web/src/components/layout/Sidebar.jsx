@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Activity, Bell, ChartNoAxesColumnIncreasing, ChevronDown, FlaskConical, Globe2, Inbox, Layers3, PackageOpen, ScrollText, Settings2, X } from "lucide-react";
+import { Activity, AppWindow, Bell, ChartNoAxesColumnIncreasing, ChevronDown, FlaskConical, Globe2, Inbox, Layers3, PackageOpen, ScrollText, Settings2, X } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/DropdownMenu";
@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/
 const navigationGroups = [
   { label: "监控", items: [{ id: "overview", label: "总览", icon: Activity }, { id: "monitors", label: "监控项", icon: Layers3 }, { id: "statusBoard", label: "状态看板", icon: ChartNoAxesColumnIncreasing }] },
   { label: "通知", items: [{ id: "inbox", label: "通知中心", icon: Inbox }, { id: "notifications", label: "通知渠道", icon: Bell }] },
-  { label: "系统", items: [{ id: "plugins", label: "监控插件", icon: PackageOpen }, { id: "labs", label: "实验室", icon: FlaskConical, children: [{ id: "browserDebug", label: "浏览器控制", icon: Globe2 }] }, { id: "logs", label: "日志", icon: ScrollText }, { id: "settings", label: "系统设置", icon: Settings2 }] }
+  { label: "系统", items: [{ id: "plugins", label: "监控插件", icon: PackageOpen }, { id: "browser", label: "浏览器", icon: AppWindow }, { id: "labs", label: "实验室", icon: FlaskConical, children: [{ id: "browserDebug", label: "浏览器控制", icon: Globe2 }] }, { id: "logs", label: "日志", icon: ScrollText }, { id: "settings", label: "系统设置", icon: Settings2 }] }
 ];
 
 export function Sidebar({ activePage, collapsed, mobileOpen = false, onCloseMobile, onNavigate, unreadCount = 0 }) {
