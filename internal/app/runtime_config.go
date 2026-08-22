@@ -13,6 +13,7 @@ const (
 	SystemConfigLogging   = "logging"
 	SystemConfigPlugins   = "plugins"
 	SystemConfigAuth      = "auth"
+	SystemConfigMCP       = "mcp"
 )
 
 type RuntimeConfig struct {
@@ -21,6 +22,7 @@ type RuntimeConfig struct {
 	Logging   RuntimeLoggingConfig   `json:"logging"`
 	Plugins   RuntimePluginConfig    `json:"plugins"`
 	Auth      RuntimeAuthConfig      `json:"auth"`
+	MCP       RuntimeMCPConfig       `json:"mcp"`
 }
 
 type RuntimeStorageConfig struct {
@@ -62,6 +64,10 @@ type RuntimeAuthConfig struct {
 	AdminKeyHash string `json:"admin_key_hash,omitempty"`
 }
 
+type RuntimeMCPConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
 type RuntimePluginConfig struct {
 	LogLevel  string `json:"log_level"`
 	LogFormat string `json:"log_format"`
@@ -96,6 +102,7 @@ func RuntimeConfigDefinitions() []RuntimeConfigDefinition {
 		value(SystemConfigPlugins, "plugins.log_level", "插件进程最低日志级别。", func(c RuntimeConfig) any { return c.Plugins.LogLevel }),
 		value(SystemConfigPlugins, "plugins.log_format", "插件日志格式。", func(c RuntimeConfig) any { return c.Plugins.LogFormat }),
 		value(SystemConfigAuth, "auth.session_ttl", "管理会话的有效期。", func(c RuntimeConfig) any { return c.Auth.SessionTTL }),
+		value(SystemConfigMCP, "mcp.enabled", "是否启用 MCP 浏览器控制端点；首次启用时会自动创建 MCP Token。", func(c RuntimeConfig) any { return c.MCP.Enabled }),
 	}
 }
 
@@ -110,6 +117,7 @@ func DefaultRuntimeConfig() RuntimeConfig {
 		},
 		Plugins: RuntimePluginConfig{LogLevel: "info", LogFormat: "simple"},
 		Auth:    RuntimeAuthConfig{SessionTTL: "720h"},
+		MCP:     RuntimeMCPConfig{Enabled: false},
 	}
 }
 

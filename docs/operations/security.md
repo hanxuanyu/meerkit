@@ -23,7 +23,7 @@ Meerkit 是具有网络访问、数据库写入和本地子进程执行能力的
 
 ## 数据与密钥
 
-管理员哈希、会话、监控配置、通知配置和插件信任状态都在数据库中。当前通知配置中的 SMTP 密码、Webhook 头和其他敏感字段没有静态加密；`security.master_key_file` 尚未接入加密流程。
+管理员哈希、会话、监控配置、通知配置、API token 和插件信任状态都在数据库中。当前通知配置中的 SMTP 密码、Webhook 头和其他敏感字段没有静态加密；API token 明文使用 `security.master_key_file` 加密保存。
 
 部署时应：
 
@@ -70,12 +70,12 @@ Chrome 扩展拥有 `tabs`、`tabGroups`、`scripting`、`debugger` 和 `<all_ur
 
 ### MCP 浏览器控制
 
-`/mcp` 默认不注册。设置 `mcp.enabled=true` 后，该端点使用独立的静态 Bearer Token，Token 至少 32 个字符，并在配置元数据中遮蔽为 `configured`。MCP Token 与扩展配对令牌相互独立，轮换其中一个不会影响另一个。
+`/mcp` 由数据库动态配置控制，默认关闭。管理员手动开启时，如果没有有效的 MCP Bearer Token，服务会自动创建并在该次操作后展示一次明文。`security.allow_token_copy` 默认关闭，开启后管理员可以重复查看已创建 token。token 明文以主密钥加密保存；永久删除 MCP Token 会自动关闭 MCP 功能。MCP Token 与扩展配对令牌相互独立。
 
 MCP 获得的权限等同于浏览器调试页：可以读取页面与网络数据、操作标签页、填写表单、执行页面表达式并访问浏览器登录态。应使用密码管理器或密钥注入保存 Token，只授权给受信任的 AI 客户端，并限制端点的网络来源。公网或跨主机接入必须使用 HTTPS；怀疑泄露时立即替换 Token 并重启 Meerkit。
 
 ## API 暴露
 
-`/healthz`、`/readyz`、认证初始化/登录、公共状态页和浏览器扩展 WebSocket 无需管理员会话。公共状态页使用分享 Token；扩展 WebSocket 使用配对令牌。启用后的 `/mcp` 使用独立 MCP Token。其余 `/api/v1` 管理路由要求会话。管理 API 目前没有通用 API Token、用户角色或细粒度权限系统。
+`/healthz`、`/readyz`、认证初始化/登录、公共状态页和浏览器扩展 WebSocket 无需管理员会话。公共状态页使用分享 Token；扩展 WebSocket 使用配对令牌。`/mcp` 使用独立 MCP Token。其余 `/api/v1` 管理路由可使用带 `api:read` 或 `api:write` 作用域的 API Token；token 管理接口本身仍要求管理员会话。
 
 如果需要多用户、审计隔离或外部自动化凭据，应在部署层增加访问代理，或者在项目中明确实现对应认证能力后再开放。

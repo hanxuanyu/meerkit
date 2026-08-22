@@ -22,10 +22,9 @@
 | `logging.file.compress` | `true` | `MEERKIT_LOGGING__FILE__COMPRESS` | 无 |
 | `logging.file.access.filename` | `meerkit-access.log` | `MEERKIT_LOGGING__FILE__ACCESS__FILENAME` | `--access-log-filename` |
 | `security.master_key_file` | `./data/master.key` | `MEERKIT_SECURITY__MASTER_KEY_FILE` | 无 |
+| `security.allow_token_copy` | `false` | `MEERKIT_SECURITY__ALLOW_TOKEN_COPY` | 无 |
 | `plugins.source_dir` | `./plugins` | `MEERKIT_PLUGINS__SOURCE_DIR` | 无 |
 | `plugins.trusted_keys` | `{}` | 无稳定映射 | 无 |
-| `mcp.enabled` | `false` | `MEERKIT_MCP__ENABLED` | 无 |
-| `mcp.token` | 空 | `MEERKIT_MCP__TOKEN` | 无 |
 
 `MEERKIT_CONFIG_FILE` 指定整个配置文件路径，不对应 YAML 字段。
 
@@ -38,11 +37,11 @@
 - 连接生命周期使用非负 Go duration。
 - 日志文件名不能带目录，单文件大小必须为正，备份数量和天数不能为负。
 - `trusted_keys` 的每个值必须是 Base64 Ed25519 公钥。
-- 启用 MCP 时，`mcp.token` 至少 32 个字符。
+- MCP 由数据库动态配置 `mcp.enabled` 控制，默认关闭；开启时访问需要有效的数据库 MCP token。
 
 数据库字段为 `0` 或空时，Store 会应用后端默认：SQLite 4/4 个连接；MySQL 25/10、30 分钟生命周期、5 分钟空闲时间。
 
-`security.master_key_file` 当前未接入静态数据加密，仅保留为启动配置字段。
+`security.master_key_file` 用于加密保存 API token；`security.allow_token_copy` 开启后允许管理员重复查看 token 明文。
 
 ## 运行时字段
 
@@ -76,4 +75,4 @@
 - `environment`
 - `command_line`
 
-运行时字段返回独立的 `version` 和 `is_default`。数据库 DSN 与 MCP Token 的元数据只返回空字符串或 `configured`。
+运行时字段返回独立的 `version` 和 `is_default`。数据库 DSN 的元数据只返回空字符串或 `configured`。

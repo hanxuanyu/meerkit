@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 const authSessionKey = "meerkit.auth.session"
+const authPrincipalKey = "meerkit.auth.principal"
 
 type loginAttempt struct {
 	count   int
@@ -133,6 +135,32 @@ func (a *APIServer) authSession(c *gin.Context) {
 }
 func (a *APIServer) requireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if header := c.GetHeader("Authorization"); header != "" {
+			parts := strings.Fields(header)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				writeError(c.Writer, http.StatusUnauthorized, "authentication_required", "invalid bearer token")
+				c.Abort()
+				return
+			}
+			principal, err := a.auth.AuthenticateToken(c.Request.Context(), parts[1])
+			if err != nil {
+				writeError(c.Writer, http.StatusUnauthorized, "authentication_required", err.Error())
+				c.Abort()
+				return
+			}
+			required := auth.ScopeAPIRead
+			if requiresCSRF(c.Request.Method) {
+				required = auth.ScopeAPIWrite
+			}
+			if !auth.HasScope(principal, required) {
+				writeError(c.Writer, http.StatusForbidden, "insufficient_scope", "token scope is insufficient")
+				c.Abort()
+				return
+			}
+			c.Set(authPrincipalKey, principal)
+			c.Next()
+			return
+		}
 		token, _ := c.Cookie(auth.CookieName)
 		session, err := a.auth.Authenticate(c.Request.Context(), token)
 		if err != nil {
@@ -146,10 +174,16 @@ func (a *APIServer) requireAuth() gin.HandlerFunc {
 			return
 		}
 		c.Set(authSessionKey, map[string]any{"csrf_token": session.CSRFToken, "expires_at": session.ExpiresAt})
+		c.Set(authPrincipalKey, nil)
 		c.SetSameSite(http.SameSiteLaxMode)
 		c.SetCookie(auth.CookieName, token, int(time.Until(session.ExpiresAt).Seconds()), "/", "", c.Request.TLS != nil, true)
 		c.Next()
 	}
+}
+
+func isBearerPrincipal(c *gin.Context) bool {
+	value, exists := c.Get(authPrincipalKey)
+	return exists && value != nil
 }
 func requiresCSRF(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions

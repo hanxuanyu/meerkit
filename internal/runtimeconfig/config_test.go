@@ -27,10 +27,10 @@ func TestManagerInitializesDefaultsAndPersistsRuntimeValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 5 {
-		t.Fatalf("system config rows = %d, want 5", len(rows))
+	if len(rows) != 6 {
+		t.Fatalf("system config rows = %d, want 6", len(rows))
 	}
-	for _, configType := range []string{app.SystemConfigStorage, app.SystemConfigScheduler, app.SystemConfigLogging, app.SystemConfigPlugins, app.SystemConfigAuth} {
+	for _, configType := range []string{app.SystemConfigStorage, app.SystemConfigScheduler, app.SystemConfigLogging, app.SystemConfigPlugins, app.SystemConfigAuth, app.SystemConfigMCP} {
 		if manager.Version(configType) != 1 {
 			t.Fatalf("initial %s version = %d, want 1", configType, manager.Version(configType))
 		}

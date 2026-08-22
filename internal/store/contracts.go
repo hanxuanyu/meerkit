@@ -96,6 +96,14 @@ type AuthRepository interface {
 	RefreshAdminSession(context.Context, string, time.Time, time.Time) error
 	DeleteAdminSession(context.Context, string) error
 	DeleteExpiredAdminSessions(context.Context, time.Time) error
+	CreateAPIToken(context.Context, APIToken) error
+	ListAPITokens(context.Context) ([]APIToken, error)
+	GetAPIToken(context.Context, string) (APIToken, error)
+	GetAPITokenByHash(context.Context, string) (APIToken, error)
+	RevokeAPIToken(context.Context, string, time.Time) error
+	RestoreAPIToken(context.Context, string) error
+	DeleteAPIToken(context.Context, string) error
+	TouchAPIToken(context.Context, string, time.Time) error
 }
 
 type SystemConfigRepository interface {

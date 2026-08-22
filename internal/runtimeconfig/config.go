@@ -49,7 +49,7 @@ func New(ctx context.Context, database store.SystemConfigRepository) (*Manager, 
 }
 
 func managedTypes() []string {
-	return []string{app.SystemConfigStorage, app.SystemConfigScheduler, app.SystemConfigLogging, app.SystemConfigPlugins, app.SystemConfigAuth}
+	return []string{app.SystemConfigStorage, app.SystemConfigScheduler, app.SystemConfigLogging, app.SystemConfigPlugins, app.SystemConfigAuth, app.SystemConfigMCP}
 }
 
 func ensureAuthConfig(ctx context.Context, database store.SystemConfigRepository, defaults app.RuntimeAuthConfig) error {
@@ -329,6 +329,8 @@ func (m *Manager) domain(config app.RuntimeConfig, configType string) any {
 		return config.Plugins
 	case app.SystemConfigAuth:
 		return config.Auth
+	case app.SystemConfigMCP:
+		return config.MCP
 	default:
 		return nil
 	}
@@ -358,6 +360,8 @@ func decodeDomain(data []byte, configType string, config *app.RuntimeConfig) err
 		target = &config.Plugins
 	case app.SystemConfigAuth:
 		target = &config.Auth
+	case app.SystemConfigMCP:
+		target = &config.MCP
 	default:
 		return fmt.Errorf("unknown system config type %q", configType)
 	}

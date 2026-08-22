@@ -381,7 +381,7 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 
 .settings-config-tabs { gap: 14px; }
 .settings-config-tabs > .tabs-list { padding: 0 4px; }
-.settings-config-tabs > .tabs-list .tabs-trigger { min-width: 94px; padding-right: 12px; padding-left: 12px; font-size: 11px; }
+.settings-config-tabs > .tabs-list .tabs-trigger { min-width: 94px; padding-right: 12px; padding-left: 12px; font-size: 12px; }
 .settings-unsaved-banner { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 7px; color: #92400e; background: #fffbeb; }
 .settings-unsaved-banner > svg { flex: none; margin-top: 1px; }
 .settings-unsaved-banner > div { display: grid; gap: 3px; min-width: 0; }
@@ -392,6 +392,40 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .settings-config-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .settings-config-startup { min-width: 0; }
 .settings-config-startup > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
+.settings-token-management { display: grid; gap: 14px; min-width: 0; }
+.settings-token-management .section-header { align-items: flex-start; }
+.settings-token-form-body { display: grid; gap: 16px; padding: 22px 24px 24px; }
+.settings-token-field { display: grid; gap: 7px; min-width: 0; }
+.settings-token-field .field-label { color: var(--foreground); font-size: 12px; font-weight: 650; }
+.settings-token-field-hint { margin-left: 5px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.settings-token-field .field-control, .settings-token-field .select-trigger { height: 38px; min-height: 38px; font-size: 12px; }
+.settings-token-dialog form { min-width: 0; }
+.settings-token-surface { min-width: 0; }
+.settings-token-search { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.settings-token-search .field-control { height: 32px; min-height: 32px; font-size: 11px; }
+.settings-token-table { min-width: 900px; table-layout: fixed; }
+.settings-token-table thead tr { border: 0 !important; }
+.settings-token-table thead th { border-bottom: 1px solid var(--border); }
+.settings-token-col-type { width: 92px; }
+.settings-token-col-scopes { width: 190px; }
+.settings-token-col-status { width: 82px; }
+.settings-token-col-time { width: 142px; }
+.settings-token-col-actions { width: 116px; }
+.settings-token-primary { display: grid; min-width: 0; gap: 5px; }
+.settings-token-primary strong { overflow: hidden; color: var(--foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-token-primary code, .settings-token-scopes code { width: fit-content; max-width: 100%; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-token-table time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.settings-token-actions { display: flex; justify-content: flex-end; gap: 3px; }
+.settings-token-surface > .pagination { border-top: 1px solid var(--border); }
+.settings-token-surface > .empty-state { min-height: 250px; }
+.settings-token-dialog { width: min(520px, 100%); }
+.settings-token-dialog .modal-header { gap: 6px; }
+.settings-token-dialog .modal-header p { max-width: 420px; line-height: 1.5; }
+.settings-token-secret-dialog { width: min(620px, 100%); }
+.settings-token-secret-dialog .modal-header { gap: 6px; }
+.settings-token-secret-dialog .modal-header p { max-width: 480px; line-height: 1.5; }
+.settings-token-secret-body { min-width: 0; padding: 22px 24px 24px; }
+.settings-token-secret-input { border-color: #86efac; color: #166534; background: #f0fdf4; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .browser-settings { min-width: 0; }
 .browser-settings > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
 .browser-settings-status { display: flex; flex: none; align-items: center; gap: 8px; }
@@ -655,6 +689,24 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
   .settings-config-runtime > .section-header, .settings-config-startup > .section-header, .browser-settings > .section-header, .runtime-config-group-header { padding: 15px; }
   .settings-config-runtime > .section-header { flex-wrap: wrap; }
   .settings-config-runtime > .section-header .settings-config-actions { width: 100%; justify-content: flex-start; }
+  .settings-token-form-body { gap: 14px; padding: 18px; }
+  .settings-token-secret-body { padding: 18px; }
+  .settings-token-surface .table-wrap { overflow: visible; padding: 0; }
+  .settings-token-table { display: block; width: 100%; min-width: 0; }
+  .settings-token-table colgroup, .settings-token-table thead { display: none; }
+  .settings-token-table tbody { display: grid; gap: 8px; padding: 10px; }
+  .settings-token-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name actions" "type status" "scopes scopes" "created used"; gap: 8px 12px; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+  .settings-token-table td { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; padding: 0; border: 0; }
+  .settings-token-table td[data-label]::before { flex: none; color: var(--muted); font-size: 9px; font-weight: 650; content: attr(data-label); }
+  .settings-token-table td:nth-child(1) { grid-area: name; }
+  .settings-token-table td:nth-child(2) { grid-area: type; }
+  .settings-token-table td:nth-child(3) { grid-area: scopes; }
+  .settings-token-table td:nth-child(4) { grid-area: status; }
+  .settings-token-table td:nth-child(5) { grid-area: created; }
+  .settings-token-table td:nth-child(6) { grid-area: used; }
+  .settings-token-table td:nth-child(7) { grid-area: actions; }
+  .settings-token-table td:nth-child(2)::before, .settings-token-table td:nth-child(4)::before, .settings-token-table td:nth-child(7)::before { display: none; }
+  .settings-token-actions { justify-content: flex-end; }
   .startup-config-items { margin: 14px 15px 18px; }
   .startup-config-item { grid-template-columns: minmax(0, 1fr); grid-template-areas: "header" "values" "source"; gap: 8px; padding: 11px 12px; }
   .startup-config-values > div { align-items: flex-start; flex-direction: column; gap: 4px; }

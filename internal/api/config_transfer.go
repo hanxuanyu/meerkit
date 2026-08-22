@@ -252,7 +252,7 @@ func (a *APIServer) exportConfiguration(c *gin.Context) {
 	}
 	exportSummary, _ := json.Marshal(configExportSummary{
 		Encrypted:                    request.Encrypted,
-		RuntimeTypes:                 5,
+		RuntimeTypes:                 6,
 		Monitors:                     len(payload.Monitors),
 		MonitorsIncluded:             request.Monitors,
 		NotificationChannels:         len(payload.NotificationChannels),
@@ -309,7 +309,7 @@ func (a *APIServer) importConfiguration(c *gin.Context) {
 	if a.statusBoard != nil {
 		a.statusBoard.Publish(statusboard.StreamEvent{Type: "configuration_imported"})
 	}
-	writeJSON(c.Writer, http.StatusOK, configImportResult{Imported: true, AdminKeyImported: adminHash != "", Monitors: len(payload.Monitors), NotificationChannels: len(payload.NotificationChannels), StatusBoardItems: len(payload.StatusBoardItems), StatusBoardShares: len(payload.StatusBoardShares), RuntimeTypes: 5, Summary: summary})
+	writeJSON(c.Writer, http.StatusOK, configImportResult{Imported: true, AdminKeyImported: adminHash != "", Monitors: len(payload.Monitors), NotificationChannels: len(payload.NotificationChannels), StatusBoardItems: len(payload.StatusBoardItems), StatusBoardShares: len(payload.StatusBoardShares), RuntimeTypes: 6, Summary: summary})
 }
 
 func (a *APIServer) parseConfigurationImport(c *gin.Context) (*parsedConfigImport, bool) {
@@ -428,6 +428,7 @@ func (a *APIServer) buildConfigImportSummary(ctx context.Context, payload config
 			{ID: "logging", Name: "日志运行参数"},
 			{ID: "plugins", Name: "插件日志"},
 			{ID: "auth", Name: "认证策略"},
+			{ID: "mcp", Name: "MCP 服务"},
 		}},
 		Monitors:             compareConfigTransferItems(monitorItems, existingMonitorItems, replace),
 		NotificationChannels: compareConfigTransferItems(channelItems, existingChannelItems, replace),

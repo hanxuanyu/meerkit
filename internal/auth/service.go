@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,15 +35,38 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 type Service struct {
-	store    store.AuthRepository
-	ttlNanos atomic.Int64
+	store          store.AuthRepository
+	ttlNanos       atomic.Int64
+	tokenKey       []byte
+	allowTokenCopy atomic.Bool
+	pendingMu      sync.Mutex
+	pendingMCP     *TokenSecret
 }
 
 func NewService(database store.AuthRepository, ttl time.Duration) *Service {
+	key, _ := randomBytes(32)
+	return newService(database, ttl, key, false)
+}
+
+type ServiceOptions struct {
+	MasterKeyFile  string
+	AllowTokenCopy bool
+}
+
+func NewServiceWithOptions(database store.AuthRepository, ttl time.Duration, options ServiceOptions) (*Service, error) {
+	key, err := loadOrCreateMasterKey(options.MasterKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return newService(database, ttl, key, options.AllowTokenCopy), nil
+}
+
+func newService(database store.AuthRepository, ttl time.Duration, key []byte, allowCopy bool) *Service {
 	if ttl <= 0 {
 		ttl = 30 * 24 * time.Hour
 	}
-	service := &Service{store: database}
+	service := &Service{store: database, tokenKey: key}
+	service.allowTokenCopy.Store(allowCopy)
 	service.ttlNanos.Store(int64(ttl))
 	return service
 }

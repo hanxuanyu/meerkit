@@ -182,3 +182,19 @@ type adminSessionModel struct {
 	LastSeenAt    string `bun:"last_seen_at,type:varchar(35),notnull"`
 	CreatedAt     string `bun:"created_at,type:varchar(35),notnull"`
 }
+
+type apiTokenModel struct {
+	bun.BaseModel    `bun:"table:api_tokens"`
+	ID               string `bun:"id,pk,type:varchar(64)"`
+	Name             string `bun:"name,type:varchar(255),notnull"`
+	Type             string `bun:"type,type:varchar(32),notnull"`
+	ScopesJSON       string `bun:"scopes_json,type:longtext,notnull"`
+	TokenHash        string `bun:"token_hash,type:varchar(128),unique,notnull"`
+	SecretCiphertext string `bun:"secret_ciphertext,type:longtext,notnull"`
+	SecretNonce      string `bun:"secret_nonce,type:varchar(128),notnull"`
+	TokenHint        string `bun:"token_hint,type:varchar(32),notnull"`
+	ExpiresAt        string `bun:"expires_at,type:varchar(35)"`
+	RevokedAt        string `bun:"revoked_at,type:varchar(35)"`
+	LastUsedAt       string `bun:"last_used_at,type:varchar(35)"`
+	CreatedAt        string `bun:"created_at,type:varchar(35),notnull"`
+}

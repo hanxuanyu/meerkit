@@ -21,7 +21,6 @@ type Config struct {
 	Logging  LoggingConfig  `yaml:"logging" mapstructure:"logging"`
 	Security SecurityConfig `yaml:"security" mapstructure:"security"`
 	Plugins  PluginConfig   `yaml:"plugins" mapstructure:"plugins"`
-	MCP      MCPConfig      `yaml:"mcp" mapstructure:"mcp"`
 	Metadata ConfigMetadata `yaml:"-" mapstructure:"-"`
 }
 
@@ -75,17 +74,13 @@ type AccessFileConfig struct {
 }
 
 type SecurityConfig struct {
-	MasterKeyFile string `yaml:"master_key_file" mapstructure:"master_key_file"`
+	MasterKeyFile  string `yaml:"master_key_file" mapstructure:"master_key_file"`
+	AllowTokenCopy bool   `yaml:"allow_token_copy" mapstructure:"allow_token_copy"`
 }
 
 type PluginConfig struct {
 	SourceDir   string            `yaml:"source_dir" mapstructure:"source_dir"`
 	TrustedKeys map[string]string `yaml:"trusted_keys" mapstructure:"trusted_keys"`
-}
-
-type MCPConfig struct {
-	Enabled bool   `yaml:"enabled" mapstructure:"enabled"`
-	Token   string `yaml:"token,omitempty" mapstructure:"token"`
 }
 
 type ConfigOptions struct {
@@ -109,9 +104,8 @@ func DefaultConfig() Config {
 				Access: AccessFileConfig{Filename: "meerkit-access.log"},
 			},
 		},
-		Security: SecurityConfig{MasterKeyFile: "./data/master.key"},
+		Security: SecurityConfig{MasterKeyFile: "./data/master.key", AllowTokenCopy: false},
 		Plugins:  PluginConfig{SourceDir: "./plugins", TrustedKeys: map[string]string{}},
-		MCP:      MCPConfig{Enabled: false},
 	}
 }
 
@@ -230,10 +224,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file.compress", defaults.Logging.File.Compress)
 	v.SetDefault("logging.file.access.filename", defaults.Logging.File.Access.Filename)
 	v.SetDefault("security.master_key_file", defaults.Security.MasterKeyFile)
+	v.SetDefault("security.allow_token_copy", defaults.Security.AllowTokenCopy)
 	v.SetDefault("plugins.source_dir", defaults.Plugins.SourceDir)
 	v.SetDefault("plugins.trusted_keys", defaults.Plugins.TrustedKeys)
-	v.SetDefault("mcp.enabled", defaults.MCP.Enabled)
-	v.SetDefault("mcp.token", defaults.MCP.Token)
 }
 
 func bindEnvironment(v *viper.Viper) error {
@@ -259,9 +252,8 @@ func bindEnvironment(v *viper.Viper) error {
 		"logging.file.compress":               "MEERKIT_LOGGING__FILE__COMPRESS",
 		"logging.file.access.filename":        "MEERKIT_LOGGING__FILE__ACCESS__FILENAME",
 		"security.master_key_file":            "MEERKIT_SECURITY__MASTER_KEY_FILE",
+		"security.allow_token_copy":           "MEERKIT_SECURITY__ALLOW_TOKEN_COPY",
 		"plugins.source_dir":                  "MEERKIT_PLUGINS__SOURCE_DIR",
-		"mcp.enabled":                         "MEERKIT_MCP__ENABLED",
-		"mcp.token":                           "MEERKIT_MCP__TOKEN",
 	}
 	for key, env := range envKeys {
 		if err := v.BindEnv(key, env); err != nil {
@@ -348,10 +340,6 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.Plugins.SourceDir) == "" {
 		return cfg, errors.New("plugins.source_dir cannot be empty")
-	}
-	cfg.MCP.Token = strings.TrimSpace(cfg.MCP.Token)
-	if cfg.MCP.Enabled && len(cfg.MCP.Token) < 32 {
-		return cfg, errors.New("mcp.token must contain at least 32 characters when MCP is enabled")
 	}
 	return cfg, nil
 }

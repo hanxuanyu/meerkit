@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,116 @@ type AdminSession struct {
 	ExpiresAt  time.Time
 	LastSeenAt time.Time
 	CreatedAt  time.Time
+}
+
+type APIToken struct {
+	ID               string
+	Name             string
+	Type             string
+	Scopes           []string
+	TokenHash        string
+	SecretCiphertext string
+	SecretNonce      string
+	TokenHint        string
+	ExpiresAt        *time.Time
+	RevokedAt        *time.Time
+	LastUsedAt       *time.Time
+	CreatedAt        time.Time
+}
+
+func (s *Store) CreateAPIToken(ctx context.Context, value APIToken) error {
+	scopes, err := json.Marshal(value.Scopes)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO api_tokens(id,name,type,scopes_json,token_hash,secret_ciphertext,secret_nonce,token_hint,expires_at,revoked_at,last_used_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.Name, value.Type, string(scopes), value.TokenHash, value.SecretCiphertext, value.SecretNonce, value.TokenHint, optionalTimestamp(value.ExpiresAt), optionalTimestamp(value.RevokedAt), optionalTimestamp(value.LastUsedAt), value.CreatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ListAPITokens(ctx context.Context) ([]APIToken, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,type,scopes_json,token_hash,secret_ciphertext,secret_nonce,token_hint,expires_at,revoked_at,last_used_at,created_at FROM api_tokens ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]APIToken, 0)
+	for rows.Next() {
+		value, err := scanAPIToken(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetAPIToken(ctx context.Context, id string) (APIToken, error) {
+	return s.getAPIToken(ctx, `WHERE id=?`, id)
+}
+
+func (s *Store) GetAPITokenByHash(ctx context.Context, hash string) (APIToken, error) {
+	return s.getAPIToken(ctx, `WHERE token_hash=?`, hash)
+}
+
+func (s *Store) getAPIToken(ctx context.Context, where string, arg any) (APIToken, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,name,type,scopes_json,token_hash,secret_ciphertext,secret_nonce,token_hint,expires_at,revoked_at,last_used_at,created_at FROM api_tokens `+where, arg)
+	return scanAPIToken(row.Scan)
+}
+
+func (s *Store) RevokeAPIToken(ctx context.Context, id string, revoked time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, revoked.UTC().Format(time.RFC3339Nano), id)
+	return err
+}
+
+func (s *Store) RestoreAPIToken(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at=NULL WHERE id=? AND revoked_at IS NOT NULL`, id)
+	return err
+}
+
+func (s *Store) DeleteAPIToken(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM api_tokens WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) TouchAPIToken(ctx context.Context, hash string, seen time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at=? WHERE token_hash=?`, seen.UTC().Format(time.RFC3339Nano), hash)
+	return err
+}
+
+type scanFunc func(...any) error
+
+func scanAPIToken(scan scanFunc) (APIToken, error) {
+	var value APIToken
+	var scopes, created string
+	var expires, revoked, lastUsed sql.NullString
+	if err := scan(&value.ID, &value.Name, &value.Type, &scopes, &value.TokenHash, &value.SecretCiphertext, &value.SecretNonce, &value.TokenHint, &expires, &revoked, &lastUsed, &created); err != nil {
+		return value, err
+	}
+	if err := json.Unmarshal([]byte(scopes), &value.Scopes); err != nil {
+		return value, err
+	}
+	value.ExpiresAt = parseOptionalTimestamp(expires.String)
+	value.RevokedAt = parseOptionalTimestamp(revoked.String)
+	value.LastUsedAt = parseOptionalTimestamp(lastUsed.String)
+	value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return value, nil
+}
+
+func optionalTimestamp(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+func parseOptionalTimestamp(value string) *time.Time {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func (s *Store) AdminKeyHash(ctx context.Context) (string, error) {

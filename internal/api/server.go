@@ -85,6 +85,12 @@ func (a *APIServer) Router() http.Handler {
 	api.POST("/auth/logout", a.authLogout)
 	api.POST("/auth/change-key", a.authChangeKey)
 	api.GET("/auth/session", a.authSession)
+	api.GET("/auth/tokens", a.listTokens)
+	api.POST("/auth/tokens", a.createToken)
+	api.POST("/auth/tokens/:id/reveal", a.revealToken)
+	api.POST("/auth/tokens/:id/restore", a.restoreToken)
+	api.DELETE("/auth/tokens/:id/permanent", a.deleteToken)
+	api.DELETE("/auth/tokens/:id", a.revokeToken)
 	api.GET("/plugins", a.listPlugins)
 	api.POST("/plugins/import", a.importPlugin)
 	api.POST("/plugins/scan", a.scanPlugins)
@@ -181,7 +187,7 @@ func (a *APIServer) Router() http.Handler {
 	})
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/mcp" {
-			if a.mcp == nil {
+			if a.mcp == nil || (a.runtime != nil && !a.runtime.Snapshot().MCP.Enabled) {
 				http.NotFound(writer, request)
 			} else {
 				a.mcp.ServeHTTP(writer, request)

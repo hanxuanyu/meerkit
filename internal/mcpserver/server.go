@@ -2,8 +2,6 @@ package mcpserver
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -38,9 +36,9 @@ type BrowserController interface {
 }
 
 type Options struct {
-	Token   string
-	Version string
-	Logger  *slog.Logger
+	ValidateToken func(context.Context, string) error
+	Version       string
+	Logger        *slog.Logger
 }
 
 type service struct {
@@ -52,9 +50,8 @@ func New(controller BrowserController, options Options) (http.Handler, error) {
 	if controller == nil {
 		return nil, errors.New("MCP browser controller is required")
 	}
-	token := strings.TrimSpace(options.Token)
-	if len(token) < 32 {
-		return nil, errors.New("MCP bearer token must contain at least 32 characters")
+	if options.ValidateToken == nil {
+		return nil, errors.New("MCP token validator is required")
 	}
 	version := strings.TrimSpace(options.Version)
 	if version == "" {
@@ -83,7 +80,7 @@ func New(controller BrowserController, options Options) (http.Handler, error) {
 		_ = http.NewResponseController(writer).SetWriteDeadline(time.Time{})
 		streamable.ServeHTTP(writer, request)
 	})
-	return bearerAuth(token, http.MaxBytesHandler(withoutWriteDeadline, requestBodyLimit)), nil
+	return bearerAuth(options.ValidateToken, http.MaxBytesHandler(withoutWriteDeadline, requestBodyLimit)), nil
 }
 
 type listAgentsInput struct{}
@@ -329,15 +326,10 @@ func decodeDataURL(value string) (string, []byte, error) {
 	return mimeType, data, nil
 }
 
-func bearerAuth(token string, next http.Handler) http.Handler {
-	expected := sha256.Sum256([]byte(token))
+func bearerAuth(validate func(context.Context, string) error, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		parts := strings.Fields(request.Header.Get("Authorization"))
-		provided := sha256.Sum256(nil)
-		if len(parts) == 2 {
-			provided = sha256.Sum256([]byte(parts[1]))
-		}
-		valid := len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && subtle.ConstantTimeCompare(provided[:], expected[:]) == 1
+		valid := len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && validate(request.Context(), parts[1]) == nil
 		if !valid {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="meerkit-mcp"`)
 			http.Error(writer, "authentication required", http.StatusUnauthorized)

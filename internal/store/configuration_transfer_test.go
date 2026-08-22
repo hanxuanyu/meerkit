@@ -47,7 +47,7 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Versions) != 5 {
+	if len(result.Versions) != 6 {
 		t.Fatalf("runtime versions = %v", result.Versions)
 	}
 	monitors, err := database.ListMonitors(ctx)
@@ -104,7 +104,7 @@ func TestImportConfigurationMergeAndReplace(t *testing.T) {
 func ensureRuntimeRows(t *testing.T, database *Store) {
 	t.Helper()
 	config := app.DefaultRuntimeConfig()
-	for configType, value := range map[string]any{app.SystemConfigStorage: config.Storage, app.SystemConfigScheduler: config.Scheduler, app.SystemConfigLogging: config.Logging, app.SystemConfigPlugins: config.Plugins, app.SystemConfigAuth: config.Auth} {
+	for configType, value := range map[string]any{app.SystemConfigStorage: config.Storage, app.SystemConfigScheduler: config.Scheduler, app.SystemConfigLogging: config.Logging, app.SystemConfigPlugins: config.Plugins, app.SystemConfigAuth: config.Auth, app.SystemConfigMCP: config.MCP} {
 		if _, err := database.EnsureSystemConfig(context.Background(), configType, value); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func ensureRuntimeRows(t *testing.T, database *Store) {
 func runtimeDomains(t *testing.T, config app.RuntimeConfig) map[string]json.RawMessage {
 	t.Helper()
 	result := map[string]json.RawMessage{}
-	for configType, value := range map[string]any{app.SystemConfigStorage: config.Storage, app.SystemConfigScheduler: config.Scheduler, app.SystemConfigLogging: config.Logging, app.SystemConfigPlugins: config.Plugins, app.SystemConfigAuth: config.Auth} {
+	for configType, value := range map[string]any{app.SystemConfigStorage: config.Storage, app.SystemConfigScheduler: config.Scheduler, app.SystemConfigLogging: config.Logging, app.SystemConfigPlugins: config.Plugins, app.SystemConfigAuth: config.Auth, app.SystemConfigMCP: config.MCP} {
 		data, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)

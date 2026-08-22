@@ -4,7 +4,7 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 
 ## 认证与 CSRF
 
-只有以下端点无需会话：
+以下端点无需任何认证；其余管理 API 可使用管理员会话或具备相应作用域的 Bearer API token：
 
 - `GET /healthz`
 - `GET /readyz`
@@ -14,7 +14,7 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 - `GET /api/v1/public/status-board/:token`
 - `GET WebSocket /api/v1/browser/extension/ws`，使用扩展配对令牌完成首帧鉴权
 
-启用 MCP 后，`GET`、`POST`、`DELETE /mcp` 使用 MCP Streamable HTTP 协议和独立的 `Authorization: Bearer <mcp.token>` 鉴权，不使用管理员会话与 CSRF Token。
+`/mcp` 由数据库动态配置 `mcp.enabled` 控制，启用后使用数据库生成的 MCP token 通过 `Authorization: Bearer <token>` 鉴权，不使用管理员会话与 CSRF Token。管理员首次开启 MCP 且不存在有效 MCP token 时，配置更新响应会返回一次新 token 明文。
 
 登录或初始化成功后，服务设置 `meerkit_session` HttpOnly Cookie，并返回：
 
@@ -60,6 +60,14 @@ Meerkit 管理 API 前缀为 `/api/v1`，请求与响应默认使用 JSON。该 
 | GET | `/auth/session` | 获取 CSRF Token 与过期时间 |
 | POST | `/auth/logout` | 注销当前会话 |
 | POST | `/auth/change-key` | 使用当前密钥修改密钥并撤销会话 |
+| GET | `/auth/tokens` | 查看 API token 元数据。支持 `q`、`page`、`page_size` 查询参数 |
+| POST | `/auth/tokens` | 创建 REST 或 MCP token，明文只返回一次 |
+| POST | `/auth/tokens/:id/reveal` | 配置允许时重新查看 token 明文 |
+| POST | `/auth/tokens/:id/restore` | 恢复已撤销 token |
+| DELETE | `/auth/tokens/:id` | 撤销 token |
+| DELETE | `/auth/tokens/:id/permanent` | 永久删除 token，不可恢复 |
+
+Token 列表默认按创建时间倒序返回分页结果。`q` 会匹配名称、类型、作用域和 token 提示；`page` 从 1 开始，`page_size` 支持 `10`、`20`、`50`、`100`，不合法值会回退到 20。响应包含 `items`、`page`、`page_size`、`total` 和 `total_pages`。
 
 ## 监控与描述器
 

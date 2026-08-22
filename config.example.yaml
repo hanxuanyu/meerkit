@@ -23,9 +23,7 @@ logging:
             filename: meerkit-access.log
 security:
     master_key_file: ./data/master.key
+    allow_token_copy: false
 plugins:
     source_dir: ./plugins
     trusted_keys: {}
-mcp:
-    enabled: false
-    token: ""

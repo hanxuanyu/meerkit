@@ -41,6 +41,7 @@ func (a *APIServer) updateSystemConfig(c *gin.Context, configType string) {
 		return
 	}
 	var err error
+	wasMCPEnabled := a.runtime.Snapshot().MCP.Enabled
 	if payload.Path != "" {
 		_, err = a.runtime.UpdatePath(c.Request.Context(), configType, payload.Path, payload.Value, payload.Version)
 	} else {
@@ -50,7 +51,18 @@ func (a *APIServer) updateSystemConfig(c *gin.Context, configType string) {
 		writeRuntimeConfigError(c, err)
 		return
 	}
-	writeJSON(c.Writer, http.StatusOK, map[string]any{"items": a.runtime.Metadata()})
+	response := map[string]any{"items": a.runtime.Metadata()}
+	if configType == app.SystemConfigMCP && !wasMCPEnabled && a.runtime.Snapshot().MCP.Enabled && a.auth != nil {
+		if _, err := a.auth.EnsureMCPToken(c.Request.Context()); err != nil {
+			_, _ = a.runtime.UpdatePath(c.Request.Context(), app.SystemConfigMCP, "mcp.enabled", json.RawMessage("false"), a.runtime.Version(app.SystemConfigMCP))
+			writeError(c.Writer, http.StatusInternalServerError, "mcp_token_create_failed", err.Error())
+			return
+		}
+		if pending := a.auth.ConsumePendingMCPToken(); pending != nil {
+			response["bootstrap_token"] = pending
+		}
+	}
+	writeJSON(c.Writer, http.StatusOK, response)
 }
 
 func (a *APIServer) resetSystemConfig(c *gin.Context, configType string) {

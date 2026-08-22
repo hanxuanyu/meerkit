@@ -91,7 +91,7 @@ func TestExportEncryptsMonitorAndNotificationSecrets(t *testing.T) {
 	if err := json.Unmarshal([]byte(response.Header().Get("X-Meerkit-Export-Summary")), &exportSummary); err != nil {
 		t.Fatalf("invalid export summary header: %v", err)
 	}
-	if !exportSummary.Encrypted || exportSummary.RuntimeTypes != 5 || exportSummary.Monitors != 1 || !exportSummary.MonitorsIncluded || exportSummary.NotificationChannels != 1 || !exportSummary.NotificationChannelsIncluded || exportSummary.StatusBoardItemsIncluded || exportSummary.StatusBoardShares != 1 || !exportSummary.StatusBoardSharesIncluded || exportSummary.AdminKey {
+	if !exportSummary.Encrypted || exportSummary.RuntimeTypes != 6 || exportSummary.Monitors != 1 || !exportSummary.MonitorsIncluded || exportSummary.NotificationChannels != 1 || !exportSummary.NotificationChannelsIncluded || exportSummary.StatusBoardItemsIncluded || exportSummary.StatusBoardShares != 1 || !exportSummary.StatusBoardSharesIncluded || exportSummary.AdminKey {
 		t.Fatalf("unexpected export summary: %+v", exportSummary)
 	}
 	if bytes.Contains(response.Body.Bytes(), []byte("monitor-secret")) || bytes.Contains(response.Body.Bytes(), []byte("channel-secret")) || bytes.Contains(response.Body.Bytes(), []byte(shareToken)) {
@@ -197,7 +197,7 @@ func TestImportAcceptsAdministratorArgon2idHash(t *testing.T) {
 	if err := json.Unmarshal(previewResponse.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	if preview.Encrypted || preview.Mode != "merge" || len(preview.Summary.Runtime.Overwritten) != 5 || len(preview.Summary.AdminKey.Overwritten) != 1 {
+	if preview.Encrypted || preview.Mode != "merge" || len(preview.Summary.Runtime.Overwritten) != 6 || len(preview.Summary.AdminKey.Overwritten) != 1 {
 		t.Fatalf("unexpected import preview: %+v", preview)
 	}
 

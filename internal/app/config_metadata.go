@@ -84,10 +84,9 @@ func configDefinitions() []configDefinition {
 		value("logging.file.compress", "MEERKIT_LOGGING__FILE__COMPRESS", "", "轮转后的旧日志是否压缩。", func(c Config) any { return c.Logging.File.Compress }, func(c Config) any { return c.Logging.File.Compress }),
 		value("logging.file.access.filename", "MEERKIT_LOGGING__FILE__ACCESS__FILENAME", "access-log-filename", "HTTP access 日志文件名。", func(c Config) any { return c.Logging.File.Access.Filename }, func(c Config) any { return c.Logging.File.Access.Filename }),
 		value("security.master_key_file", "MEERKIT_SECURITY__MASTER_KEY_FILE", "", "主密钥文件路径。", func(c Config) any { return c.Security.MasterKeyFile }, func(c Config) any { return c.Security.MasterKeyFile }),
+		value("security.allow_token_copy", "MEERKIT_SECURITY__ALLOW_TOKEN_COPY", "", "是否允许管理员重复查看和复制已创建的 API token。", func(c Config) any { return c.Security.AllowTokenCopy }, func(c Config) any { return c.Security.AllowTokenCopy }),
 		value("plugins.source_dir", "MEERKIT_PLUGINS__SOURCE_DIR", "", "开发版宿主自动发现的源码插件根目录。", func(c Config) any { return c.Plugins.SourceDir }, func(c Config) any { return c.Plugins.SourceDir }),
 		value("plugins.trusted_keys", "", "", "可信插件签名公钥。", func(c Config) any { return c.Plugins.TrustedKeys }, func(c Config) any { return c.Plugins.TrustedKeys }),
-		value("mcp.enabled", "MEERKIT_MCP__ENABLED", "", "是否启用浏览器控制 MCP Streamable HTTP 端点。", func(c Config) any { return c.MCP.Enabled }, func(c Config) any { return c.MCP.Enabled }),
-		value("mcp.token", "MEERKIT_MCP__TOKEN", "", "MCP 客户端使用的 Bearer Token。", func(c Config) any { return redactSecret(c.MCP.Token) }, func(c Config) any { return redactSecret(c.MCP.Token) }),
 	}
 }
 

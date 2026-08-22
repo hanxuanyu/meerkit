@@ -26,21 +26,13 @@ Meerkit 首次启动时生成 32 字节随机配对令牌，保存在 `${storage
 
 ## MCP 接入
 
-Meerkit 可以通过标准 MCP Streamable HTTP 协议向 AI 客户端提供同一套浏览器控制能力。MCP 默认关闭，并使用独立 Bearer Token，不复用管理员密钥或扩展配对令牌。配置后重启服务：
-
-```yaml
-mcp:
-  enabled: true
-  token: "替换为至少 32 个字符的随机令牌"
-```
-
-也可以使用 `MEERKIT_MCP__ENABLED=true` 和 `MEERKIT_MCP__TOKEN=...` 注入。MCP 地址为 `http://127.0.0.1:8080/mcp`；通过反向代理时应使用 HTTPS。客户端配置的核心字段如下，外层格式按具体客户端调整：
+Meerkit 的 MCP Streamable HTTP 端点由系统设置中的动态开关控制，默认关闭。管理员手动开启时，如果数据库中没有有效的 MCP token，系统会自动创建并立即展示一次明文；也可以在 `security.allow_token_copy=true` 时重复复制。永久删除 MCP token 会自动关闭 MCP。MCP 地址为 `http://127.0.0.1:8080/mcp`；通过反向代理时应使用 HTTPS。客户端配置的核心字段如下，外层格式按具体客户端调整：
 
 ```json
 {
   "url": "http://127.0.0.1:8080/mcp",
   "headers": {
-    "Authorization": "Bearer <mcp.token>"
+    "Authorization": "Bearer <mcp-token>"
   }
 }
 ```

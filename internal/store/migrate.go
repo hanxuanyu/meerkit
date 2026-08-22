@@ -84,6 +84,7 @@ func (s *Store) createInitialSchema(ctx context.Context) error {
 		{name: "module_descriptor_snapshots", model: (*moduleDescriptorSnapshotModel)(nil)},
 		{name: "system_configs", model: (*systemConfigModel)(nil)},
 		{name: "admin_sessions", model: (*adminSessionModel)(nil)},
+		{name: "api_tokens", model: (*apiTokenModel)(nil)},
 	}
 	for _, value := range models {
 		query := s.orm.NewCreateTable().Model(value.model).IfNotExists()
@@ -120,6 +121,10 @@ func (s *Store) createInitialSchema(ctx context.Context) error {
 		{name: "idx_notification_deliveries_inapp", model: (*notificationDeliveryModel)(nil), columns: []string{"notifier_type", "is_read", "created_at"}},
 		{name: "idx_plugins_signer_fingerprint", model: (*pluginModel)(nil), columns: []string{"signer_fingerprint"}},
 		{name: "idx_admin_sessions_expiry", model: (*adminSessionModel)(nil), columns: []string{"expires_at"}},
+		{name: "idx_api_tokens_name", model: (*apiTokenModel)(nil), columns: []string{"name"}, unique: true},
+		{name: "idx_api_tokens_type", model: (*apiTokenModel)(nil), columns: []string{"type"}},
+		{name: "idx_api_tokens_expires", model: (*apiTokenModel)(nil), columns: []string{"expires_at"}},
+		{name: "idx_api_tokens_revoked", model: (*apiTokenModel)(nil), columns: []string{"revoked_at"}},
 	}
 	for _, index := range indexes {
 		exists, err := s.indexExists(ctx, index.name)

@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bell, Database, Download, FileArchive, FileCheck2, FileCog, KeyRound, LayoutDashboard, Link2, LockKeyhole, LockOpen, Plus, Radio, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Ban, Bell, Copy, Database, Download, FileArchive, FileCheck2, FileCog, KeyRound, LayoutDashboard, Link2, LockKeyhole, LockOpen, Plus, Radio, RefreshCw, RotateCcw, Save, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiBlob } from "../lib/api";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
 import { Input } from "../components/ui/Input";
+import { Pagination } from "../components/ui/Pagination";
+import { Label } from "../components/ui/Input";
 import { PasswordInput } from "../components/ui/PasswordInput";
 import { IconButton } from "../components/ui/IconButton";
 import { Switch } from "../components/ui/Switch";
@@ -13,6 +17,9 @@ import { Checkbox } from "../components/ui/Checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/AlertDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/Dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/Select";
+import { LoadingList } from "../components/ui/Skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
 
 const sourceLabels = {
   command_line: "命令行",
@@ -26,7 +33,8 @@ const runtimeTypeLabels = {
   scheduler: "调度器",
   logging: "日志运行参数",
   plugins: "插件日志",
-  auth: "认证策略"
+  auth: "认证策略",
+  mcp: "MCP 服务"
 };
 
 export function SettingsPage() {
@@ -40,6 +48,17 @@ export function SettingsPage() {
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [tokens, setTokens] = useState([]);
+  const [tokenPageInfo, setTokenPageInfo] = useState({ page: 1, page_size: 20, total: 0, total_pages: 0 });
+  const [tokenSearchInput, setTokenSearchInput] = useState("");
+  const [tokenSearch, setTokenSearch] = useState("");
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [allowTokenCopy, setAllowTokenCopy] = useState(false);
+  const [secretToken, setSecretToken] = useState("");
+  const [secretTokenSource, setSecretTokenSource] = useState("created");
+  const [secretDialogOpen, setSecretDialogOpen] = useState(false);
+  const [tokenForm, setTokenForm] = useState({ name: "", type: "rest", scopes: "api:read", expires_at: "" });
+  const [tokenBusy, setTokenBusy] = useState(false);
 
   const reload = async () => {
     const value = await api("/api/v1/system/config");
@@ -57,6 +76,85 @@ export function SettingsPage() {
       .catch((loadError) => { if (!cancelled) setError(loadError.message); });
     return () => { cancelled = true; };
   }, []);
+
+  const reloadTokens = async () => {
+    setTokenLoading(true);
+    const params = new URLSearchParams({ page: String(tokenPageInfo.page), page_size: String(tokenPageInfo.page_size) });
+    if (tokenSearch) params.set("q", tokenSearch);
+    try {
+    const value = await api(`/api/v1/auth/tokens?${params.toString()}`);
+    setTokens(value.items || []);
+    setTokenPageInfo((current) => ({ ...current, page: value.page || current.page, page_size: value.page_size || current.page_size, total: value.total || 0, total_pages: value.total_pages || 0 }));
+    setAllowTokenCopy(Boolean(value.allow_token_copy));
+    } finally { setTokenLoading(false); }
+  };
+
+  useEffect(() => {
+    reloadTokens().catch(() => {});
+  }, [tokenPageInfo.page, tokenPageInfo.page_size, tokenSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setTokenSearch(tokenSearchInput.trim());
+      setTokenPageInfo((current) => current.page === 1 ? current : { ...current, page: 1 });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [tokenSearchInput]);
+
+  const copyToken = async (value) => {
+    try { await navigator.clipboard.writeText(value); toast.success("Token 已复制"); }
+    catch (copyError) { toast.error(copyError.message || "复制失败，请手动复制"); }
+  };
+
+  const createToken = async (event) => {
+    event.preventDefault();
+    setTokenBusy(true);
+    try {
+      const payload = { name: tokenForm.name, type: tokenForm.type, scopes: tokenForm.type === "mcp" ? ["mcp:browser"] : tokenForm.scopes.split(",").map((value) => value.trim()).filter(Boolean) };
+      if (tokenForm.expires_at) payload.expires_at = new Date(`${tokenForm.expires_at}T23:59:59Z`).toISOString();
+      const value = await api("/api/v1/auth/tokens", { method: "POST", body: JSON.stringify(payload) });
+      const createdToken = typeof value.token === "string" ? value.token : (value.token?.token || "");
+      if (!createdToken) throw new Error("服务未返回 Token 明文，请重试");
+      setSecretToken(createdToken);
+      setSecretTokenSource("created");
+      setSecretDialogOpen(true);
+      setTokenForm({ name: "", type: "rest", scopes: "api:read", expires_at: "" });
+      await reloadTokens();
+      toast.success("Token 已创建，请立即保存明文");
+      return true;
+    } catch (createError) { toast.error(createError.message); return false; }
+    finally { setTokenBusy(false); }
+  };
+
+  const revealToken = async (id) => {
+    try { const value = await api(`/api/v1/auth/tokens/${id}/reveal`, { method: "POST" }); await copyToken(value.token || ""); }
+    catch (revealError) { toast.error(revealError.message); }
+  };
+
+  const revokeToken = async (id) => {
+    try { await api(`/api/v1/auth/tokens/${id}`, { method: "DELETE" }); await reloadTokens(); toast.success("Token 已撤销"); }
+    catch (revokeError) { toast.error(revokeError.message); }
+  };
+
+  const restoreToken = async (id) => {
+    try { await api(`/api/v1/auth/tokens/${id}/restore`, { method: "POST" }); await reloadTokens(); toast.success("Token 已恢复"); }
+    catch (restoreError) { toast.error(restoreError.message); }
+  };
+
+  const deleteToken = async (id) => {
+    try { await api(`/api/v1/auth/tokens/${id}/permanent`, { method: "DELETE" }); await Promise.all([reloadTokens(), reload()]); toast.success("Token 已永久删除"); }
+    catch (deleteError) { toast.error(deleteError.message); }
+  };
+
+  const handleRuntimeSaved = async (item, response) => {
+    await reload();
+    if (item.path === "mcp.enabled") await reloadTokens();
+    if (response?.bootstrap_token?.token) {
+      setSecretToken(response.bootstrap_token.token);
+      setSecretTokenSource("mcp");
+      setSecretDialogOpen(true);
+    }
+  };
 
   useEffect(() => {
     if (unsavedCount === 0) return undefined;
@@ -95,11 +193,12 @@ export function SettingsPage() {
       <TabsList>
         <TabsTrigger value="runtime">动态配置</TabsTrigger>
         <TabsTrigger value="startup">启动配置</TabsTrigger>
+        <TabsTrigger value="tokens">API Token</TabsTrigger>
       </TabsList>
       <TabsContent value="runtime" forceMount>
         <section className="settings-config-runtime">
           <div className="section-header"><div><h2>动态配置</h2><p>配置保存在 system_configs 表中，修改后无需重启服务。</p></div><div className="settings-config-actions"><Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)}><Upload size={14} />导出</Button><Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)} disabled={saving || unsavedCount > 0} title={unsavedCount > 0 ? "请先保存或放弃当前修改" : undefined}><Download size={14} />导入</Button><Button variant="outline" size="sm" onClick={() => setKeyDialogOpen(true)}><KeyRound size={14} />修改管理员密钥</Button><Button variant="outline" size="sm" onClick={() => setResetRequest("all")} disabled={saving}><RotateCcw size={14} />恢复全部默认</Button></div></div>
-          {metadata ? <RuntimeConfigTable items={metadata.runtime_items || []} onSaved={reload} onDirtyChange={(count) => setUnsavedCounts((current) => current.runtime === count ? current : { ...current, runtime: count })} onRequestReset={setResetRequest} resetSignal={resetSignal} resetting={saving} /> : <div className="records-empty">正在加载配置...</div>}
+          {metadata ? <RuntimeConfigTable items={metadata.runtime_items || []} onSaved={handleRuntimeSaved} onDirtyChange={(count) => setUnsavedCounts((current) => current.runtime === count ? current : { ...current, runtime: count })} onRequestReset={setResetRequest} resetSignal={resetSignal} resetting={saving} /> : <div className="records-empty">正在加载配置...</div>}
         </section>
       </TabsContent>
       <TabsContent value="startup" forceMount>
@@ -107,6 +206,9 @@ export function SettingsPage() {
           <div className="section-header"><div><h2>启动配置</h2><p>{metadata?.config_file ? `配置文件：${metadata.config_file}` : "当前使用默认配置文件路径。"}</p></div><div className="settings-config-icon"><FileCog size={17} /></div></div>
           {metadata ? <ConfigTable items={metadata.items || []} /> : <div className="records-empty">正在加载配置...</div>}
         </section>
+      </TabsContent>
+      <TabsContent value="tokens" forceMount>
+        <TokenManagement tokens={tokens} allowTokenCopy={allowTokenCopy} secretToken={secretToken} secretTokenSource={secretTokenSource} secretDialogOpen={secretDialogOpen} setSecretDialogOpen={setSecretDialogOpen} setSecretToken={setSecretToken} copyToken={copyToken} revealToken={revealToken} revokeToken={revokeToken} restoreToken={restoreToken} deleteToken={deleteToken} tokenForm={tokenForm} setTokenForm={setTokenForm} createToken={createToken} tokenBusy={tokenBusy} searchInput={tokenSearchInput} setSearchInput={setTokenSearchInput} loading={tokenLoading} pageInfo={tokenPageInfo} setPageInfo={setTokenPageInfo} />
       </TabsContent>
     </Tabs>
     <AdminKeyDialog open={keyDialogOpen} onOpenChange={setKeyDialogOpen} onDirtyChange={(count) => setUnsavedCounts((current) => current.auth === count ? current : { ...current, auth: count })} />
@@ -339,6 +441,68 @@ function formatFileSize(size) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function formatTokenDate(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function TokenManagement({ tokens, allowTokenCopy, secretToken, secretTokenSource, secretDialogOpen, setSecretDialogOpen, setSecretToken, copyToken, revealToken, revokeToken, restoreToken, deleteToken, tokenForm, setTokenForm, createToken, tokenBusy, searchInput, setSearchInput, loading, pageInfo, setPageInfo }) {
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const submit = async (event) => {
+    if (await createToken(event)) setCreateDialogOpen(false);
+  };
+  return <section className="settings-token-management">
+    <div className="section-header"><div><h2>API Token</h2><p>用于 REST API 和 MCP 的机器调用凭据。明文只在创建或查看时显示。</p></div><Button variant="outline" size="sm" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />创建 Token</Button></div>
+    <Card className="section-card settings-token-surface">
+      <div className="toolbar list-toolbar settings-token-toolbar"><div className="settings-token-search list-toolbar-search"><Search size={15} /><Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜索名称、类型、作用域或提示" aria-label="搜索 API Token" /></div></div>
+      {loading ? <LoadingList count={4} /> : tokens.length ? <>
+        <Table className="settings-token-table">
+          <colgroup><col /><col className="settings-token-col-type" /><col className="settings-token-col-scopes" /><col className="settings-token-col-status" /><col className="settings-token-col-time" /><col className="settings-token-col-time" /><col className="settings-token-col-actions" /></colgroup>
+          <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>作用域</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead>最近使用</TableHead><TableHead className="action-cell">操作</TableHead></TableRow></TableHeader>
+          <TableBody>{tokens.map((token) => { const expired = token.expires_at && new Date(token.expires_at).getTime() <= Date.now(); const status = token.revoked_at ? "已撤销" : expired ? "已过期" : "有效"; const tone = token.revoked_at ? "muted" : expired ? "warning" : "success"; return <TableRow key={token.id}>
+            <TableCell><div className="settings-token-primary"><strong title={token.name}>{token.name}</strong><code>{token.token_hint}</code></div></TableCell>
+            <TableCell data-label="类型"><Badge variant="outline">{token.type === "mcp" ? "MCP" : "REST API"}</Badge></TableCell>
+            <TableCell className="settings-token-scopes" data-label="作用域"><code>{token.scopes.join(", ")}</code></TableCell>
+            <TableCell data-label="状态"><Badge tone={tone}>{status}</Badge></TableCell>
+            <TableCell data-label="创建时间"><time>{formatTokenDate(token.created_at)}</time></TableCell>
+            <TableCell data-label="最近使用"><time>{formatTokenDate(token.last_used_at)}</time></TableCell>
+            <TableCell className="action-cell" data-label="操作"><div className="settings-token-actions">{allowTokenCopy && !token.revoked_at && <IconButton size="sm" onClick={() => revealToken(token.id)} title="复制 Token" aria-label={`复制 ${token.name}`}><Copy size={14} /></IconButton>}<IconButton size="sm" onClick={() => token.revoked_at ? restoreToken(token.id) : revokeToken(token.id)} title={token.revoked_at ? "恢复 Token" : "撤销 Token"} aria-label={`${token.revoked_at ? "恢复" : "撤销"} ${token.name}`}>{token.revoked_at ? <RotateCcw size={14} /> : <Ban size={14} />}</IconButton>{token.revoked_at && <IconButton size="sm" onClick={() => setPendingDelete(token)} title="永久删除 Token" aria-label={`永久删除 ${token.name}`}><Trash2 size={14} /></IconButton>}</div></TableCell>
+          </TableRow>; })}</TableBody>
+        </Table>
+        <Pagination page={pageInfo.page} pageSize={pageInfo.page_size} total={pageInfo.total} onPageChange={(page) => setPageInfo((current) => ({ ...current, page }))} onPageSizeChange={(pageSize) => setPageInfo((current) => ({ ...current, page: 1, page_size: pageSize }))} disabled={loading} />
+      </> : searchInput.trim() ? <EmptyState icon={Search} title="没有匹配的 Token" description="尝试调整搜索关键词。" /> : <EmptyState icon={KeyRound} title="尚未创建 API Token" description="创建 REST API 或 MCP Token，用于受控的机器调用。" action={<Button size="sm" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />创建 Token</Button>} />}
+    </Card>
+    <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <DialogContent className="settings-token-dialog">
+        <DialogHeader><DialogTitle>创建 API Token</DialogTitle><DialogDescription>选择 token 类型和作用域。创建成功后明文只展示一次。</DialogDescription></DialogHeader>
+        <form onSubmit={submit}>
+          <div className="settings-token-form-body">
+            <label className="settings-token-field"><Label>名称</Label><Input aria-label="Token 名称" placeholder="例如：CI 发布任务" required autoFocus value={tokenForm.name} onChange={(event) => setTokenForm((current) => ({ ...current, name: event.target.value }))} /></label>
+            <label className="settings-token-field"><Label>类型</Label><Select value={tokenForm.type} onValueChange={(value) => setTokenForm((current) => ({ ...current, type: value, scopes: value === "mcp" ? "mcp:browser" : "api:read" }))}><SelectTrigger aria-label="Token 类型"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="rest">REST API</SelectItem><SelectItem value="mcp">MCP</SelectItem></SelectContent></Select></label>
+            <label className="settings-token-field"><Label>作用域</Label><Select value={tokenForm.scopes} disabled={tokenForm.type === "mcp"} onValueChange={(value) => setTokenForm((current) => ({ ...current, scopes: value }))}><SelectTrigger aria-label="作用域"><SelectValue /></SelectTrigger><SelectContent>{tokenForm.type === "mcp" ? <SelectItem value="mcp:browser">mcp:browser · 浏览器控制</SelectItem> : <><SelectItem value="api:read">api:read · 只读访问</SelectItem><SelectItem value="api:read,api:write">api:read + api:write · 读写访问</SelectItem></>}</SelectContent></Select></label>
+            <label className="settings-token-field"><Label>过期日期 <span className="settings-token-field-hint">可选</span></Label><Input aria-label="过期日期" type="date" value={tokenForm.expires_at} onChange={(event) => setTokenForm((current) => ({ ...current, expires_at: event.target.value }))} /></label>
+          </div>
+          <DialogFooter><Button type="button" variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={tokenBusy}>取消</Button><Button type="submit" disabled={tokenBusy}>{tokenBusy ? "创建中..." : <><Plus size={14} />创建 Token</>}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={secretDialogOpen} onOpenChange={(open) => { setSecretDialogOpen(open); if (!open) setSecretToken(""); }}>
+      <DialogContent className="settings-token-secret-dialog">
+        <DialogHeader><DialogTitle>{secretTokenSource === "mcp" ? "MCP 已开启" : "Token 已创建"}</DialogTitle><DialogDescription>{secretTokenSource === "mcp" ? (allowTokenCopy ? "已自动创建 MCP Token，请复制并保存。当前配置允许管理员稍后再次复制。" : "已自动创建 MCP Token，请立即复制并保存。关闭后将无法再次查看明文。") : (allowTokenCopy ? "请复制并保存 Token。当前配置允许管理员稍后再次复制。" : "请立即复制并保存 Token。关闭后将无法再次查看明文。")}</DialogDescription></DialogHeader>
+        <div className="settings-token-secret-body"><Input className="settings-token-secret-input" readOnly value={secretToken} aria-label="新建 Token" spellCheck={false} /></div>
+        <DialogFooter><Button variant="ghost" onClick={() => { setSecretDialogOpen(false); setSecretToken(""); }}>关闭</Button><Button onClick={() => copyToken(secretToken)} disabled={!secretToken}><Copy size={14} />复制 Token</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader><div className="alert-dialog-icon"><Trash2 size={18} /></div><AlertDialogTitle>永久删除 Token？</AlertDialogTitle><AlertDialogDescription>{pendingDelete?.type === "mcp" ? `“${pendingDelete?.name}”将从数据库中永久删除并自动关闭 MCP 功能，之后无法恢复。` : `“${pendingDelete?.name}”将从数据库中永久删除，之后无法恢复。`}</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={async () => { const id = pendingDelete.id; setPendingDelete(null); await deleteToken(id); }}>永久删除</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </section>;
+}
+
 function AdminKeyDialog({ open, onOpenChange, onDirtyChange }) {
   const [currentAccessKey, setCurrentAccessKey] = useState("");
   const [accessKey, setAccessKey] = useState("");
@@ -453,24 +617,29 @@ function RuntimeConfigGroup({ type, items, onSaved, onDirtyChange, onRequestRese
 
   useEffect(() => onDirtyChange?.(type, dirtyPaths.length), [dirtyPaths.length, onDirtyChange, type]);
 
-  const save = async (item) => {
+  const save = async (item, explicitValue) => {
     setBusyPath(item.path);
     try {
-      await api(`/api/v1/system/config/runtime/${type}`, { method: "PATCH", body: JSON.stringify({ version: item.version, path: item.path, value: normalizeValue(drafts[item.path], item.default) }) });
-      await onSaved();
+      const nextValue = explicitValue === undefined ? drafts[item.path] : explicitValue;
+      const response = await api(`/api/v1/system/config/runtime/${type}`, { method: "PATCH", body: JSON.stringify({ version: item.version, path: item.path, value: normalizeValue(nextValue, item.default) }) });
+      await onSaved(item, response);
       toast.success(`${item.path} 已保存`);
     } catch (saveError) {
       toast.error(saveError.message);
+      if (item.path === "mcp.enabled") {
+        setDrafts((current) => ({ ...current, [item.path]: item.value }));
+        await onSaved(item, null);
+      }
     } finally {
       setBusyPath("");
     }
   };
 
-  return <section className="runtime-config-group"><div className="runtime-config-group-header"><div><div className="runtime-config-group-title"><h3>{runtimeTypeLabels[type] || type}</h3>{dirtyPaths.length > 0 && <span className="runtime-config-unsaved-label"><AlertTriangle size={12} />{dirtyPaths.length} 项未保存</span>}</div><p>配置类型：<code>{type}</code></p></div><IconButton variant="outline" title="恢复此类型默认值" aria-label="恢复此类型默认值" onClick={() => onRequestReset(type)} disabled={resetting}><RotateCcw size={14} /></IconButton></div><div className="runtime-config-items">{items.map((item) => { const dirty = dirtyPathSet.has(item.path); return <article key={item.path} className={`runtime-config-item${dirty ? " is-unsaved" : ""}`}><div className="runtime-config-item-header"><div className="runtime-config-path"><code title={item.path}>{item.path}</code>{dirty && <span>未保存</span>}{dirty && <AlertTriangle className="runtime-config-item-alert" size={15} aria-label="此配置尚未保存" />}</div><p className="runtime-config-item-description" title={item.description}>{item.description}</p></div><div className="runtime-config-item-fields"><div className="runtime-config-field"><span>当前值</span><RuntimeEditor item={item} value={drafts[item.path]} onChange={(value) => setDrafts((current) => ({ ...current, [item.path]: value }))} /></div><div className="runtime-config-field"><span>默认值</span><code className="config-value config-default">{formatValue(item.default)}</code></div></div><div className="runtime-config-item-footer"><IconButton variant="outline" title={dirty ? "保存未保存的配置" : "保存配置"} aria-label={dirty ? "保存未保存的配置" : "保存配置"} onClick={() => save(item)} disabled={!dirty || busyPath !== ""}><Save size={14} /></IconButton></div></article>; })}</div></section>;
+  return <section className="runtime-config-group"><div className="runtime-config-group-header"><div><div className="runtime-config-group-title"><h3>{runtimeTypeLabels[type] || type}</h3>{dirtyPaths.length > 0 && <span className="runtime-config-unsaved-label"><AlertTriangle size={12} />{dirtyPaths.length} 项未保存</span>}</div><p>配置类型：<code>{type}</code></p></div><IconButton variant="outline" title="恢复此类型默认值" aria-label="恢复此类型默认值" onClick={() => onRequestReset(type)} disabled={resetting}><RotateCcw size={14} /></IconButton></div><div className="runtime-config-items">{items.map((item) => { const dirty = dirtyPathSet.has(item.path); const immediate = item.path === "mcp.enabled"; return <article key={item.path} className={`runtime-config-item${dirty && !immediate ? " is-unsaved" : ""}`}><div className="runtime-config-item-header"><div className="runtime-config-path"><code title={item.path}>{item.path}</code>{dirty && !immediate && <span>未保存</span>}{dirty && !immediate && <AlertTriangle className="runtime-config-item-alert" size={15} aria-label="此配置尚未保存" />}</div><p className="runtime-config-item-description" title={item.description}>{item.description}</p></div><div className="runtime-config-item-fields"><div className="runtime-config-field"><span>当前值</span><RuntimeEditor item={item} value={drafts[item.path]} disabled={busyPath !== ""} onChange={(value) => { setDrafts((current) => ({ ...current, [item.path]: value })); if (immediate) void save(item, value); }} /></div><div className="runtime-config-field"><span>默认值</span><code className="config-value config-default">{formatValue(item.default)}</code></div></div><div className="runtime-config-item-footer">{!immediate && <IconButton variant="outline" title={dirty ? "保存未保存的配置" : "保存配置"} aria-label={dirty ? "保存未保存的配置" : "保存配置"} onClick={() => save(item)} disabled={!dirty || busyPath !== ""}><Save size={14} /></IconButton>}</div></article>; })}</div></section>;
 }
 
-function RuntimeEditor({ item, value, onChange }) {
-  if (typeof item.default === "boolean") return <Switch checked={Boolean(value)} onCheckedChange={onChange} aria-label={item.path} />;
+function RuntimeEditor({ item, value, onChange, disabled = false }) {
+  if (typeof item.default === "boolean") return <Switch checked={Boolean(value)} disabled={disabled} onCheckedChange={onChange} aria-label={item.path} />;
   const choices = choicesFor(item.path);
   if (choices) return <select className="runtime-config-editor field-control" value={value ?? ""} onChange={(event) => onChange(event.target.value)} aria-label={item.path}>{choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select>;
   return <Input className="runtime-config-editor" type={typeof item.default === "number" ? "number" : "text"} min={item.path.endsWith("max_concurrency") ? 1 : item.path.endsWith("poll_milliseconds") ? 100 : undefined} step={typeof item.default === "number" ? 1 : undefined} value={value ?? ""} onChange={(event) => onChange(event.target.value)} aria-label={item.path} />;

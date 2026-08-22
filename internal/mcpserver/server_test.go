@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"errors"
 	"github.com/hanxuanyu/meerkit/sdk"
 	"meerkit/internal/browser"
 )
@@ -46,7 +47,12 @@ func (f *fakeBrowserController) StopNetworkCapture(context.Context, string) (sdk
 func (f *fakeBrowserController) Captures() []sdk.BrowserNetworkSession { return f.captures }
 
 func TestHandlerRequiresBearerToken(t *testing.T) {
-	handler, err := New(&fakeBrowserController{}, Options{Token: testToken, Version: "test"})
+	handler, err := New(&fakeBrowserController{}, Options{ValidateToken: func(_ context.Context, token string) error {
+		if token != testToken {
+			return errors.New("invalid")
+		}
+		return nil
+	}, Version: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +69,12 @@ func TestHandlerRequiresBearerToken(t *testing.T) {
 
 func TestMCPListsAndCallsBrowserTools(t *testing.T) {
 	controller := &fakeBrowserController{agents: []browser.AgentInfo{{ID: "agent-1", Name: "Chrome"}}, actionResult: sdk.BrowserActionResult{Type: "page.info", Success: true, Data: map[string]any{"title": "Example"}}}
-	handler, err := New(controller, Options{Token: testToken, Version: "test"})
+	handler, err := New(controller, Options{ValidateToken: func(_ context.Context, token string) error {
+		if token != testToken {
+			return errors.New("invalid")
+		}
+		return nil
+	}, Version: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

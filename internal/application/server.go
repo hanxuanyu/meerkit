@@ -148,18 +148,24 @@ func RunServer(ctx context.Context, config app.Config, frontend fs.FS, serverOpt
 		}
 	})
 	logger.Info("Meerkit background workers configured", "scheduler", true, "cleanup", true, "max_concurrency", runtimeSnapshot.Scheduler.MaxConcurrency, "cleanup_interval", runtimeSnapshot.Storage.CleanupInterval)
-	authService := auth.NewService(database, runtimeSnapshot.SessionTTLDuration())
+	authService, authErr := auth.NewServiceWithOptions(database, runtimeSnapshot.SessionTTLDuration(), auth.ServiceOptions{MasterKeyFile: config.Security.MasterKeyFile, AllowTokenCopy: config.Security.AllowTokenCopy})
+	if authErr != nil {
+		return authErr
+	}
 	apiServer := api.NewAPIServer(database, modules, notifiers, runner, inAppHub, pluginManager, authService, config, logger, accessLogger, runtimeManager)
 	apiServer.SetStatusBoard(statusBoardService)
 	apiServer.SetBrowser(browserManager)
-	if config.MCP.Enabled {
-		mcpHandler, mcpErr := mcpserver.New(browserManager, mcpserver.Options{Token: config.MCP.Token, Version: options.Version, Logger: logger})
-		if mcpErr != nil {
-			return mcpErr
+	mcpHandler, mcpErr := mcpserver.New(browserManager, mcpserver.Options{ValidateToken: func(validateCtx context.Context, token string) error {
+		principal, err := authService.AuthenticateToken(validateCtx, token)
+		if err != nil || principal.Type != auth.TokenTypeMCP || !auth.HasScope(principal, auth.ScopeMCP) {
+			return errors.New("invalid MCP token")
 		}
-		apiServer.SetMCP(mcpHandler)
-		logger.Info("Meerkit browser MCP enabled", "endpoint", "/mcp", "transport", "streamable_http")
+		return nil
+	}, Version: options.Version, Logger: logger})
+	if mcpErr != nil {
+		return mcpErr
 	}
+	apiServer.SetMCP(mcpHandler)
 	runtimeManager.SetApply(func(applyCtx context.Context, oldConfig, newConfig app.RuntimeConfig) error {
 		if oldConfig.Logging != newConfig.Logging {
 			if err := loggingController.Apply(newConfig.Logging); err != nil {
