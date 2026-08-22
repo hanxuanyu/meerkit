@@ -116,7 +116,7 @@ export function SettingsPage() {
       const createdToken = typeof value.token === "string" ? value.token : (value.token?.token || "");
       if (!createdToken) throw new Error("服务未返回 Token 明文，请重试");
       setSecretToken(createdToken);
-      setSecretTokenSource("created");
+      setSecretTokenSource(tokenForm.type === "mcp" ? "mcp" : "created");
       setSecretDialogOpen(true);
       setTokenForm({ name: "", type: "rest", scopes: "api:read", expires_at: "" });
       await reloadTokens();
@@ -446,9 +446,47 @@ function formatTokenDate(value) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function mcpConnectionConfig(token) {
+  const endpoint = `${window.location.origin}/mcp`;
+  return {
+    endpoint,
+    generic: JSON.stringify({
+      mcpServers: { "meerkit-browser": { url: endpoint, headers: { Authorization: `Bearer ${token}` } } }
+    }, null, 2),
+    claude: JSON.stringify({
+      mcpServers: { "meerkit-browser": { url: endpoint, headers: { Authorization: `Bearer ${token}` } } }
+    }, null, 2),
+    cursor: JSON.stringify({
+      mcpServers: { "meerkit-browser": { url: endpoint, headers: { Authorization: `Bearer ${token}` } } }
+    }, null, 2),
+    vscode: JSON.stringify({
+      servers: { "meerkit-browser": { type: "http", url: endpoint, headers: { Authorization: `Bearer ${token}` } } }
+    }, null, 2)
+  };
+}
+
+function MCPConfigTabs({ token, activeTab, onTabChange, onCopy }) {
+  const config = mcpConnectionConfig(token);
+  const tabs = [
+    { id: "generic", label: "通用 JSON", text: config.generic, hint: "适用于支持 Streamable HTTP 的 MCP 客户端。" },
+    { id: "claude", label: "Claude Desktop", text: config.claude, hint: "添加到 Claude Desktop 的 MCP 配置文件中。" },
+    { id: "cursor", label: "Cursor", text: config.cursor, hint: "添加到 Cursor 的 MCP Servers 配置中。" },
+    { id: "vscode", label: "VS Code", text: config.vscode, hint: "适用于 VS Code MCP servers 配置。" }
+  ];
+  const current = tabs.find((item) => item.id === activeTab) || tabs[0];
+  return <div className="settings-mcp-config">
+    <div className="settings-mcp-config-heading"><div><Label>快速接入 MCP</Label><span>Endpoint：<code>{config.endpoint}</code></span></div><span>配置包含当前 Token，请妥善保管。</span></div>
+    <Tabs value={current.id} onValueChange={onTabChange} className="settings-mcp-config-tabs">
+      <TabsList>{tabs.map((item) => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}</TabsList>
+      {tabs.map((item) => <TabsContent key={item.id} value={item.id} forceMount={false}><div className="settings-mcp-config-panel"><div className="settings-mcp-config-meta"><span>{item.hint}</span><IconButton size="sm" onClick={() => onCopy(item.text)} title={`复制 ${item.label} 配置`} aria-label={`复制 ${item.label} 配置`}><Copy size={14} /></IconButton></div><pre>{item.text}</pre></div></TabsContent>)}
+    </Tabs>
+  </div>;
+}
+
 function TokenManagement({ tokens, allowTokenCopy, secretToken, secretTokenSource, secretDialogOpen, setSecretDialogOpen, setSecretToken, copyToken, revealToken, revokeToken, restoreToken, deleteToken, tokenForm, setTokenForm, createToken, tokenBusy, searchInput, setSearchInput, loading, pageInfo, setPageInfo }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [mcpConfigTab, setMcpConfigTab] = useState("generic");
   const submit = async (event) => {
     if (await createToken(event)) setCreateDialogOpen(false);
   };
@@ -490,8 +528,11 @@ function TokenManagement({ tokens, allowTokenCopy, secretToken, secretTokenSourc
     <Dialog open={secretDialogOpen} onOpenChange={(open) => { setSecretDialogOpen(open); if (!open) setSecretToken(""); }}>
       <DialogContent className="settings-token-secret-dialog">
         <DialogHeader><DialogTitle>{secretTokenSource === "mcp" ? "MCP 已开启" : "Token 已创建"}</DialogTitle><DialogDescription>{secretTokenSource === "mcp" ? (allowTokenCopy ? "已自动创建 MCP Token，请复制并保存。当前配置允许管理员稍后再次复制。" : "已自动创建 MCP Token，请立即复制并保存。关闭后将无法再次查看明文。") : (allowTokenCopy ? "请复制并保存 Token。当前配置允许管理员稍后再次复制。" : "请立即复制并保存 Token。关闭后将无法再次查看明文。")}</DialogDescription></DialogHeader>
-        <div className="settings-token-secret-body"><Input className="settings-token-secret-input" readOnly value={secretToken} aria-label="新建 Token" spellCheck={false} /></div>
-        <DialogFooter><Button variant="ghost" onClick={() => { setSecretDialogOpen(false); setSecretToken(""); }}>关闭</Button><Button onClick={() => copyToken(secretToken)} disabled={!secretToken}><Copy size={14} />复制 Token</Button></DialogFooter>
+        <div className="settings-token-secret-body">
+          <div className="settings-token-secret-field"><Label>Token 明文</Label><div className="settings-token-secret-copy-row"><Input className="settings-token-secret-input" readOnly value={secretToken} aria-label="新建 Token" spellCheck={false} /><IconButton size="sm" onClick={() => copyToken(secretToken)} disabled={!secretToken} title="复制 Token" aria-label="复制 Token"><Copy size={14} /></IconButton></div></div>
+          {secretTokenSource === "mcp" && <MCPConfigTabs token={secretToken} activeTab={mcpConfigTab} onTabChange={setMcpConfigTab} onCopy={copyToken} />}
+        </div>
+        <DialogFooter><Button variant="ghost" onClick={() => { setSecretDialogOpen(false); setSecretToken(""); }}>关闭</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>

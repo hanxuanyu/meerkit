@@ -426,6 +426,23 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
 .settings-token-secret-dialog .modal-header p { max-width: 480px; line-height: 1.5; }
 .settings-token-secret-body { min-width: 0; padding: 22px 24px 24px; }
 .settings-token-secret-input { border-color: #86efac; color: #166534; background: #f0fdf4; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.settings-token-secret-field { display: grid; gap: 7px; min-width: 0; }
+.settings-token-secret-copy-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 6px; min-width: 0; }
+.settings-token-secret-copy-row .icon-button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+.settings-mcp-config { display: grid; gap: 9px; min-width: 0; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.settings-mcp-config-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.settings-mcp-config-heading > div { display: grid; min-width: 0; gap: 6px; }
+.settings-mcp-config-heading > div > span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-mcp-config-heading > div code { color: var(--foreground); font-size: 9px; }
+.settings-mcp-config-heading > span { max-width: 180px; color: var(--muted); font-size: 9px; line-height: 1.4; text-align: right; }
+.settings-mcp-config-tabs { gap: 9px; }
+.settings-mcp-config-tabs .tabs-list { overflow-x: auto; }
+.settings-mcp-config-tabs .tabs-trigger { max-width: none; font-size: 10px; }
+.settings-mcp-config-panel { display: grid; gap: 7px; min-width: 0; }
+.settings-mcp-config-meta { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-mcp-config-meta > span { min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-mcp-config-meta .icon-button { width: 30px; min-width: 30px; height: 30px; min-height: 30px; }
+.settings-mcp-config-panel pre { max-height: 190px; min-height: 128px; margin: 0; overflow: auto; padding: 11px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--panel-subtle); font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 .browser-settings { min-width: 0; }
 .browser-settings > .section-header { align-items: flex-start; border-bottom: 1px solid var(--border); }
 .browser-settings-status { display: flex; flex: none; align-items: center; gap: 8px; }
@@ -691,6 +708,9 @@ html, body, #root { height: 100%; min-height: 100%; overflow: hidden; }
   .settings-config-runtime > .section-header .settings-config-actions { width: 100%; justify-content: flex-start; }
   .settings-token-form-body { gap: 14px; padding: 18px; }
   .settings-token-secret-body { padding: 18px; }
+  .settings-mcp-config { margin-top: 14px; padding-top: 14px; }
+  .settings-mcp-config-heading { display: grid; gap: 5px; }
+  .settings-mcp-config-heading > span { max-width: none; text-align: left; }
   .settings-token-surface .table-wrap { overflow: visible; padding: 0; }
   .settings-token-table { display: block; width: 100%; min-width: 0; }
   .settings-token-table colgroup, .settings-token-table thead { display: none; }
